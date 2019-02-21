@@ -8,7 +8,6 @@
 
 package org.locationtech.geomesa.index.geotools
 
-import java.nio.charset.StandardCharsets
 import java.time.{Instant, ZoneOffset}
 import java.util.{List => jList}
 
@@ -20,6 +19,7 @@ import org.geotools.feature.{FeatureTypes, NameImpl}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.NamespaceConfig
 import org.locationtech.geomesa.index.metadata.GeoMesaMetadata._
 import org.locationtech.geomesa.index.metadata.HasGeoMesaMetadata
+import org.locationtech.geomesa.index.planning.QueryInterceptor.QueryInterceptorFactory
 import org.locationtech.geomesa.index.utils.{DistributedLocking, Releasable}
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.{DEFAULT_DATE_KEY, ST_INDEX_SCHEMA_KEY, TABLE_SHARING_KEY}
@@ -43,18 +43,9 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
   // TODO: GEOMESA-2360 - Remove global axis order hint from MetadataBackedDataStore
   Hints.putSystemDefault(Hints.FORCE_LONGITUDE_FIRST_AXIS_ORDER, true)
 
-  protected def catalog: String
+  protected [geomesa] val interceptors = QueryInterceptorFactory(this)
 
   // hooks to allow extended functionality
-
-  /**
-    * Inspect and update the simple feature type as required. Called before writing
-    * the schema metadata
-    *
-    * @param sft simple feature type being created
-    */
-  @throws(classOf[IllegalArgumentException])
-  protected def validateNewSchema(sft: SimpleFeatureType): Unit = GeoMesaSchemaValidator.validate(sft)
 
   /**
     * Called just before persisting schema metadata. Allows for validation or configuration of user data
@@ -125,21 +116,31 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
     * This method uses distributed locking to ensure a schema is only created once.
     *
     * @see org.geotools.data.DataAccess#createSchema(org.opengis.feature.type.FeatureType)
-    * @param sft type to create
+    * @param schema type to create
     */
-  override def createSchema(sft: SimpleFeatureType): Unit = {
-    if (getSchema(sft.getTypeName) == null) {
+  override def createSchema(schema: SimpleFeatureType): Unit = {
+    if (getSchema(schema.getTypeName) == null) {
       val lock = acquireCatalogLock()
       try {
         // check a second time now that we have the lock
-        if (getSchema(sft.getTypeName) == null) {
+        if (getSchema(schema.getTypeName) == null) {
+          // ensure that we have a mutable type so we can set user data
+          val sft = SimpleFeatureTypes.mutable(schema)
           // inspect and update the simple feature type for various components
           // do this before anything else so that any modifications will be in place
-          validateNewSchema(sft)
+          GeoMesaSchemaValidator.validate(sft)
+
+          // set the enabled indices
+          preSchemaCreate(sft)
 
           try {
             // write out the metadata to the catalog table
-            writeMetadata(sft)
+            // compute the metadata values - IMPORTANT: encode type has to be called after all user data is set
+            val metadataMap = Map(
+              ATTRIBUTES_KEY       -> SimpleFeatureTypes.encodeType(sft, includeUserData = true),
+              STATS_GENERATION_KEY -> GeoToolsDateFormat.format(Instant.now().atOffset(ZoneOffset.UTC))
+            )
+            metadata.insert(sft.getTypeName, metadataMap)
 
             // reload the sft so that we have any default metadata,
             // then copy over any additional keys that were in the original sft.
@@ -147,8 +148,9 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
             // check for indices that haven't been created yet
             val attributes = metadata.readRequired(sft.getTypeName, ATTRIBUTES_KEY)
             val reloadedSft = SimpleFeatureTypes.createType(sft.getTypeName, attributes)
-            (sft.getUserData.keySet -- reloadedSft.getUserData.keySet)
-              .foreach(k => reloadedSft.getUserData.put(k, sft.getUserData.get(k)))
+            (sft.getUserData.keySet -- reloadedSft.getUserData.keySet).foreach { k =>
+              reloadedSft.getUserData.put(k, sft.getUserData.get(k))
+            }
 
             // create the tables
             onSchemaCreated(reloadedSft)
@@ -181,8 +183,12 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
    * @param typeName feature type name
    * @return feature type, or null if it does not exist
    */
-  override def getSchema(typeName: String): SimpleFeatureType =
-    metadata.read(typeName, ATTRIBUTES_KEY).map(SimpleFeatureTypes.createType(config.namespace.orNull, typeName, _)).orNull
+  override def getSchema(typeName: String): SimpleFeatureType = {
+    metadata.read(typeName, ATTRIBUTES_KEY) match {
+      case None => null
+      case Some(spec) => SimpleFeatureTypes.createImmutableType(config.namespace.orNull, typeName, spec)
+    }
+  }
 
   /**
     * Allows the following modifications to the schema:
@@ -209,12 +215,12 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
     *
     * @see org.geotools.data.DataAccess#updateSchema(org.opengis.feature.type.Name, org.opengis.feature.type.FeatureType)
     * @param typeName simple feature type name
-    * @param sft new simple feature type
+    * @param schema new simple feature type
     */
-  override def updateSchema(typeName: Name, sft: SimpleFeatureType): Unit = {
+  override def updateSchema(typeName: Name, schema: SimpleFeatureType): Unit = {
     // validate type name has not changed
-    if (typeName.getLocalPart != sft.getTypeName) {
-      val msg = s"Updating the name of a schema is not allowed: '$typeName' changed to '${sft.getTypeName}'"
+    if (typeName.getLocalPart != schema.getTypeName) {
+      val msg = s"Updating the name of a schema is not allowed: '$typeName' changed to '${schema.getTypeName}'"
       throw new UnsupportedOperationException(msg)
     }
 
@@ -228,23 +234,25 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
       }
 
       // validate that default geometry has not changed
-      if (sft.getGeomField != previousSft.getGeomField) {
+      if (schema.getGeomField != previousSft.getGeomField) {
         throw new UnsupportedOperationException("Changing the default geometry is not supported")
       }
 
       // Check that unmodifiable user data has not changed
       MetadataBackedDataStore.unmodifiableUserdataKeys.foreach { key =>
-        if (sft.userData[Any](key) != previousSft.userData[Any](key)) {
+        if (schema.userData[Any](key) != previousSft.userData[Any](key)) {
           throw new UnsupportedOperationException(s"Updating '$key' is not supported")
         }
       }
 
       // Check that the rest of the schema has not changed (columns, types, etc)
       val previousColumns = previousSft.getAttributeDescriptors
-      val currentColumns = sft.getAttributeDescriptors
+      val currentColumns = schema.getAttributeDescriptors
       if (previousColumns.toSeq != currentColumns.take(previousColumns.length)) {
         throw new UnsupportedOperationException("Updating schema columns is not allowed")
       }
+
+      val sft = SimpleFeatureTypes.mutable(schema)
 
       preSchemaUpdate(sft, previousSft)
 
@@ -348,7 +356,10 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
     *
     * @see org.geotools.data.DataAccess#dispose()
     */
-  override def dispose(): Unit = CloseWithLogging(metadata)
+  override def dispose(): Unit = {
+    CloseWithLogging(metadata)
+    CloseWithLogging(interceptors)
+  }
 
   // end methods from org.geotools.data.DataStore
 
@@ -358,7 +369,7 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
     */
   protected [geomesa] def acquireCatalogLock(): Releasable = {
     import org.locationtech.geomesa.index.DistributedLockTimeout
-    val path = s"/org.locationtech.geomesa/ds/$catalog"
+    val path = s"/org.locationtech.geomesa/ds/${config.catalog}"
     val timeout = DistributedLockTimeout.toDuration.getOrElse {
       // note: should always be a valid fallback value so this exception should never be triggered
       throw new IllegalArgumentException(s"Couldn't convert '${DistributedLockTimeout.get}' to a duration")
@@ -366,48 +377,6 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
     acquireDistributedLock(path, timeout.toMillis).getOrElse {
       throw new RuntimeException(s"Could not acquire distributed lock at '$path' within $timeout")
     }
-  }
-
-  /**
-    * Computes and writes the metadata for this feature type
-    */
-  private def writeMetadata(sft: SimpleFeatureType) {
-    // determine the schema ID - ensure that it is unique in this catalog
-    // IMPORTANT: this method needs to stay inside a zookeeper distributed locking block
-    var schemaId = 1
-    val existingSchemaIds = getTypeNames.flatMap(metadata.read(_, SCHEMA_ID_KEY, cache = false)
-        .map(_.getBytes(StandardCharsets.UTF_8).head.toInt))
-    // noinspection ExistsEquals
-    while (existingSchemaIds.exists(_ == schemaId)) { schemaId += 1 }
-    // We use a single byte for the row prefix to save space - if we exceed the single byte limit then
-    // our ranges would start to overlap and we'd get errors
-    require(schemaId <= Byte.MaxValue, s"No more than ${Byte.MaxValue} schemas may share a single catalog table")
-    val schemaIdString = new String(Array(schemaId.asInstanceOf[Byte]), StandardCharsets.UTF_8)
-
-    // set user data so that it gets persisted
-    if (sft.isTableSharing) {
-      sft.setTableSharing(true) // explicitly set it in case this was just the default
-      sft.setTableSharingPrefix(schemaIdString)
-    } else {
-      sft.setTableSharing(false)
-      sft.getUserData.remove(SHARING_PREFIX_KEY)
-    }
-
-    // set the enabled indices
-    preSchemaCreate(sft)
-
-    // compute the metadata values - IMPORTANT: encode type has to be called after all user data is set
-    val attributesValue   = SimpleFeatureTypes.encodeType(sft, includeUserData = true)
-    val statDateValue     = GeoToolsDateFormat.format(Instant.now().atOffset(ZoneOffset.UTC))
-
-    // store each metadata in the associated key
-    val metadataMap = Map(
-      ATTRIBUTES_KEY        -> attributesValue,
-      STATS_GENERATION_KEY  -> statDateValue,
-      SCHEMA_ID_KEY         -> schemaIdString
-    )
-
-    metadata.insert(sft.getTypeName, metadataMap)
   }
 }
 

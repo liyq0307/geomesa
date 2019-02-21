@@ -14,8 +14,10 @@ import com.typesafe.config.ConfigFactory
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors._
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.AttributeOptions
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.AttributeOptions._
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs._
+import org.locationtech.geomesa.utils.geotools.sft.SimpleFeatureSpecConfig
 import org.locationtech.geomesa.utils.stats.{Cardinality, IndexCoverage}
 import org.locationtech.geomesa.utils.text.KVPairParser
 import org.opengis.feature.simple.SimpleFeatureType
@@ -124,7 +126,7 @@ class SimpleFeatureTypesTest extends Specification {
 
     "handle no index attribute" >> {
       val sft = SimpleFeatureTypes.createType("testing", "id:Integer,*geom:Point:index=true")
-      sft.getDescriptor("id").getIndexCoverage() mustEqual(IndexCoverage.NONE)
+      sft.getDescriptor("id").getUserData.get(AttributeOptions.OPT_INDEX) must beNull
     }
 
     "handle no explicit geometry" >> {
@@ -139,8 +141,10 @@ class SimpleFeatureTypesTest extends Specification {
 
     "return the indexed attributes (not including the default geometry)" >> {
       val sft = SimpleFeatureTypes.createType("testing", "id:Integer:index=false,dtg:Date:index=true,*geom:Point:srid=4326:index=true")
-      val indexed = SimpleFeatureTypes.getSecondaryIndexedAttributes(sft)
-      indexed.map(_.getLocalName) must containTheSameElementsAs(List("dtg"))
+      val indexed = sft.getAttributeDescriptors.collect {
+        case d if java.lang.Boolean.valueOf(d.getUserData.get(AttributeOptions.OPT_INDEX).asInstanceOf[String]) => d.getLocalName
+      }
+      indexed mustEqual List("dtg")
     }
 
     "handle list types" >> {
@@ -297,21 +301,18 @@ class SimpleFeatureTypesTest extends Specification {
       val spec = s"name:String:$OPT_INDEX=join,dtg:Date,*geom:Point:srid=4326"
       val sft = SimpleFeatureTypes.createType("test", spec)
       sft.getDescriptor("name").getUserData.get(OPT_INDEX) mustEqual("join")
-      sft.getDescriptor("name").getIndexCoverage() mustEqual(IndexCoverage.JOIN)
     }
 
     "allow specification of index attribute coverages regardless of case" >> {
       val spec = s"name:String:$OPT_INDEX=FULL,dtg:Date,*geom:Point:srid=4326"
       val sft = SimpleFeatureTypes.createType("test", spec)
       sft.getDescriptor("name").getUserData.get(OPT_INDEX) mustEqual("full")
-      sft.getDescriptor("name").getIndexCoverage() mustEqual(IndexCoverage.FULL)
     }.pendingUntilFixed("currently case sensitive")
 
     "allow specification of index attribute coverages as booleans" >> {
       val spec = s"name:String:$OPT_INDEX=true,dtg:Date,*geom:Point:srid=4326"
       val sft = SimpleFeatureTypes.createType("test", spec)
       sft.getDescriptor("name").getUserData.get(OPT_INDEX) mustEqual("true")
-      sft.getDescriptor("name").getIndexCoverage() mustEqual(IndexCoverage.JOIN)
     }
 
     "allow attribute options with quoted commas" >> {

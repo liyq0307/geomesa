@@ -17,16 +17,17 @@ import org.geotools.filter.{FunctionExpressionImpl, MathExpressionImpl}
 import org.geotools.process.vector.TransformProcess
 import org.geotools.process.vector.TransformProcess.Definition
 import org.locationtech.geomesa.filter.FilterHelper
-import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, QueryPlan, WrappedFeature}
+import org.locationtech.geomesa.index.api.QueryPlan
 import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.iterators.{BinAggregatingScan, DensityScan}
+import org.locationtech.geomesa.index.planning.QueryInterceptor.QueryInterceptorFactory
 import org.locationtech.geomesa.index.utils.{ExplainLogging, Explainer, Reprojection}
 import org.locationtech.geomesa.utils.cache.SoftThreadLocal
 import org.locationtech.geomesa.utils.collection.{CloseableIterator, SelfClosingIterator}
-import org.locationtech.geomesa.utils.index.IndexMode
-import org.locationtech.geomesa.utils.iterators.{DeduplicatingSimpleFeatureIterator, SortingSimpleFeatureIterator}
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.iterators.SortingSimpleFeatureIterator
 import org.locationtech.geomesa.utils.stats.{MethodProfiling, StatParser}
 import org.opengis.feature.`type`.{AttributeDescriptor, GeometryDescriptor}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
@@ -37,8 +38,9 @@ import scala.collection.JavaConverters._
 /**
  * Plans and executes queries against geomesa
  */
-class QueryPlanner[DS <: GeoMesaDataStore[DS, F, W], F <: WrappedFeature, W](ds: DS)
-    extends QueryRunner with MethodProfiling with LazyLogging {
+class QueryPlanner[DS <: GeoMesaDataStore[DS]](ds: DS) extends QueryRunner with MethodProfiling with LazyLogging {
+
+  override protected val interceptors: QueryInterceptorFactory = ds.interceptors
 
   /**
     * Plan the query, but don't execute it - used for m/r jobs and explain query
@@ -51,35 +53,16 @@ class QueryPlanner[DS <: GeoMesaDataStore[DS, F, W], F <: WrappedFeature, W](ds:
     */
   def planQuery(sft: SimpleFeatureType,
                 query: Query,
-                index: Option[GeoMesaFeatureIndex[DS, F, W]] = None,
-                output: Explainer = new ExplainLogging): Seq[QueryPlan[DS, F, W]] = {
+                index: Option[String] = None,
+                output: Explainer = new ExplainLogging): Seq[QueryPlan[DS]] = {
     getQueryPlans(sft, query, index, output).toList // toList forces evaluation of entire iterator
   }
 
-  override def runQuery(sft: SimpleFeatureType, query: Query, explain: Explainer): CloseableIterator[SimpleFeature] =
-    runQuery(sft, query, None, explain)
-
-  /**
-    * Execute a query
-    *
-    * @param sft simple feature type
-    * @param query query to execute
-    * @param index override index to use for executing the query
-    * @param explain planning explanation output
-    * @return
-    */
-  def runQuery(sft: SimpleFeatureType,
-               query: Query,
-               index: Option[GeoMesaFeatureIndex[DS, F, W]],
-               explain: Explainer): CloseableIterator[SimpleFeature] = {
+  override def runQuery(sft: SimpleFeatureType, query: Query, explain: Explainer): CloseableIterator[SimpleFeature] = {
     import org.locationtech.geomesa.utils.conversions.ScalaImplicits.RichTraversableLike
 
-    val plans = getQueryPlans(sft, query, index, explain)
+    val plans = getQueryPlans(sft, query, None, explain)
     var iterator = SelfClosingIterator(plans.iterator).flatMap(p => p.scan(ds))
-
-    if (plans.exists(_.hasDuplicates)) {
-      iterator = new DeduplicatingSimpleFeatureIterator(iterator)
-    }
 
     if (!query.getHints.isSkipReduce) {
       // note: reduce must be the same across query plans
@@ -109,35 +92,35 @@ class QueryPlanner[DS <: GeoMesaDataStore[DS, F, W], F <: WrappedFeature, W](ds:
     */
   protected def getQueryPlans(sft: SimpleFeatureType,
                               original: Query,
-                              requested: Option[GeoMesaFeatureIndex[DS, F, W]],
-                              output: Explainer): Seq[QueryPlan[DS, F, W]] = {
+                              requested: Option[String],
+                              output: Explainer): Seq[QueryPlan[DS]] = {
     import org.locationtech.geomesa.filter.filterToString
 
     profile(time => output(s"Query planning took ${time}ms")) {
       // set hints that we'll need later on, fix the query filter so it meets our expectations going forward
       val query = configureQuery(sft, original)
-      optimizeFilter(sft, query)
 
       val hints = query.getHints
 
       output.pushLevel(s"Planning '${query.getTypeName}' ${filterToString(query.getFilter)}")
       output(s"Original filter: ${filterToString(original.getFilter)}")
       output(s"Hints: bin[${hints.isBinQuery}] arrow[${hints.isArrowQuery}] density[${hints.isDensityQuery}] " +
-          s"stats[${hints.isStatsQuery}] map-aggregate[${hints.isMapAggregatingQuery}] " +
+          s"stats[${hints.isStatsQuery}] " +
           s"sampling[${hints.getSampling.map { case (s, f) => s"$s${f.map(":" + _).getOrElse("")}"}.getOrElse("none")}]")
       output(s"Sort: ${query.getHints.getSortReadableString}")
       output(s"Transforms: ${query.getHints.getTransformDefinition.map(t => if (t.isEmpty) { "empty" } else { t }).getOrElse("none")}")
 
       output.pushLevel("Strategy selection:")
-      val requestedIndex = requested.orElse(hints.getRequestedIndex.map(toIndex(sft, _)))
+      val requestedIndex = requested.orElse(hints.getRequestedIndex)
       val transform = query.getHints.getTransformSchema
       val evaluation = query.getHints.getCostEvaluation
-      val strategies = StrategyDecider.getFilterPlan(ds, sft, query.getFilter, transform, evaluation, requestedIndex, output)
+      val strategies =
+        StrategyDecider.getFilterPlan(ds, sft, query.getFilter, transform, evaluation, requestedIndex, output)
       output.popLevel()
 
       var strategyCount = 1
       strategies.map { strategy =>
-        def complete(plan: QueryPlan[DS, F, W], time: Long): Unit = {
+        def complete(plan: QueryPlan[DS], time: Long): Unit = {
           plan.explain(output)
           output(s"Plan creation took ${time}ms").popLevel()
         }
@@ -145,15 +128,8 @@ class QueryPlanner[DS <: GeoMesaDataStore[DS, F, W], F <: WrappedFeature, W](ds:
         output.pushLevel(s"Strategy $strategyCount of ${strategies.length}: ${strategy.index}")
         strategyCount += 1
         output(s"Strategy filter: $strategy")
-        profile(complete _)(strategy.index.getQueryPlan(sft, ds, strategy, hints, output))
+        profile(complete _)(ds.adapter.createQueryPlan(strategy.getQueryStrategy(hints, output)))
       }
-    }
-  }
-
-  private def toIndex(sft: SimpleFeatureType, name: String): GeoMesaFeatureIndex[DS, F, W] = {
-    ds.manager.indices(sft, Option(name), IndexMode.Read).headOption.getOrElse {
-      throw new IllegalArgumentException(s"Invalid index strategy name: $name. Valid values are " +
-          ds.manager.indices(sft, mode = IndexMode.Read).map(i => s"${i.name}, ${i.identifier}").mkString(", "))
     }
   }
 }
@@ -300,9 +276,8 @@ object QueryPlanner extends LazyLogging {
       }
       sftBuilder.setDefaultGeometry(defaultGeom)
     }
-    val tsft = sftBuilder.buildFeatureType()
-    tsft.getUserData.putAll(sft.getUserData) // TODO reconsider default field user data?
-    tsft
+    // TODO reconsider default field user data?
+    SimpleFeatureTypes.immutable(sftBuilder.buildFeatureType(), sft.getUserData)
   }
 }
 

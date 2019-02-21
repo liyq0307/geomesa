@@ -13,8 +13,11 @@ import java.util.concurrent.ConcurrentHashMap
 import org.locationtech.geomesa.features.SerializationOption.SerializationOption
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
+import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, GeoMesaFeatureIndexFactory}
 import org.locationtech.geomesa.utils.cache.SoftThreadLocalCache
+import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.index.IndexMode
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter.Filter
 
@@ -24,9 +27,8 @@ import org.opengis.filter.Filter
 object IteratorCache {
 
   // thread safe objects can use a concurrent hashmap
-  private val sftCache = new ConcurrentHashMap[String, SimpleFeatureType]()
   private val serializerCache = new ConcurrentHashMap[(String, String), KryoFeatureSerializer]()
-  private val dtgIndexCache = new ConcurrentHashMap[String, java.lang.Integer]()
+  private val indexCache = new ConcurrentHashMap[(String, String), GeoMesaFeatureIndex[_, _]]()
 
   // non-thread safe objects use thread-locals
   // note: treating filters as unsafe due to an abundance of caution
@@ -38,15 +40,7 @@ object IteratorCache {
     * @param spec simple feature type spec
     * @return
     */
-  def sft(spec: String): SimpleFeatureType = {
-    // note: before the cache is populated, we might end up creating multiple objects, but it is still thread-safe
-    val cached = sftCache.get(spec)
-    if (cached != null) { cached } else {
-      val sft = SimpleFeatureTypes.createType("", spec)
-      sftCache.put(spec, sft)
-      sft
-    }
-  }
+  def sft(spec: String): SimpleFeatureType = SimpleFeatureTypes.createImmutableType("", spec)
 
   /**
     * Returns a cached serializer, creating one if necessary
@@ -80,18 +74,25 @@ object IteratorCache {
     filterCache.getOrElseUpdate((spec, ecql), FastFilterFactory.toFilter(sft, ecql))
 
   /**
-    * Returns a cached index of the dtg field
+    * Gets a cached feature index instance. Note that the index is not backed by a data store as
+    * normal, so operations which require a live connection will fail
     *
-    * @param spec simple feature type spec
+    * @param sft simple feature type
+    * @param spec spec string for the simple feature type
+    * @param identifier index id
     * @return
     */
-  def dtgIndex(spec:String, sft: SimpleFeatureType): Int = {
-    val cached = dtgIndexCache.get(spec)
+  def index(sft: SimpleFeatureType, spec: String, identifier: String): GeoMesaFeatureIndex[_, _] = {
+    val cached = indexCache.get((spec, identifier))
     if (cached != null) { cached } else {
-      import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
-      val idx = sft.getDtgIndex.get
-      dtgIndexCache.put(spec, idx)
-      idx
+      val index = GeoMesaFeatureIndexFactory.create(null, sft, Seq(IndexId.id(identifier))).headOption.getOrElse {
+        throw new RuntimeException(s"Index option not configured correctly: $identifier")
+      }
+      if (!index.mode.supports(IndexMode.Read)) {
+        throw new RuntimeException(s"Index option configured for a non-readable index: $identifier")
+      }
+      indexCache.put((spec, identifier), index)
+      index
     }
   }
 }

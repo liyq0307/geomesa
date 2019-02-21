@@ -17,6 +17,7 @@ import org.apache.hadoop.io.Text
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import org.geotools.data.{Query, Transaction}
+import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.{EmptyPlan, ScanPlan}
 import org.locationtech.geomesa.hbase.data._
 import org.locationtech.geomesa.hbase.jobs.GeoMesaHBaseInputFormat
 import org.locationtech.geomesa.index.conf.QueryHints
@@ -47,7 +48,8 @@ class HBaseSpatialRDDProvider extends SpatialRDDProvider {
       origQuery.getHints.put(QueryHints.LOOSE_BBOX, false)
       ds.getQueryPlan(origQuery)
     }
-    lazy val transform = ds.queryPlanner.configureQuery(sft, origQuery).getHints.getTransformSchema
+    // note: make sure to access this after qps, so that hints are set
+    lazy val transform = origQuery.getHints.getTransformSchema
 
     def queryPlanToRDD(qp: HBaseQueryPlan, conf: Configuration): RDD[SimpleFeature] = {
       if (qp.isInstanceOf[EmptyPlan]) {

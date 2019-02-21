@@ -20,7 +20,8 @@ import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.tools.DataStoreRegistration
 import org.locationtech.geomesa.tools.export.ExportCommand.ExportAttributes
 import org.locationtech.geomesa.tools.export.formats.DelimitedExporter
-import org.locationtech.geomesa.tools.ingest.{IngestCommand, IngestParams}
+import org.locationtech.geomesa.tools.ingest.IngestCommand
+import org.locationtech.geomesa.tools.ingest.IngestCommand.IngestParams
 import org.locationtech.geomesa.tools.utils.DataFormats
 import org.locationtech.geomesa.tools.utils.DataFormats._
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
@@ -47,10 +48,7 @@ class DelimitedExportImportTest extends Specification {
       override def libjarsPaths: Iterator[() => Seq[File]] = Iterator.empty
       override def connection: Map[String, String] = Map(DataStoreRegistration.param.key -> key)
     }
-    command.setConsole(new AnyRef {
-      def readLine(): String = "y" // accept prompt to use inferred schema
-      def readPassword(): Array[Char] = Array.empty
-    })
+    command.params.force = true
 
     try {
       op(command)

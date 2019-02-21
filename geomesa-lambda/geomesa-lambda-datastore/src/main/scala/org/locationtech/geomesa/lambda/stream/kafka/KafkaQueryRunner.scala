@@ -8,7 +8,8 @@
 
 package org.locationtech.geomesa.lambda.stream.kafka
 
-import org.locationtech.geomesa.index.planning.InMemoryQueryRunner
+import org.locationtech.geomesa.index.planning.LocalQueryRunner
+import org.locationtech.geomesa.index.planning.QueryInterceptor.QueryInterceptorFactory
 import org.locationtech.geomesa.index.stats.GeoMesaStats
 import org.locationtech.geomesa.lambda.stream.kafka.KafkaFeatureCache.ReadableFeatureCache
 import org.locationtech.geomesa.security.AuthorizationsProvider
@@ -16,8 +17,11 @@ import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.{Filter, Id}
 
-class KafkaQueryRunner(features: ReadableFeatureCache, stats: GeoMesaStats, authProvider: Option[AuthorizationsProvider])
-    extends InMemoryQueryRunner(stats, authProvider) {
+class KafkaQueryRunner(features: ReadableFeatureCache,
+                       stats: GeoMesaStats,
+                       authProvider: Option[AuthorizationsProvider],
+                       override protected val interceptors: QueryInterceptorFactory)
+    extends LocalQueryRunner(stats, authProvider) {
 
   override protected val name: String = "Kafka lambda"
 

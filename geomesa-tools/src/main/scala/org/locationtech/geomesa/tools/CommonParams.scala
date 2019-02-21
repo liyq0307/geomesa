@@ -14,13 +14,14 @@ import java.util.regex.Pattern
 
 import com.beust.jcommander.converters.BaseConverter
 import com.beust.jcommander.{Parameter, ParameterException}
-import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, WrappedFeature}
+import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
+import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.tools.DistributedRunParam.ModeConverter
 import org.locationtech.geomesa.tools.DistributedRunParam.RunModes.RunMode
-import org.locationtech.geomesa.tools.utils.DataFormats
 import org.locationtech.geomesa.tools.utils.ParameterConverters.{FilterConverter, HintConverter}
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
+import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter.Filter
 
 /**
@@ -141,22 +142,8 @@ trait InputFilesParam {
   var files: java.util.List[String] = new util.ArrayList[String]()
 }
 
-trait InputFormatParam extends InputFilesParam {
-
-  def format: String
-
-  def fmt: DataFormats.DataFormat = {
-    import scala.collection.JavaConversions._
-    val fmtParam = Option(format).flatMap(f => DataFormats.values.find(_.toString.equalsIgnoreCase(f)))
-    // back compatible check for 'geojson' as a format (instead, just use 'json')
-    lazy val geojson = if ("geojson".equalsIgnoreCase(format)) { Some(DataFormats.Json) } else { None }
-    lazy val fmtFile = files.flatMap(DataFormats.fromFileName(_).right.toOption).headOption
-    fmtParam.orElse(geojson).orElse(fmtFile).orNull
-  }
-}
-
-trait OptionalInputFormatParam extends InputFormatParam {
-  @Parameter(names = Array("--input-format"), description = "File format of input files (shp, csv, tsv, avro, etc). Optional, autodetection will be attempted.")
+trait OptionalInputFormatParam extends InputFilesParam {
+  @Parameter(names = Array("--input-format"), description = "File format of input files (shp, csv, tsv, avro, etc). Optional, auto-detection will be attempted")
   var format: String = _
 }
 
@@ -176,41 +163,71 @@ trait RequiredConverterConfigParam extends ConverterConfigParam {
   var config: String = _
 }
 
-trait IndexParam extends TypeNameParam {
-
-  def index: String
+object IndexParam {
 
   @throws[ParameterException]
-  def loadRequiredIndex(ds: GeoMesaDataStore[_, _, _], mode: IndexMode): GeoMesaFeatureIndex[_, _, _] =
-    loadIndex(ds, mode).get
+  def loadIndex[DS <: GeoMesaDataStore[DS]](ds: DS,
+                                            typeName: String,
+                                            index: String,
+                                            mode: IndexMode): GeoMesaFeatureIndex[_, _] = {
+    val sft = ds.getSchema(typeName)
+    val indices = ds.manager.indices(sft, mode)
 
-  @throws[ParameterException]
-  def loadIndex(ds: GeoMesaDataStore[_, _, _], mode: IndexMode): Option[GeoMesaFeatureIndex[_, _, _]] = {
-    Option(index).filter(_.length > 0).map { name =>
-      val sft = ds.getSchema(featureName)
-      def all = ds.manager.indices(sft, None, mode).asInstanceOf[Seq[GeoMesaFeatureIndex[_, _, _]]]
-      ds.manager.indices(sft, Some(name), mode) match {
-        case Nil =>
-          throw new ParameterException(s"Specified index '$index' not found. Available indices are: " +
-              all.map(i => s"${i.name}, ${i.identifier}").mkString(", "))
-        case Seq(idx) =>
-          idx.asInstanceOf[GeoMesaFeatureIndex[_ <: GeoMesaDataStore[_, _, _], _ <: WrappedFeature, _]]
-        case s =>
-          throw new ParameterException(s"Specified index '$index' is ambiguous. Available indices are: " +
-              all.map(_.identifier).mkString(", "))
-      }
+    lazy val available = indices.flatMap(i => Seq(i.name, i.identifier)).distinct.mkString(", ")
+
+    def single(indices: Seq[GeoMesaFeatureIndex[_, _]]): Option[GeoMesaFeatureIndex[_, _]] = indices match {
+      case Nil => None
+      case Seq(i) => Some(i)
+      case _ => throw new ParameterException(s"Specified index '$index' is ambiguous. Available indices are: $available")
+    }
+
+    def byId: Option[GeoMesaFeatureIndex[_, _]] = indices.find(_.identifier.equalsIgnoreCase(index))
+    def byName: Option[GeoMesaFeatureIndex[_, _]] = single(indices.filter(_.name.equalsIgnoreCase(index)))
+    // check for attr vs join index name
+    def byJoin: Option[GeoMesaFeatureIndex[_, _]] = if (!index.equalsIgnoreCase(AttributeIndex.name)) { None } else {
+      single(indices.filter(_.name == AttributeIndex.JoinIndexName))
+    }
+
+    byId.orElse(byName).orElse(byJoin).getOrElse {
+      throw new ParameterException(s"Specified index '$index' not found. Available indices are: $available")
     }
   }
 }
 
+trait IndexParam {
+  def index: String
+}
+
 trait OptionalIndexParam extends IndexParam {
-  @Parameter(names = Array("--index"), description = "Specify a particular index to query", required = false)
+
+  @Parameter(names = Array("--index"), description = "Specify a particular GeoMesa index", required = false)
   var index: String = _
+
+  @throws[ParameterException]
+  def loadIndex[DS <: GeoMesaDataStore[DS]](ds: DS, typeName: String, mode: IndexMode): Option[GeoMesaFeatureIndex[_, _]] =
+    Option(index).filterNot(_.isEmpty).map(IndexParam.loadIndex(ds, typeName, _, mode))
 }
 
 trait RequiredIndexParam extends IndexParam {
+
   @Parameter(names = Array("--index"), description = "Specify a particular GeoMesa index", required = true)
   var index: String = _
+
+  @throws[ParameterException]
+  def loadIndex[DS <: GeoMesaDataStore[DS]](ds: DS, typeName: String, mode: IndexMode): GeoMesaFeatureIndex[_, _] =
+    IndexParam.loadIndex(ds, typeName, index, mode)
+}
+
+trait IndicesParam {
+
+  import scala.collection.JavaConverters._
+
+  @Parameter(names = Array("--index"), description = "Specify GeoMesa index(es) - comma-separate or use multiple flags", required = true)
+  var indexNames: java.util.List[String] = _
+
+  @throws[ParameterException]
+  def loadIndices[DS <: GeoMesaDataStore[DS]](ds: DS, typeName: String, mode: IndexMode): Seq[GeoMesaFeatureIndex[_, _]] =
+    indexNames.asScala.map(IndexParam.loadIndex(ds, typeName, _, mode))
 }
 
 trait DistributedRunParam {

@@ -12,7 +12,9 @@ import org.apache.accumulo.core.security.Authorizations
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithDataStore
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.Z_SPLITS_KEY
 import org.locationtech.geomesa.utils.index.GeoMesaSchemaValidator
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
@@ -51,10 +53,12 @@ class ConfigureShardsTest extends Specification with TestWithDataStore {
     "configure from spec" >> {
       addFeatures(features)
       var shardSet: Set[Long] = Set[Long]()
-      Z3Index.getTableNames(sft, ds).foreach { table =>
+      val index = ds.manager.indices(sft).find(_.name == Z3Index.name)
+      index must beSome
+      index.get.getTableNames().foreach { table =>
         ds.connector.createScanner(table, new Authorizations()).foreach { r =>
           val bytes = r.getKey.getRow.getBytes
-          val shard = bytes(1).toInt
+          val shard = bytes(0).toInt
           shardSet = shardSet + shard
         }
       }
@@ -63,7 +67,7 @@ class ConfigureShardsTest extends Specification with TestWithDataStore {
 
     "throw exception" >> {
       val sftPrivate = SimpleFeatureTypes.createType("private", spec)
-      sftPrivate.setZShards(128)
+      sftPrivate.getUserData.put(Z_SPLITS_KEY, "128")
       GeoMesaSchemaValidator.validate(sftPrivate) must throwAn[IllegalArgumentException]
     }
   }

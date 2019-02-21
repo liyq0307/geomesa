@@ -25,7 +25,7 @@ import org.geotools.data.simple.{SimpleFeatureReader, SimpleFeatureStore}
 import org.geotools.data.{Query, Transaction}
 import org.locationtech.geomesa.features.SerializationType.SerializationType
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.NamespaceConfig
-import org.locationtech.geomesa.index.geotools.{GeoMesaFeatureCollection, GeoMesaFeatureReader, GeoMesaFeatureSource, MetadataBackedDataStore}
+import org.locationtech.geomesa.index.geotools.{GeoMesaFeatureReader, MetadataBackedDataStore}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, MetadataStringSerializer}
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, HasGeoMesaStats, UnoptimizedRunnableStats}
 import org.locationtech.geomesa.kafka.data.KafkaCacheLoader.KafkaCacheLoaderImpl
@@ -41,6 +41,7 @@ import org.locationtech.geomesa.utils.cache.Ticker
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.TABLE_SHARING_KEY
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.InternalConfigs.SHARING_PREFIX_KEY
+import org.locationtech.geomesa.utils.io.CloseWithLogging
 import org.locationtech.geomesa.utils.zk.{ZookeeperLocking, ZookeeperMetadata}
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter.Filter
@@ -52,8 +53,6 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     extends MetadataBackedDataStore(config) with HasGeoMesaStats with ZookeeperLocking {
 
   import KafkaDataStore.{MetadataPath, TopicKey}
-
-  override protected def catalog: String = config.catalog
 
   override val metadata: GeoMesaMetadata[String] =
     new ZookeeperMetadata(s"${config.catalog}/$MetadataPath", config.zookeepers, MetadataStringSerializer)
@@ -70,6 +69,8 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     producerInitialized = true
     KafkaDataStore.producer(config)
   }
+
+  private val cleared = Collections.newSetFromMap(new ConcurrentHashMap[String, java.lang.Boolean]())
 
   private val caches = Caffeine.newBuilder().build(new CacheLoader[String, KafkaCacheLoader] {
     override def load(key: String): KafkaCacheLoader = {
@@ -89,7 +90,7 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     }
   })
 
-  private val runner = new KafkaQueryRunner(caches, stats, Some(config.authProvider))
+  private val runner = new KafkaQueryRunner(this, caches)
 
   // migrate old schemas, if any
   if (!metadata.read("migration", "check").exists(_.toBoolean)) {
@@ -160,9 +161,6 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     }
   }
 
-  protected def createFeatureCollection(query: Query, source: GeoMesaFeatureSource): GeoMesaFeatureCollection =
-    new GeoMesaFeatureCollection(source, query)
-
   /**
     * @see org.geotools.data.DataStore#getFeatureSource(org.opengis.feature.type.Name)
     * @param typeName simple feature type name
@@ -173,7 +171,7 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     if (sft == null) {
       throw new IOException(s"Schema '$typeName' has not been initialized. Please call 'createSchema' first.")
     }
-    new KafkaFeatureStore(this, sft, runner, caches.get(typeName), createFeatureCollection)
+    new KafkaFeatureStore(this, sft, runner, caches.get(typeName))
   }
 
   override def getFeatureReader(query: Query, transaction: Transaction): SimpleFeatureReader = {
@@ -190,7 +188,11 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     if (sft == null) {
       throw new IOException(s"Schema '$typeName' has not been initialized. Please call 'createSchema' first.")
     }
-    new ModifyKafkaFeatureWriter(sft, producer, config.serialization, filter)
+    val writer = new ModifyKafkaFeatureWriter(sft, producer, config.serialization, filter)
+    if (config.clearOnStart && cleared.add(typeName)) {
+      writer.clear()
+    }
+    writer
   }
 
   override def getFeatureWriterAppend(typeName: String, transaction: Transaction): KafkaFeatureWriter = {
@@ -198,15 +200,19 @@ class KafkaDataStore(val config: KafkaDataStoreConfig)
     if (sft == null) {
       throw new IOException(s"Schema '$typeName' has not been initialized. Please call 'createSchema' first.")
     }
-    new AppendKafkaFeatureWriter(sft, producer, config.serialization)
+    val writer = new AppendKafkaFeatureWriter(sft, producer, config.serialization)
+    if (config.clearOnStart && cleared.add(typeName)) {
+      writer.clear()
+    }
+    writer
   }
 
   override def dispose(): Unit = {
     import scala.collection.JavaConversions._
     if (producerInitialized) {
-      producer.close()
+      CloseWithLogging(producer)
     }
-    caches.asMap.valuesIterator.foreach(_.close())
+    caches.asMap.valuesIterator.foreach(CloseWithLogging.apply)
     caches.invalidateAll()
     super.dispose()
   }
@@ -339,18 +345,20 @@ object KafkaDataStore extends LazyLogging {
     }
   }
 
-  case class KafkaDataStoreConfig(catalog: String,
-                                  brokers: String,
-                                  zookeepers: String,
-                                  consumers: ConsumerConfig,
-                                  producers: ProducerConfig,
-                                  topics: TopicConfig,
-                                  serialization: SerializationType,
-                                  indices: IndexConfig,
-                                  looseBBox: Boolean,
-                                  authProvider: AuthorizationsProvider,
-                                  audit: Option[(AuditWriter, AuditProvider, String)],
-                                  namespace: Option[String]) extends NamespaceConfig
+  case class KafkaDataStoreConfig(
+      catalog: String,
+      brokers: String,
+      zookeepers: String,
+      consumers: ConsumerConfig,
+      producers: ProducerConfig,
+      clearOnStart: Boolean,
+      topics: TopicConfig,
+      serialization: SerializationType,
+      indices: IndexConfig,
+      looseBBox: Boolean,
+      authProvider: AuthorizationsProvider,
+      audit: Option[(AuditWriter, AuditProvider, String)],
+      namespace: Option[String]) extends NamespaceConfig
 
   case class ConsumerConfig(count: Int, properties: Map[String, String], readBack: Option[Duration])
 

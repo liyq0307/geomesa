@@ -19,6 +19,7 @@ import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.index.geoserver.ViewParams
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.iterators.{ArrowScan, DensityScan, StatsScan}
+import org.locationtech.geomesa.index.planning.QueryInterceptor.QueryInterceptorFactory
 import org.locationtech.geomesa.index.planning.QueryRunner
 import org.locationtech.geomesa.index.stats.GeoMesaStats
 import org.locationtech.geomesa.index.utils.Explainer
@@ -39,6 +40,9 @@ class LambdaQueryRunner(persistence: DataStore, transients: LoadingCache[String,
 
   // TODO pass explain through?
 
+  // query interceptors are handled separately by the persistent and transient layers
+  override protected val interceptors: QueryInterceptorFactory = QueryInterceptorFactory.empty()
+
   override def runQuery(sft: SimpleFeatureType, query: Query, explain: Explainer): CloseableIterator[SimpleFeature] = {
     val hints = configureQuery(sft, query).getHints // configure the query so we get viewparams, transforms, etc
     if (hints.isLambdaQueryPersistent && hints.isLambdaQueryTransient) {
@@ -47,7 +51,7 @@ class LambdaQueryRunner(persistence: DataStore, transients: LoadingCache[String,
       SelfClosingIterator(persistence.getFeatureReader(query, Transaction.AUTO_COMMIT))
     } else {
       // ensure that we still audit the query
-      val audit = Option(persistence).collect { case ds: GeoMesaDataStore[_, _, _] => ds.config.audit }.flatten
+      val audit = Option(persistence).collect { case ds: GeoMesaDataStore[_] => ds.config.audit }.flatten
       audit.foreach { case (writer, provider, typ) =>
         val stat = QueryEvent(
           s"$typ-lambda",
