@@ -15,6 +15,7 @@ import org.geotools.factory.Hints
 import org.locationtech.geomesa.curve.BinnedTime.TimeToBinnedTime
 import org.locationtech.geomesa.curve.TimePeriod.TimePeriod
 import org.locationtech.geomesa.curve.{BinnedTime, Z3SFC}
+import org.locationtech.geomesa.filter.FilterHelper.fromString
 import org.locationtech.geomesa.filter.FilterValues
 import org.locationtech.geomesa.index.conf.QueryHints.LOOSE_BBOX
 import org.locationtech.geomesa.index.conf.QueryProperties
@@ -24,28 +25,26 @@ import org.locationtech.geomesa.index.index.IndexKeySpace._
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.geotools.{GeometryUtils, WholeWorldPolygon}
 import org.locationtech.geomesa.utils.index.ByteArrays
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.sfcurve.IndexRange
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
 import scala.util.control.NonFatal
 
-object Z3IndexKeySpace extends Z3IndexKeySpace {
-  override def sfc(period: TimePeriod): Z3SFC = Z3SFC(period)
-}
+object Z3IndexKeySpace extends Z3IndexKeySpace
 
 trait Z3IndexKeySpace extends IndexKeySpace[Z3IndexValues, Z3IndexKey] {
 
   import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
-
-  def sfc(period: TimePeriod): Z3SFC
 
   override val indexKeyByteLength: Int = 10
 
   override def supports(sft: SimpleFeatureType): Boolean = sft.getDtgField.isDefined && sft.isPoints
 
   override def toIndexKey(sft: SimpleFeatureType, lenient: Boolean): SimpleFeature => Seq[Z3IndexKey] = {
-    val z3 = sfc(sft.getZ3Interval)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val z3 = Z3SFC(sft.getZ3Interval, xBounds, yBounds)
     val geomIndex = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
     val dtgIndex = sft.getDtgIndex.getOrElse(throw new IllegalStateException("Z3 index requires a valid date"))
     val timeToIndex = BinnedTime.timeToBinnedTime(sft.getZ3Interval)
@@ -54,7 +53,8 @@ trait Z3IndexKeySpace extends IndexKeySpace[Z3IndexValues, Z3IndexKey] {
   }
 
   override def toIndexKeyBytes(sft: SimpleFeatureType, lenient: Boolean): ToIndexKeyBytes = {
-    val z3 = sfc(sft.getZ3Interval)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val z3 = Z3SFC(sft.getZ3Interval, xBounds, yBounds)
     val geomIndex = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
     val dtgIndex = sft.getDtgIndex.getOrElse(throw new IllegalStateException("Z3 index requires a valid date"))
     val timeToIndex = BinnedTime.timeToBinnedTime(sft.getZ3Interval)
@@ -72,13 +72,25 @@ trait Z3IndexKeySpace extends IndexKeySpace[Z3IndexValues, Z3IndexKey] {
       throw new RuntimeException("Trying to execute a z3 query but the schema does not have a date")
     }
 
-    val z3 = sfc(sft.getZ3Interval)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val z3 = Z3SFC(sft.getZ3Interval, xBounds, yBounds)
 
     // standardize the two key query arguments:  polygon and date-range
 
     val geometries: FilterValues[Geometry] = {
-      val extracted = extractGeometries(filter, sft.getGeomField, sft.isPoints)
-      if (extracted.nonEmpty) { extracted } else { FilterValues(Seq(WholeWorldPolygon)) }
+      val wholePolygon = if (xBounds == (-180, 180) && yBounds == (-90, 90)) {
+        null
+      } else {
+        val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+          s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+        WKTUtils.read(geom)
+      }
+      val extracted = extractGeometries(filter, sft.getGeomField, sft.isPoints, wholePolygon)
+      if (extracted.nonEmpty) {
+        extracted
+      } else {
+        FilterValues(Seq(if (null == wholePolygon) WholeWorldPolygon else wholePolygon))
+      }
     }
 
     // since we don't apply a temporal filter, we pass handleExclusiveBounds to

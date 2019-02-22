@@ -48,8 +48,15 @@ class Z3Histogram(val sft: SimpleFeatureType,
 
   private val g = sft.indexOf(geom)
   private val d = sft.indexOf(dtg)
-
-  private val sfc = Z3SFC(period)
+  private val sfc = {
+    import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+    def fromString(s: String): ((Double, Double), (Double, Double)) = {
+      val Array(left, right, bottom, top) = s.split(",").map(_.toDouble)
+      ((left, right), (bottom, top))
+    }
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    Z3SFC(period, xBounds, yBounds)
+  }
   private val timeToBin = BinnedTime.timeToBinnedTime(period)
   private val binToDate = BinnedTime.binnedTimeToDate(period)
   private val minZ = sfc.index(minGeom.getX, minGeom.getY, sfc.time.min.toLong).z

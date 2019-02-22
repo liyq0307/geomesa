@@ -721,7 +721,7 @@ object GeohashUtils
    * To represent a geometry with successive coordinates having lon diff > 180 and not wrapping
    * the IDL, you must insert a waypoint such that the difference is less than 180
    */
-  def getInternationalDateLineSafeGeometry(targetGeom: Geometry): Try[Geometry] = {
+  def getInternationalDateLineSafeGeometry(targetGeom: Geometry, bTrans: Boolean = true): Try[Geometry] = {
 
     def degreesLonTranslation(lon: Double): Double = (((lon + 180) / 360.0).floor * -360).toInt
 
@@ -766,16 +766,20 @@ object GeohashUtils
     }
 
     Try {
-      // copy the geometry so that we don't modify the input - JTS mutates the geometry
-      // don't use the defaultGeometryFactory as it has limited precision
-      val copy = GeometryUtils.geoFactory.createGeometry(targetGeom)
-      val withinBoundsGeom =
-        if (targetGeom.getEnvelopeInternal.getMinX < -180 || targetGeom.getEnvelopeInternal.getMaxX > 180)
-          translateGeometry(copy)
-        else
-          copy
+      if (!bTrans) {
+        targetGeom
+      } else {
+        // copy the geometry so that we don't modify the input - JTS mutates the geometry
+        // don't use the defaultGeometryFactory as it has limited precision
+        val copy = GeometryUtils.geoFactory.createGeometry(targetGeom)
+        val withinBoundsGeom =
+          if (targetGeom.getEnvelopeInternal.getMinX < -180 || targetGeom.getEnvelopeInternal.getMaxX > 180)
+            translateGeometry(copy)
+          else
+            copy
 
-      JtsSpatialContext.GEO.makeShape(withinBoundsGeom, true, true).getGeom
+        JtsSpatialContext.GEO.makeShape(withinBoundsGeom, true, true).getGeom
+      }
     }
   }
 

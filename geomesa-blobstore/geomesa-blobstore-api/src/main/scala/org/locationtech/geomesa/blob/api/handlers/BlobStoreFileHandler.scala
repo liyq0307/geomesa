@@ -81,7 +81,7 @@ trait BlobStoreSimpleFeatureBuilder {
   val featureIdGenerator = new Z3FeatureIdGenerator
 
   def buildBlobSimpleFeature(fileName: String, geom: Geometry, dtg: Date): SimpleFeature = {
-    val z3id = Z3UuidGenerator.createUuid(geom, dtg.getTime, TimePeriod.Week)
+    val z3id = Z3UuidGenerator.createUuid(geom, dtg.getTime, TimePeriod.Week, sft)
 
     val builder = builderLocal.get()
     builder.set(FilenameFieldName, fileName)

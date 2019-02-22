@@ -711,8 +711,8 @@ class HistogramTest extends Specification with StatTestHelper {
         val toBounds =
           (WKTUtils.read("POINT (-91.7467224461 40.6750300641)"), WKTUtils.read("POINT (-91.7186474559 40.6933565934)"))
 
-        val from = new BinnedGeometryArray(10000, fromBounds)
-        val to = new BinnedGeometryArray(10000, toBounds)
+        val from = new BinnedGeometryArray(10000, fromBounds, sft)
+        val to = new BinnedGeometryArray(10000, toBounds, sft)
         (0 until 10000).foreach(i => from.counts(i) = 1)
 
         Histogram.copyInto(to, from) must not(throwAn[Exception])

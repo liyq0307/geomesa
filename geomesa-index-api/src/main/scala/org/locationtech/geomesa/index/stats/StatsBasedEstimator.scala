@@ -14,10 +14,12 @@ import java.util.Date
 import org.locationtech.jts.geom.Geometry
 import org.locationtech.geomesa.curve.{BinnedTime, Z2SFC, Z3SFC}
 import org.locationtech.geomesa.filter.Bounds.Bound
+import org.locationtech.geomesa.filter.FilterHelper.fromString
 import org.locationtech.geomesa.filter._
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools._
 import org.locationtech.geomesa.utils.stats._
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.sfcurve.IndexRange
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter._
@@ -161,10 +163,19 @@ trait StatsBasedEstimator {
   private def estimateSpatioTemporalCount(sft: SimpleFeatureType, filter: And): Option[Long] = {
     // currently we don't consider if the spatial predicate is actually AND'd with the temporal predicate...
     // TODO add filterhelper method that accurately pulls out the st values
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val wholePolygon = if (xBounds == (-180, 180.0) && yBounds == (-90, 90)) {
+      null
+    } else {
+      val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+        s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+      WKTUtils.read(geom)
+    }
+
     for {
       geomField  <- Option(sft.getGeomField)
       dateField  <- sft.getDtgField
-      geometries =  FilterHelper.extractGeometries(filter, geomField, sft.isPoints)
+      geometries =  FilterHelper.extractGeometries(filter, geomField, sft.isPoints, wholePolygon)
       if geometries.nonEmpty
       intervals  =  FilterHelper.extractIntervals(filter, dateField)
       if intervals.nonEmpty
@@ -214,7 +225,8 @@ trait StatsBasedEstimator {
       case None => 0L
       case Some(histogram) =>
         // time range for a chunk is 0 to 1 week (in seconds)
-        val sfc = Z3SFC(period)
+        val (xBounds, yBounds) = fromString(sft.getZBounds)
+        val sfc = Z3SFC(period, xBounds, yBounds)
         val (tmin, tmax) = (sfc.time.min.toLong, sfc.time.max.toLong)
         val xy = geometries.map(GeometryUtils.bounds)
 
@@ -309,22 +321,30 @@ trait StatsBasedEstimator {
     */
   private def estimateSpatialCount(sft: SimpleFeatureType, filter: Filter): Option[Long] = {
     import org.locationtech.geomesa.utils.conversions.ScalaImplicits.RichTraversableOnce
-
-    val geometries = FilterHelper.extractGeometries(filter, sft.getGeomField, sft.isPoints)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val wholePolygon = if (xBounds == (-180, 180) && yBounds == (-90, 90)) {
+      null
+    } else {
+      val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+        s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+      WKTUtils.read(geom)
+    }
+    val geometries = FilterHelper.extractGeometries(filter, sft.getGeomField, sft.isPoints, wholePolygon)
     if (geometries.isEmpty) {
       None
     } else if (geometries.disjoint) {
       Some(0L)
     } else {
       stats.getStats[Histogram[Geometry]](sft, Seq(sft.getGeomField)).headOption.map { histogram =>
+        val sfc = Z2SFC(xBounds, yBounds)
         val (zLo, zHi) = {
           val (xmin, ymin, _, _) = GeometryUtils.bounds(histogram.min)
           val (_, _, xmax, ymax) = GeometryUtils.bounds(histogram.max)
-          (Z2SFC.index(xmin, ymin).z, Z2SFC.index(xmax, ymax).z)
+          (sfc.index(xmin, ymin).z, sfc.index(xmax, ymax).z)
         }
         def inRange(r: IndexRange) = r.lower < zHi && r.upper > zLo
 
-        val ranges = Z2SFC.ranges(geometries.values.map(GeometryUtils.bounds), ZHistogramPrecision)
+        val ranges = sfc.ranges(geometries.values.map(GeometryUtils.bounds), ZHistogramPrecision)
         val indices = ranges.filter(inRange).flatMap { range =>
           val loIndex = Some(histogram.directIndex(range.lower)).filter(_ != -1).getOrElse(0)
           val hiIndex = Some(histogram.directIndex(range.upper)).filter(_ != -1).getOrElse(histogram.length - 1)

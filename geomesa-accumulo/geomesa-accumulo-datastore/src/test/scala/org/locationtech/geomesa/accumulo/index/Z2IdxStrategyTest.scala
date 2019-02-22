@@ -65,7 +65,7 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
         ds.connector.createScanner(table, new Authorizations()).foreach { r =>
           val bytes = r.getKey.getRow.getBytes
           val keyZ = Longs.fromByteArray(bytes.drop(2))
-          val (x, y) = Z2SFC.invert(Z2(keyZ))
+          val (x, y) = Z2SFC().invert(Z2(keyZ))
           println(s"row: $x $y")
         }
       }

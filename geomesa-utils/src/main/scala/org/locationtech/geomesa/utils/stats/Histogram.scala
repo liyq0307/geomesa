@@ -44,7 +44,7 @@ class Histogram[T] private [stats] (val sft: SimpleFeatureType,
   lazy val attribute: Int = i
 
   private val i = sft.indexOf(property)
-  private [stats] var bins: BinnedArray[T] = BinnedArray[T](initialBins, initialEndpoints)
+  private [stats] var bins: BinnedArray[T] = BinnedArray[T](initialBins, initialEndpoints, sft)
 
   def length: Int = bins.length
   def directIndex(value: Long): Int = bins.directIndex(value)
@@ -76,7 +76,7 @@ class Histogram[T] private [stats] (val sft: SimpleFeatureType,
       try {
         val i = bins.indexOf(value.asInstanceOf[T])
         if (i == -1) {
-          bins = Histogram.expandBins(value.asInstanceOf[T], bins)
+          bins = Histogram.expandBins(value.asInstanceOf[T], bins, sft)
           bins.add(value.asInstanceOf[T])
         } else {
           bins.counts(i) += 1
@@ -93,7 +93,7 @@ class Histogram[T] private [stats] (val sft: SimpleFeatureType,
       try {
         val i = bins.indexOf(value.asInstanceOf[T])
         if (i == -1) {
-          bins = Histogram.expandBins(value.asInstanceOf[T], bins)
+          bins = Histogram.expandBins(value.asInstanceOf[T], bins, sft)
           bins.add(value.asInstanceOf[T], -1)
         } else {
           bins.counts(i) -= 1
@@ -131,7 +131,7 @@ class Histogram[T] private [stats] (val sft: SimpleFeatureType,
       // no-op
     } else if (isEmpty) {
       // copy the data from the other histogram
-      bins = BinnedArray(other.length, other.bounds)
+      bins = BinnedArray(other.length, other.bounds, sft)
       var i = 0
       while (i < bins.length) {
         bins.counts(i) = other.bins.counts(i)
@@ -143,7 +143,7 @@ class Histogram[T] private [stats] (val sft: SimpleFeatureType,
       val newLength = math.max(length, other.length)
       if (newEndpoints != bounds || newLength != length) {
         // if the other hist was not 'contained' in this one, we have to re-create the bins
-        val newBins = BinnedArray(newLength, newEndpoints)
+        val newBins = BinnedArray(newLength, newEndpoints, sft)
         Histogram.copyInto(newBins, bins)
         bins = newBins
       }
@@ -214,10 +214,10 @@ object Histogram {
     *
     * Assumes that the value is not already within the bounds for the existing binned array.
     */
-  def expandBins[T](value: T, old: BinnedArray[T])(implicit defaults: MinMax.MinMaxDefaults[T],ct: ClassTag[T]): BinnedArray[T] = {
+  def expandBins[T](value: T, old: BinnedArray[T], sft: SimpleFeatureType)(implicit defaults: MinMax.MinMaxDefaults[T],ct: ClassTag[T]): BinnedArray[T] = {
     val min = defaults.min(value, old.bounds._1)
     val max = defaults.max(value, old.bounds._2)
-    val bins = BinnedArray[T](old.length, (min, max))
+    val bins = BinnedArray[T](old.length, (min, max), sft)
     copyInto(bins, old)
     bins
   }

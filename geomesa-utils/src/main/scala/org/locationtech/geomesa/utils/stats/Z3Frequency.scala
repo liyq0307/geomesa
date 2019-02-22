@@ -49,7 +49,15 @@ class Z3Frequency(val sft: SimpleFeatureType,
   private val d = sft.indexOf(dtg)
 
   private val mask = Frequency.getMask(precision)
-  private val sfc = Z3SFC(period)
+  private val sfc = {
+    import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+    def fromString(s: String): ((Double, Double), (Double, Double)) = {
+      val Array(left, right, bottom, top) = s.split(",").map(_.toDouble)
+      ((left, right), (bottom, top))
+    }
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    Z3SFC(period, xBounds, yBounds)
+  }
   private val timeToBin = BinnedTime.timeToBinnedTime(period)
 
   private [stats] val sketches = scala.collection.mutable.Map.empty[Short, CountMinSketch]

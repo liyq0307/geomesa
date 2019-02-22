@@ -16,15 +16,20 @@ import org.locationtech.sfcurve.zorder.{Z3, ZRange}
 /**
   * Z3 space filling curve
   *
-  * @param period time period used to bin results
+  * @param period    time period used to bin results
   * @param precision bits used per dimension - note all precisions must sum to less than 64
+  * @param xBounds   x方向极值
+  * @param yBounds   y方向极值
   */
-class Z3SFC(period: TimePeriod, precision: Int = 21) extends SpaceTimeFillingCurve[Z3] {
+class Z3SFC(period: TimePeriod,
+            precision: Int = 21,
+            xBounds: (Double, Double) = (-180d, 180d),
+            yBounds: (Double, Double) = (-90d, 90d)) extends SpaceTimeFillingCurve[Z3] {
 
   require(precision > 0 && precision < 22, "Precision (bits) per dimension must be in [1,21]")
 
-  override val lon: NormalizedDimension  = NormalizedLon(precision)
-  override val lat: NormalizedDimension  = NormalizedLat(precision)
+  override val lon: NormalizedDimension  = new BitNormalizedDimension(xBounds._1, xBounds._2, precision)
+  override val lat: NormalizedDimension  = new BitNormalizedDimension(yBounds._1, yBounds._2, precision)
   override val time: NormalizedDimension = NormalizedTime(precision, BinnedTime.maxOffset(period).toDouble)
 
   val wholePeriod = Seq((time.min.toLong, time.max.toLong))
@@ -74,5 +79,27 @@ object Z3SFC {
     case TimePeriod.Week  => SfcWeek
     case TimePeriod.Month => SfcMonth
     case TimePeriod.Year  => SfcYear
+  }
+
+  private val cache = new java.util.concurrent.ConcurrentHashMap[Int, Z3SFC]()
+
+  def apply(period: TimePeriod,
+            xBounds: (Double, Double),
+            yBounds: (Double, Double)): Z3SFC = {
+    var sfc = cache.get(21)
+
+    if (sfc == null) {
+      sfc = {
+        period match {
+          case TimePeriod.Day => new Z3SFC(TimePeriod.Day, 21, xBounds, yBounds)
+          case TimePeriod.Week => new Z3SFC(TimePeriod.Week, 21, xBounds, yBounds)
+          case TimePeriod.Month => new Z3SFC(TimePeriod.Month, 21, xBounds, yBounds)
+          case TimePeriod.Year => new Z3SFC(TimePeriod.Year, 21, xBounds, yBounds)
+        }
+      }
+      cache.put(21, sfc)
+    }
+
+    sfc
   }
 }

@@ -11,6 +11,7 @@ package org.locationtech.geomesa.index.index.z2
 import org.locationtech.jts.geom.Geometry
 import org.geotools.factory.Hints
 import org.locationtech.geomesa.curve.XZ2SFC
+import org.locationtech.geomesa.filter.FilterHelper.fromString
 import org.locationtech.geomesa.filter.FilterValues
 import org.locationtech.geomesa.index.conf.QueryProperties
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.GeoMesaDataStoreConfig
@@ -19,6 +20,7 @@ import org.locationtech.geomesa.index.index.IndexKeySpace._
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.geotools.{GeometryUtils, WholeWorldPolygon}
 import org.locationtech.geomesa.utils.index.ByteArrays
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
@@ -35,13 +37,15 @@ trait XZ2IndexKeySpace extends IndexKeySpace[XZ2IndexValues, Long] {
   override def supports(sft: SimpleFeatureType): Boolean = sft.nonPoints
 
   override def toIndexKey(sft: SimpleFeatureType, lenient: Boolean): SimpleFeature => Seq[Long] = {
-    val sfc: XZ2SFC = XZ2SFC(sft.getXZPrecision)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val sfc: XZ2SFC = XZ2SFC(sft.getXZPrecision, xBounds, yBounds)
     val geomIndex = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
     getXZValue(sfc, geomIndex, lenient)
   }
 
   override def toIndexKeyBytes(sft: SimpleFeatureType, lenient: Boolean): ToIndexKeyBytes = {
-    val sfc: XZ2SFC = XZ2SFC(sft.getXZPrecision)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val sfc: XZ2SFC = XZ2SFC(sft.getXZPrecision, xBounds, yBounds)
     val geomIndex = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
     getXZValueBytes(sfc, geomIndex, lenient)
   }
@@ -51,14 +55,28 @@ trait XZ2IndexKeySpace extends IndexKeySpace[XZ2IndexValues, Long] {
 
     // TODO GEOMESA-2377 clean up duplicate code blocks in Z2/XZ2/Z3/XZ3IndexKeySpace
 
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+
     val geometries: FilterValues[Geometry] = {
-      val extracted = extractGeometries(filter, sft.getGeomField, sft.isPoints)
-      if (extracted.nonEmpty) { extracted } else { FilterValues(Seq(WholeWorldPolygon)) }
+      val wholePolygon = if (xBounds == (-180, 180) && yBounds == (-90, 90)) {
+        null
+      } else {
+        val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+          s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+        WKTUtils.read(geom)
+      }
+
+      val extracted = extractGeometries(filter, sft.getGeomField, sft.isPoints, wholePolygon)
+      if (extracted.nonEmpty) {
+        extracted
+      } else {
+        FilterValues(Seq(if (null == wholePolygon) WholeWorldPolygon else wholePolygon))
+      }
     }
 
     explain(s"Geometries: $geometries")
 
-    val sfc = XZ2SFC(sft.getXZPrecision)
+    val sfc = XZ2SFC(sft.getXZPrecision, xBounds, yBounds)
 
     // compute our ranges based on the coarse bounds for our query
     val xy: Seq[(Double, Double, Double, Double)] = {

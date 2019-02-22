@@ -9,7 +9,9 @@
 package org.locationtech.geomesa.filter.index
 
 import org.locationtech.geomesa.filter.FilterHelper
+import org.locationtech.geomesa.filter.FilterHelper.fromString
 import org.locationtech.geomesa.utils.index.SpatialIndex
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
@@ -29,7 +31,15 @@ trait SpatialIndexSupport {
     */
   def query(filter: Filter): Iterator[SimpleFeature] = {
     if (filter == Filter.INCLUDE) { index.query() } else {
-      val geometries = FilterHelper.extractGeometries(filter, sft.getGeomField, intersect = false)
+      val (xBounds, yBounds) = fromString(sft.getZBounds)
+      val wholePolygon = if (xBounds == (-180, 180) && yBounds == (-90, 90)) {
+        null
+      } else {
+        val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+          s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+        WKTUtils.read(geom)
+      }
+      val geometries = FilterHelper.extractGeometries(filter, sft.getGeomField, intersect = false, wholePolygon)
       if (geometries.isEmpty) { index.query().filter(filter.evaluate) } else {
         val env = geometries.values.head.getEnvelopeInternal
         geometries.values.tail.foreach(g => env.expandToInclude(g.getEnvelopeInternal))

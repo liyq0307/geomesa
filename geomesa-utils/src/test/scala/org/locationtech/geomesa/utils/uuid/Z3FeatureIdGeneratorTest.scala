@@ -44,25 +44,25 @@ class Z3FeatureIdGeneratorTest extends Specification {
 
   "Z3UuidGenerator" should {
     "create uuids with correct formats for a Point" >> {
-      val id = Z3UuidGenerator.createUuid(point, time, TimePeriod.Week)
+      val id = Z3UuidGenerator.createUuid(point, time, TimePeriod.Week, sft)
       id.toString.substring(0, 18) mustEqual "e0945639-5c84-4f5c"
       id.version() mustEqual 4
       id.variant() mustEqual 2
     }
 
     "create uuids with correct formats for a Polygon" >> {
-      val id = Z3UuidGenerator.createUuid(polygon, time, TimePeriod.Week)
+      val id = Z3UuidGenerator.createUuid(polygon, time, TimePeriod.Week, sft)
       id.toString.substring(0, 18) mustEqual "90945639-5c86-4fcd"
       id.version() mustEqual 4
       id.variant() mustEqual 2
     }
 
     "throw an exception on null point" >> {
-      Z3UuidGenerator.createUuid(null: Point, time, TimePeriod.Week) must throwAn[IllegalArgumentException]
+      Z3UuidGenerator.createUuid(null: Point, time, TimePeriod.Week, sft) must throwAn[IllegalArgumentException]
     }
 
     "throw an exception on null geometry" >> {
-      Z3UuidGenerator.createUuid(null: Geometry, time, TimePeriod.Week) must throwAn[IllegalArgumentException]
+      Z3UuidGenerator.createUuid(null: Geometry, time, TimePeriod.Week, sft) must throwAn[IllegalArgumentException]
     }
 
     "return a reasonable UUID from a full feature" >> {

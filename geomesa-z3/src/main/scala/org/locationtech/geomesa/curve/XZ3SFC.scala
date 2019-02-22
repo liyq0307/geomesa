@@ -398,6 +398,18 @@ object XZ3SFC {
     sfc
   }
 
+  def apply(g: Short,
+            period: TimePeriod,
+            xBounds: (Double, Double),
+            yBounds: (Double, Double)): XZ3SFC = {
+    var sfc = cache.get((g, period))
+    if (sfc == null) {
+      sfc = new XZ3SFC(g, xBounds, yBounds, (0.0, BinnedTime.maxOffset(period).toDouble))
+      cache.put((g, period), sfc)
+    }
+    sfc
+  }
+
   /**
     * Region being queried. Bounds are normalized to [0-1].
     *

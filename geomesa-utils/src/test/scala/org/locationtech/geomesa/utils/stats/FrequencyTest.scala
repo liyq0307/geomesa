@@ -16,6 +16,7 @@ import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.curve.{BinnedTime, TimePeriod, Z2SFC}
 import org.locationtech.geomesa.utils.geotools.GeoToolsDateFormat
+import org.locationtech.geomesa.utils.stats.Frequency.fromString
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.sfcurve.zorder.Z2
 import org.specs2.mutable.Specification
@@ -59,9 +60,12 @@ class FrequencyTest extends Specification with StatTestHelper {
   "Frequency stat" should {
 
     "enumerate ranges" >> {
-      val min = Z2SFC.invert(Z2(2, 2))
-      val max = Z2SFC.invert(Z2(3, 6))
-      val ranges = Z2SFC.ranges(Seq((min._1, min._2, max._1, max._2)))
+      import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+      val (xBounds, yBounds) = fromString(sft.getZBounds)
+      val sfc = Z2SFC(xBounds, yBounds)
+      val min = sfc.invert(Z2(2, 2))
+      val max = sfc.invert(Z2(3, 6))
+      val ranges = sfc.ranges(Seq((min._1, min._2, max._1, max._2)))
       val indices = Frequency.enumerate(ranges, 64).toSeq
       indices must containTheSameElementsAs(Seq(12, 13, 14, 15, 36, 37, 38, 39, 44, 45))
     }

@@ -369,6 +369,17 @@ object XZ2SFC {
     sfc
   }
 
+  def apply(g: Short, xBounds: (Double, Double), yBounds: (Double, Double)): XZ2SFC = {
+    var sfc = cache.get(g)
+
+    if (sfc == null) {
+      sfc = new XZ2SFC(g, xBounds, yBounds)
+      cache.put(g, sfc)
+    }
+
+    sfc
+  }
+
   /**
     * Region being queried. Bounds are normalized to [0-1].
     *

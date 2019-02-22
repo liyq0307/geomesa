@@ -75,39 +75,41 @@ object Z3UuidGenerator extends RandomLsbUuidGenerator with LazyLogging {
     }
 
     if (sft.isPoints) {
-      createUuid(pt.asInstanceOf[Point], time, sft.getZ3Interval)
+      createUuid(pt.asInstanceOf[Point], time, sft.getZ3Interval, sft)
     } else {
       import org.locationtech.geomesa.utils.geotools.Conversions.RichGeometry
-      createUuid(pt.asInstanceOf[Geometry].safeCentroid(), time, sft.getZ3Interval)
+      createUuid(pt.asInstanceOf[Geometry].safeCentroid(), time, sft.getZ3Interval, sft)
     }
   }
 
   /**
     * Create a UUID based on the raw values that make up the z3
     *
-    * @param geom geometry
-    * @param time millis since java epoch
+    * @param geom   geometry
+    * @param time   millis since java epoch
     * @param period z3 time period
+    * @param sft    SimpleFeatureType
     * @return
     */
-  def createUuid(geom: Geometry, time: Long, period: TimePeriod): UUID = {
+  def createUuid(geom: Geometry, time: Long, period: TimePeriod, sft: SimpleFeatureType): UUID = {
     import org.locationtech.geomesa.utils.geotools.Conversions.RichGeometry
 
     if (geom == null) {
       throw new IllegalArgumentException(NullGeom)
     }
-    createUuid(geom.safeCentroid(), time, period)
+    createUuid(geom.safeCentroid(), time, sft.getZ3Interval, sft)
   }
 
   /**
     * Create a UUID based on the raw values that make up the z3, optimized for point geometries
     *
-    * @param pt point
-    * @param time millis since java epoch
+    * @param pt     point
+    * @param time   millis since java epoch
     * @param period z3 time period
+    * @param sft    SimpleFeatureType
     * @return
     */
-  def createUuid(pt: Point, time: Long, period: TimePeriod): UUID = {
+  def createUuid(pt: Point, time: Long, period: TimePeriod, sft: SimpleFeatureType): UUID = {
     if (pt == null) {
       throw new IllegalArgumentException(NullGeom)
     }
@@ -116,9 +118,16 @@ object Z3UuidGenerator extends RandomLsbUuidGenerator with LazyLogging {
     // this uses the same temp array we use later, so be careful with the order this gets called
     val leastSigBits = createRandomLsb()
 
+    def fromString(s: String): ((Double, Double), (Double, Double)) = {
+      val Array(left, right, bottom, top) = s.split(",").map(_.toDouble)
+      ((left, right), (bottom, top))
+    }
+
     val z3 = {
+      val period = sft.getZ3Interval
       val BinnedTime(b, t) = BinnedTime.timeToBinnedTime(period)(time)
-      val z = Z3SFC(period).index(pt.getX, pt.getY, t).z
+      val (xBounds, yBounds) = fromString(sft.getZBounds)
+      val z = Z3SFC(period, xBounds, yBounds).index(pt.getX, pt.getY, t).z
       Bytes.concat(Shorts.toByteArray(b), Longs.toByteArray(z))
     }
 

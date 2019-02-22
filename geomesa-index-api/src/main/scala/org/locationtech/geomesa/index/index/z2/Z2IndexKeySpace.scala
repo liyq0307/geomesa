@@ -8,9 +8,9 @@
 
 package org.locationtech.geomesa.index.index.z2
 
-import org.locationtech.jts.geom.{Geometry, Point}
 import org.geotools.factory.Hints
 import org.locationtech.geomesa.curve.Z2SFC
+import org.locationtech.geomesa.filter.FilterHelper.fromString
 import org.locationtech.geomesa.filter.FilterValues
 import org.locationtech.geomesa.index.conf.QueryHints.LOOSE_BBOX
 import org.locationtech.geomesa.index.conf.QueryProperties
@@ -20,20 +20,18 @@ import org.locationtech.geomesa.index.index.IndexKeySpace._
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.geotools.{GeometryUtils, WholeWorldPolygon}
 import org.locationtech.geomesa.utils.index.ByteArrays
+import org.locationtech.geomesa.utils.text.WKTUtils
+import org.locationtech.jts.geom.{Geometry, Point}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
 import scala.util.control.NonFatal
 
-object Z2IndexKeySpace extends Z2IndexKeySpace {
-  override val sfc: Z2SFC = Z2SFC
-}
+object Z2IndexKeySpace extends Z2IndexKeySpace
 
 trait Z2IndexKeySpace extends IndexKeySpace[Z2IndexValues, Long] {
 
   import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
-
-  def sfc: Z2SFC
 
   override val indexKeyByteLength: Int = 8
 
@@ -41,12 +39,16 @@ trait Z2IndexKeySpace extends IndexKeySpace[Z2IndexValues, Long] {
 
   override def toIndexKey(sft: SimpleFeatureType, lenient: Boolean): SimpleFeature => Seq[Long] = {
     val geomIndex = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
-    getZValue(geomIndex, lenient)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val sfc = Z2SFC(xBounds, yBounds)
+    getZValue(sfc, geomIndex, lenient)
   }
 
   override def toIndexKeyBytes(sft: SimpleFeatureType, lenient: Boolean): ToIndexKeyBytes = {
     val geomIndex = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
-    getZValueBytes(geomIndex, lenient)
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val sfc = Z2SFC(xBounds, yBounds)
+    getZValueBytes(sfc, geomIndex, lenient)
   }
 
   override def getIndexValues(sft: SimpleFeatureType, filter: Filter, explain: Explainer): Z2IndexValues = {
@@ -54,9 +56,24 @@ trait Z2IndexKeySpace extends IndexKeySpace[Z2IndexValues, Long] {
 
     // TODO GEOMESA-2377 clean up duplicate code blocks in Z2/XZ2/Z3/XZ3IndexKeySpace
 
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val sfc = Z2SFC(xBounds, yBounds)
+
     val geometries: FilterValues[Geometry] = {
-      val extracted = extractGeometries(filter, sft.getGeomField, sft.isPoints)
-      if (extracted.nonEmpty) { extracted } else { FilterValues(Seq(WholeWorldPolygon)) }
+      val wholePolygon = if (xBounds == (-180, 180) && yBounds == (-90, 90)) {
+        null
+      } else {
+        val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+          s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+        WKTUtils.read(geom)
+      }
+
+      val extracted = extractGeometries(filter, sft.getGeomField, sft.isPoints, wholePolygon)
+      if (extracted.nonEmpty) {
+        extracted
+      } else {
+        FilterValues(Seq(if (null == wholePolygon) WholeWorldPolygon  else wholePolygon))
+      }
     }
 
     explain(s"Geometries: $geometries")
@@ -77,7 +94,7 @@ trait Z2IndexKeySpace extends IndexKeySpace[Z2IndexValues, Long] {
   }
 
   override def getRanges(values: Z2IndexValues, multiplier: Int): Iterator[ScanRange[Long]] = {
-    val Z2IndexValues(_, _, xy) = values
+    val Z2IndexValues(sfc, _, xy) = values
     if (xy.isEmpty) { Iterator.empty } else {
       // note: `target` will always be Some, as ScanRangesTarget has a default value
       val target = QueryProperties.ScanRangesTarget.option.map(t => math.max(1, t.toInt / multiplier))
@@ -119,7 +136,7 @@ trait Z2IndexKeySpace extends IndexKeySpace[Z2IndexValues, Long] {
     !looseBBox || !simpleGeoms
   }
 
-  private def getZValue(geomIndex: Int, lenient: Boolean)(feature: SimpleFeature): Seq[Long] = {
+  private def getZValue(sfc: Z2SFC, geomIndex: Int, lenient: Boolean)(feature: SimpleFeature): Seq[Long] = {
     val geom = feature.getAttribute(geomIndex).asInstanceOf[Point]
     if (geom == null) {
       throw new IllegalArgumentException(s"Null geometry in feature ${feature.getID}")
@@ -129,7 +146,8 @@ trait Z2IndexKeySpace extends IndexKeySpace[Z2IndexValues, Long] {
     }
   }
 
-  private def getZValueBytes(geomIndex: Int,
+  private def getZValueBytes(sfc: Z2SFC,
+                             geomIndex: Int,
                              lenient: Boolean)
                             (prefix: Seq[Array[Byte]],
                              feature: SimpleFeature,

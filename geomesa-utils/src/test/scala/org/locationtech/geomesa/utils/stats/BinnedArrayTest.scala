@@ -245,7 +245,7 @@ class BinnedArrayTest extends Specification with StatTestHelper {
       def toPoint(x: Double, y: Double) = WKTUtils.read(s"POINT ($x $y)")
       val xys = (1 to 18).flatMap(i => (1 to 9).map((i, _)))
 
-      val array = new BinnedGeometryArray(4, (toPoint(-180, -90), toPoint(180, 90)))
+      val array = new BinnedGeometryArray(4, (toPoint(-180, -90), toPoint(180, 90)), sft)
       forall(xys) { case (x, y) => array.indexOf(toPoint(-10 * x, -10 * y)) must beBetween(0, 3) }
       forall(xys) { case (x, y) => array.indexOf(toPoint(-10 * x,  10 * y)) must beBetween(0, 3) }
       forall(xys) { case (x, y) => array.indexOf(toPoint( 10 * x, -10 * y)) must beBetween(0, 3) }
@@ -264,7 +264,7 @@ class BinnedArrayTest extends Specification with StatTestHelper {
     "not provide geometry bounds that are out of order" >> {
       val lowerBound = WKTUtils.read("POINT (-87.04006865017121 15.836863706743756)")
       val upperBound = WKTUtils.read("POINT (-64.42119213027004 52.51324361307232)")
-      val array = new BinnedGeometryArray(10, (lowerBound, upperBound))
+      val array = new BinnedGeometryArray(10, (lowerBound, upperBound), sft)
       forall(0 until 10) { i =>
         val (min, max) = array.bounds(i)
         val lo = array.indexOf(min)

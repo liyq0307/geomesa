@@ -335,5 +335,8 @@ object RichSimpleFeatureType {
     def removeAllKeywords(): Unit = sft.getUserData.remove(KEYWORDS_KEY)
 
     def userData[T](key: AnyRef): Option[T] = Option(sft.getUserData.get(key).asInstanceOf[T])
+
+    def setZBounds(bounds: String): Unit = sft.getUserData.put(Z_BOUNDS, bounds)
+    def getZBounds: String = userData[String](Z_BOUNDS).map(_.toString).getOrElse("-180, 180, -90, 90")
   }
 }

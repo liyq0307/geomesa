@@ -14,7 +14,9 @@ import java.util.{Date, Locale}
 import org.locationtech.jts.geom.{Coordinate, Geometry, Point}
 import org.locationtech.geomesa.curve.Z2SFC
 import org.locationtech.geomesa.utils.geotools.GeometryUtils
+import org.locationtech.geomesa.utils.stats.Frequency.fromString
 import org.locationtech.sfcurve.zorder.Z2
+import org.opengis.feature.simple.SimpleFeatureType
 
 import scala.reflect.ClassTag
 
@@ -103,7 +105,7 @@ abstract class BinnedArray[T](val length: Int, val bounds: (T, T)) {
 }
 
 object BinnedArray {
-  def apply[T](length: Int, bounds: (T, T))(implicit c: ClassTag[T]): BinnedArray[T] = {
+  def apply[T](length: Int, bounds: (T, T), sft: SimpleFeatureType)(implicit c: ClassTag[T]): BinnedArray[T] = {
     val clas = c.runtimeClass
     val ba = if (clas == classOf[String]) {
       new BinnedStringArray(length, bounds.asInstanceOf[(String, String)])
@@ -118,7 +120,7 @@ object BinnedArray {
     } else if (classOf[Date].isAssignableFrom(clas)) {
       new BinnedDateArray(length, bounds.asInstanceOf[(Date, Date)])
     } else if (classOf[Geometry].isAssignableFrom(clas)) {
-      new BinnedGeometryArray(length, bounds.asInstanceOf[(Geometry, Geometry)])
+      new BinnedGeometryArray(length, bounds.asInstanceOf[(Geometry, Geometry)], sft)
     } else {
       throw new UnsupportedOperationException(s"BinnedArray not implemented for ${clas.getName}")
     }
@@ -209,20 +211,29 @@ class BinnedDateArray(length: Int, bounds: (Date, Date))
   * @param length number of bins
   * @param bounds upper and lower bounds for the input values
   */
-class BinnedGeometryArray(length: Int, bounds: (Geometry, Geometry))
+class BinnedGeometryArray(length: Int, bounds: (Geometry, Geometry), sft: SimpleFeatureType)
     extends WholeNumberBinnedArray[Geometry](length, bounds) {
+  import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+
+  val (xBounds, yBounds) = if (null != sft) {
+    fromString(sft.getZBounds)
+  } else {
+    ((-180d, 180d), (-90d, 90d))
+  }
 
   override protected def convertToLong(value: Geometry): Long = {
     import org.locationtech.geomesa.utils.geotools.Conversions.RichGeometry
+
     val centroid = value match {
       case p: Point => p
       case g => g.safeCentroid()
     }
-    Z2SFC.index(centroid.getX, centroid.getY, lenient = true).z
+
+    Z2SFC(xBounds, yBounds).index(centroid.getX, centroid.getY, lenient = true).z
   }
 
   override protected def convertFromLong(value: Long): Geometry = {
-    val (x, y) = Z2SFC.invert(new Z2(value))
+    val (x, y) = Z2SFC(xBounds, yBounds).invert(new Z2(value))
     GeometryUtils.geoFactory.createPoint(new Coordinate(x, y))
   }
 }

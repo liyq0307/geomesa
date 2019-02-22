@@ -11,12 +11,14 @@ package org.locationtech.geomesa.index.planning
 import org.geotools.data.Query
 import org.geotools.factory.Hints
 import org.geotools.geometry.jts.ReferencedEnvelope
+import org.locationtech.geomesa.filter.FilterHelper.fromString
 import org.locationtech.geomesa.filter.visitor.QueryPlanFilterVisitor
 import org.locationtech.geomesa.filter.{FilterHelper, andFilters, ff}
 import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.index.geoserver.ViewParams
 import org.locationtech.geomesa.index.utils.{ExplainLogging, Explainer}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
@@ -58,8 +60,18 @@ trait QueryRunner {
     QueryPlanner.setMaxFeatures(query)
 
     // add the bbox from the density query to the filter, if there is no more restrictive filter
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    val wholePolygon = if (xBounds == (-180, 180) && yBounds == (-90, 90)) {
+      null
+    } else {
+      val geom = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+        s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+      WKTUtils.read(geom)
+    }
+
     query.getHints.getDensityEnvelope.foreach { env =>
-      val geoms = FilterHelper.extractGeometries(query.getFilter, sft.getGeomField)
+
+      val geoms = FilterHelper.extractGeometries(query.getFilter, sft.getGeomField, geom = wholePolygon)
       if (geoms.isEmpty || geoms.exists(g => !env.contains(g.getEnvelopeInternal))) {
         val bbox = ff.bbox(ff.property(sft.getGeometryDescriptor.getLocalName), env.asInstanceOf[ReferencedEnvelope])
         if (query.getFilter == Filter.INCLUDE) {

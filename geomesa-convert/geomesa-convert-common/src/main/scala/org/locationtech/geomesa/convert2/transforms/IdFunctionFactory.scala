@@ -38,7 +38,7 @@ class IdFunctionFactory extends TransformerFunctionFactory with LazyLogging {
     val geom = args(0).asInstanceOf[Point]
     val date = args(1).asInstanceOf[Date]
     val interval = TimePeriod.withName(args(2).asInstanceOf[String])
-    try { Z3UuidGenerator.createUuid(geom, date.getTime, interval).toString } catch {
+    try { Z3UuidGenerator.createUuid(geom, date.getTime, interval, null).toString } catch {
       case NonFatal(e) =>
         logger.warn(s"Invalid z3 values for UUID: $geom $date $interval: $e")
         UUID.randomUUID().toString
@@ -49,7 +49,7 @@ class IdFunctionFactory extends TransformerFunctionFactory with LazyLogging {
     val geom = args(0).asInstanceOf[Geometry]
     val date = args(1).asInstanceOf[Date]
     val interval = TimePeriod.withName(args(2).asInstanceOf[String])
-    try { Z3UuidGenerator.createUuid(geom, date.getTime, interval).toString } catch {
+    try { Z3UuidGenerator.createUuid(geom, date.getTime, interval, null).toString } catch {
       case NonFatal(e) =>
         logger.warn(s"Invalid z3 values for UUID: $geom $date $interval: $e")
         UUID.randomUUID().toString

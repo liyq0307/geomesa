@@ -8,21 +8,40 @@
 
 package org.locationtech.geomesa.curve
 
-import org.locationtech.geomesa.curve.NormalizedDimension.{NormalizedLat, NormalizedLon}
+import org.locationtech.geomesa.curve.NormalizedDimension.BitNormalizedDimension
 import org.locationtech.sfcurve.IndexRange
 import org.locationtech.sfcurve.zorder.{Z2, ZRange}
 
-object Z2SFC extends Z2SFC(31)
+object Z2SFC {
+  private val cache = new java.util.concurrent.ConcurrentHashMap[Int, Z2SFC]()
+
+  def apply(): Z2SFC = new Z2SFC(31)
+
+  def apply(xBounds: (Double, Double), yBounds: (Double, Double)): Z2SFC = {
+    var sfc = cache.get(31)
+
+    if (sfc == null) {
+      sfc = new Z2SFC(31, xBounds, yBounds)
+      cache.put(31, sfc)
+    }
+
+    sfc
+  }
+}
 
 /**
   * z2 space-filling curve
   *
   * @param precision number of bits used per dimension - note sum must be less than 64
+  * @param xBounds   x方向极值
+  * @param yBounds   y方向极值
   */
-class Z2SFC(precision: Int) extends SpaceFillingCurve[Z2] {
+class Z2SFC(precision: Int,
+            xBounds: (Double, Double) = (-180d, 180d),
+            yBounds: (Double, Double) = (-90d, 90d)) extends SpaceFillingCurve[Z2] {
 
-  override val lon: NormalizedDimension = NormalizedLon(precision)
-  override val lat: NormalizedDimension = NormalizedLat(precision)
+  override val lon: NormalizedDimension = new BitNormalizedDimension(xBounds._1, xBounds._2, precision)
+  override val lat: NormalizedDimension = new BitNormalizedDimension(yBounds._1, yBounds._2, precision)
 
   override def index(x: Double, y: Double, lenient: Boolean = false): Z2 = {
     try {

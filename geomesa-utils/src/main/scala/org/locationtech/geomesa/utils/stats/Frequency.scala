@@ -64,8 +64,8 @@ class Frequency[T] private [stats] (val sft: SimpleFeatureType,
   private [stats] def newSketch = CountMinSketch(eps, confidence, Frequency.Seed)
   private val timeToBin = BinnedTime.timeToBinnedTime(period)
 
-  private val addAttribute = Frequency.add[T](ct.runtimeClass.asInstanceOf[Class[T]], precision)
-  private val getCount = Frequency.count[T](ct.runtimeClass.asInstanceOf[Class[T]], precision)
+  private val addAttribute = Frequency.add[T](ct.runtimeClass.asInstanceOf[Class[T]], precision, sft)
+  private val getCount = Frequency.count[T](ct.runtimeClass.asInstanceOf[Class[T]], precision, sft)
 
   /**
     * Gets the time bins covered by this frequency
@@ -242,10 +242,10 @@ object Frequency {
     }
   }
 
-  private def add[T](clas: Class[T], precision: Int): (IFrequency, T) => Unit = {
+  private def add[T](clas: Class[T], precision: Int, sft: SimpleFeatureType): (IFrequency, T) => Unit = {
     if (classOf[Geometry].isAssignableFrom(clas)) {
       val mask = getMask(precision)
-      (sketch, value) => sketch.add(geomToKey(value.asInstanceOf[Geometry], mask), 1L)
+      (sketch, value) => sketch.add(geomToKey(value.asInstanceOf[Geometry], mask, sft), 1L)
     } else if (classOf[Date].isAssignableFrom(clas)) {
       (sketch, value) => sketch.add(dateToKey(value.asInstanceOf[Date], precision), 1L)
     } else if (clas == classOf[String]) {
@@ -263,10 +263,10 @@ object Frequency {
     }
   }
 
-  private def count[T](clas: Class[T], precision: Int): (IFrequency, T) => Long = {
+  private def count[T](clas: Class[T], precision: Int, sft: SimpleFeatureType): (IFrequency, T) => Long = {
     if (classOf[Geometry].isAssignableFrom(clas)) {
       val mask = getMask(precision)
-      (sketch, value) => sketch.estimateCount(geomToKey(value.asInstanceOf[Geometry], mask))
+      (sketch, value) => sketch.estimateCount(geomToKey(value.asInstanceOf[Geometry], mask, sft))
     } else if (classOf[Date].isAssignableFrom(clas)) {
       (sketch, value) => sketch.estimateCount(dateToKey(value.asInstanceOf[Date], precision))
     } else if (clas == classOf[String]) {
@@ -290,10 +290,18 @@ object Frequency {
     Long.MaxValue << (64 - precision)
   }
 
-  private [stats] def geomToKey(value: Geometry, mask: Long): Long = {
+  private [stats] def fromString(s: String): ((Double, Double), (Double, Double)) = {
+    val Array(left, right, bottom, top) = s.split(",").map(_.toDouble)
+    ((left, right), (bottom, top))
+  }
+
+  private[stats] def geomToKey(value: Geometry, mask: Long, sft: SimpleFeatureType): Long = {
     import org.locationtech.geomesa.utils.geotools.Conversions.RichGeometry
+    import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+
     val centroid = value.safeCentroid()
-    Z2SFC.index(centroid.getX, centroid.getY).z & mask
+    val (xBounds, yBounds) = fromString(sft.getZBounds)
+    Z2SFC(xBounds, yBounds).index(centroid.getX, centroid.getY).z & mask
   }
 
   private [stats] def stringToKey(value: String, precision: Int): String = {

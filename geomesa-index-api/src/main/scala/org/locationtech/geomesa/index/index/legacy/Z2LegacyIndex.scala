@@ -18,5 +18,5 @@ trait Z2LegacyIndex[DS <: GeoMesaDataStore[DS, F, W], F <: WrappedFeature, W, R,
 }
 
 object Z2LegacyIndexKeySpace extends Z2IndexKeySpace {
-  override val sfc = LegacyZ2SFC
+  val sfc = LegacyZ2SFC
 }

@@ -65,7 +65,7 @@ abstract class BaseBigTableIndex[T](protected val ds: GeoMesaDataStore[_,_,_],
   }
 
   override def insert(value: T, geom: Geometry, dtg: Date): String = {
-    val id = Z3UuidGenerator.createUuid(geom, dtg.getTime, TimePeriod.Week).toString
+    val id = Z3UuidGenerator.createUuid(geom, dtg.getTime, TimePeriod.Week, sft).toString
     insert(id, value, geom, dtg, null)
   }
 

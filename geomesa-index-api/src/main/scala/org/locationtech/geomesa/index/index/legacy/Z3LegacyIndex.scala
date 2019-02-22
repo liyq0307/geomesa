@@ -19,5 +19,5 @@ trait Z3LegacyIndex[DS <: GeoMesaDataStore[DS, F, W], F <: WrappedFeature, W, R,
 }
 
 object Z3LegacyIndexKeySpace extends Z3IndexKeySpace {
-  override def sfc(period: TimePeriod) = LegacyZ3SFC(period)
+  def sfc(period: TimePeriod) = LegacyZ3SFC(period)
 }

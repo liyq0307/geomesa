@@ -20,7 +20,7 @@ import scala.util.Random
 class Z2Test extends Specification {
 
   val rand = new Random(-574)
-  val maxInt = Z2SFC.lon.maxIndex
+  val maxInt = Z2SFC.apply().lon.maxIndex
   def nextDim(): Int = rand.nextInt(maxInt)
 
   def padTo(s: String): String = (new String(Array.fill(62)('0')) + s).takeRight(62)
@@ -46,7 +46,7 @@ class Z2Test extends Specification {
     }
 
     "apply and unapply max values" >> {
-      foreach(Seq(Z2SFC, LegacyZ2SFC)) { sfc =>
+      foreach(Seq(Z2SFC.apply(), LegacyZ2SFC)) { sfc =>
         val (x, y) = (sfc.lon.maxIndex, sfc.lat.maxIndex)
         val z = Z2(x.toInt, y.toInt)
         z match { case Z2(zx, zy) =>
@@ -57,7 +57,7 @@ class Z2Test extends Specification {
     }
 
     "fail for out-of-bounds values" >> {
-      foreach(Seq(Z2SFC, LegacyZ2SFC)) { sfc =>
+      foreach(Seq(Z2SFC.apply(), LegacyZ2SFC)) { sfc =>
         foreach(Seq((-180.1, 0d), (0d, -90.1), (180.1, 0d), (0d, 90.1), (-181d, -91d), (181d, 91d))) {
           case (x, y) => sfc.index(x, y) must throwAn[IllegalArgumentException]
         }
@@ -116,7 +116,7 @@ class Z2Test extends Specification {
     }
 
     "return non-empty ranges for a number of cases" >> {
-      foreach(Seq(Z2SFC, LegacyZ2SFC)) { sfc =>
+      foreach(Seq(Z2SFC.apply(), LegacyZ2SFC)) { sfc =>
         val ranges = Seq(
           (sfc.index(-180, -90),      sfc.index(180, 90)),        // whole world
           (sfc.index(-90, -45),       sfc.index(90, 45)),         // half world

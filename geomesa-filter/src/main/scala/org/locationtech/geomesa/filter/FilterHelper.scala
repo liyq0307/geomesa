@@ -21,6 +21,7 @@ import org.locationtech.geomesa.filter.visitor.IdDetectingFilterVisitor
 import org.locationtech.geomesa.utils.geohash.GeohashUtils._
 import org.locationtech.geomesa.utils.geotools.GeometryUtils
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter._
 import org.opengis.filter.expression.{Expression, PropertyName}
@@ -45,6 +46,17 @@ object FilterHelper {
   }
 
   /**
+    * convert a string to a Double pairs
+    *
+    * @param s 字符串 => "xMin,xMax,yMin,yMax"
+    * @return ((Double, Double) ,(Double, Double))
+    */
+  def fromString(s: String): ((Double, Double), (Double, Double)) = {
+    val Array(left, right, bottom, top) = s.split(",").map(_.toDouble)
+    ((left, right), (bottom, top))
+  }
+
+  /**
     * Creates a new filter with valid bounds and attribute
     *
     * @param op spatial op
@@ -62,13 +74,24 @@ object FilterHelper {
       // copy the geometry so we don't modify the original
       val geomCopy = geom.getFactory.createGeometry(geom)
       // trim to world boundaries
-      val trimmedGeom = geomCopy.intersection(WholeWorldPolygon)
+      val (xBounds, yBounds) = fromString(sft.getZBounds)
+      val bTrans = if (xBounds == (-180, 180) && yBounds == (-90, 90)) true else false
+
+      // trim to world boundaries
+      val trimmedGeom = if (bTrans) {
+        geomCopy.intersection(WholeWorldPolygon)
+      } else {
+        val bBox = s"POLYGON((${xBounds._1} ${yBounds._1}, ${xBounds._1} ${yBounds._2}, " +
+          s"${xBounds._2} ${yBounds._2}, ${xBounds._2} ${yBounds._1}, ${xBounds._1} ${yBounds._1}))"
+        geomCopy.intersection(WKTUtils.read(bBox))
+      }
+
       if (trimmedGeom.isEmpty) {
         Filter.EXCLUDE
       } else {
         // add waypoints if needed so that IDL is handled correctly
         val geomWithWayPoints = if (op.isInstanceOf[BBOX]) { addWayPointsToBBOX(trimmedGeom) } else { trimmedGeom }
-        val safeGeometries = flattenGeometry(tryGetIdlSafeGeom(geomWithWayPoints))
+        val safeGeometries = flattenGeometry(tryGetIdlSafeGeom(geomWithWayPoints, bTrans))
         // mark it as being visited
         safeGeometries.foreach(_.setUserData(SafeGeomString))
         val args: Array[Any] = op match {
@@ -80,7 +103,7 @@ object FilterHelper {
     }
   }
 
-  private def tryGetIdlSafeGeom(geom: Geometry): Geometry = getInternationalDateLineSafeGeometry(geom) match {
+  private def tryGetIdlSafeGeom(geom: Geometry, bTrans: Boolean = true): Geometry = getInternationalDateLineSafeGeometry(geom, bTrans) match {
     case Success(g) => g
     case Failure(e) => FilterHelperLogger.log.warn(s"Error splitting geometry on IDL for $geom", e); geom
   }
@@ -147,8 +170,13 @@ object FilterHelper {
     *                  note if not intersected, 'and/or' distinction will be lost
     * @return geometry bounds from spatial filters
     */
-  def extractGeometries(filter: Filter, attribute: String, intersect: Boolean = true): FilterValues[Geometry] =
-    extractUnclippedGeometries(filter, attribute, intersect).map(_.intersection(WholeWorldPolygon))
+  def extractGeometries(filter: Filter, attribute: String, intersect: Boolean = true, geom: Geometry = null): FilterValues[Geometry] = {
+    if (null == geom) {
+      extractUnclippedGeometries(filter, attribute, intersect).map(_.intersection(WholeWorldPolygon))
+    } else {
+      extractUnclippedGeometries(filter, attribute, intersect, geom).map(_.intersection(geom))
+    }
+  }
 
   /**
     * Extract geometries from a filter without validating boundaries.
@@ -158,15 +186,18 @@ object FilterHelper {
     * @param intersect intersect AND'd geometries or return them all
     * @return geometry bounds from spatial filters
     */
-  private def extractUnclippedGeometries(filter: Filter, attribute: String, intersect: Boolean): FilterValues[Geometry] = {
+  private def extractUnclippedGeometries(filter: Filter,
+                                         attribute: String,
+                                         intersect: Boolean,
+                                         exGeom: Geometry = null): FilterValues[Geometry] = {
     filter match {
       case o: Or  =>
-        val all = o.getChildren.map(extractUnclippedGeometries(_, attribute, intersect))
+        val all = o.getChildren.map(extractUnclippedGeometries(_, attribute, intersect, exGeom))
         val join = FilterValues.or[Geometry]((l, r) => l ++ r) _
         all.reduceLeftOption[FilterValues[Geometry]](join).getOrElse(FilterValues.empty)
 
       case a: And =>
-        val all = a.getChildren.map(extractUnclippedGeometries(_, attribute, intersect)).filter(_.nonEmpty)
+        val all = a.getChildren.map(extractUnclippedGeometries(_, attribute, intersect, exGeom)).filter(_.nonEmpty)
         if (intersect) {
           val intersect = FilterValues.and[Geometry]((l, r) => Option(l.intersection(r)).filterNot(_.isEmpty)) _
           all.reduceLeftOption[FilterValues[Geometry]](intersect).getOrElse(FilterValues.empty)
@@ -183,10 +214,17 @@ object FilterHelper {
         } yield {
           val buffered = filter match {
             case f: DWithin => geom.buffer(distanceDegrees(geom, f.getDistance * metersMultiplier(f.getDistanceUnits))._2)
-            case _: BBOX    => addWayPointsToBBOX(geom.getFactory.createGeometry(geom).intersection(WholeWorldPolygon))
+            case _: BBOX    =>
+              val geomCopy = geom.getFactory.createGeometry(geom)
+              val trimmedGeom = if (exGeom == null) {
+                geomCopy.intersection(WholeWorldPolygon)
+              } else {
+                geomCopy.intersection(exGeom)
+              }
+              addWayPointsToBBOX(trimmedGeom)
             case _          => geom
           }
-          tryGetIdlSafeGeom(buffered)
+          tryGetIdlSafeGeom(buffered, if (exGeom == null) true else false)
         }
         FilterValues(geometry.map(flattenGeometry).getOrElse(Seq.empty))
 
