@@ -34,7 +34,7 @@ object HBaseConnectionPool extends LazyLogging {
     new CacheLoader[(Option[String], Option[String]), Configuration] {
       override def load(key: (Option[String], Option[String])): Configuration = {
         val (zookeepers, paths) = key
-        val conf = withPaths(configuration, paths)
+        val conf = withPaths(HBaseConfiguration.create(), paths)
         zookeepers.foreach(zk => conf.set(HConstants.ZOOKEEPER_QUORUM, zk))
         if (zookeepers.isEmpty && conf.get(HConstants.ZOOKEEPER_QUORUM) == "localhost") {
           logger.warn("HBase connection is set to localhost - " +
