@@ -156,9 +156,10 @@ object FilterHelper {
   def isWholeWorld[G <: Geometry](g: G): Boolean = g != null && g.union.covers(WholeWorldPolygon)
 
   def addWayPointsToBBOX(g: Geometry): Geometry = {
-    val geomArray = g.getCoordinates
-    val correctedGeom = GeometryUtils.addWayPoints(geomArray).toArray
-    if (geomArray.length == correctedGeom.length) { g } else { g.getFactory.createPolygon(correctedGeom) }
+//    val geomArray = g.getCoordinates
+//    val correctedGeom = GeometryUtils.addWayPoints(geomArray).toArray
+//    if (geomArray.length == correctedGeom.length) { g } else { g.getFactory.createPolygon(correctedGeom) }
+    g
   }
 
   /**

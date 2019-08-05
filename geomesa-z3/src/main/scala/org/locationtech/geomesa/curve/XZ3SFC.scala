@@ -21,7 +21,7 @@ import scala.collection.mutable.ArrayBuffer
   * by Christian Böhm, Gerald Klump  and Hans-Peter Kriegel, expanded to 3 dimensions
   *
   * @param g resolution level of the curve - i.e. how many times the space will be recursively quartered
-
+  *
   */
 class XZ3SFC(val g: Short, val xBounds: (Double, Double), val yBounds: (Double, Double), val zBounds: (Double, Double)) {
 
@@ -62,7 +62,9 @@ class XZ3SFC(val g: Short, val xBounds: (Double, Double), val yBounds: (Double, 
     val l1 = math.floor(math.log(maxDim) / XZSFC.LogPointFive).toInt
 
     // the length will either be (l1) or (l1 + 1)
-    val length = if (l1 >= g) { g } else {
+    val length = if (l1 >= g) {
+      g
+    } else {
       val w2 = math.pow(0.5, l1 + 1) // width of an element at resolution l2 (l1 + 1)
 
       // predicate for checking how many axis the polygon intersects
@@ -288,13 +290,13 @@ class XZ3SFC(val g: Short, val xBounds: (Double, Double), val yBounds: (Double, 
       val yCenter = (ymin + ymax) / 2.0
       val zCenter = (zmin + zmax) / 2.0
       (x < xCenter, y < yCenter, z < zCenter) match {
-        case (true,  true, true)   => cs += 1L                                             ; xmax = xCenter; ymax = yCenter; zmax = zCenter
-        case (false, true, true)   => cs += 1L + 1L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymax = yCenter; zmax = zCenter
-        case (true,  false, true)  => cs += 1L + 2L * (math.pow(8, g - i).toLong - 1L) / 7L; xmax = xCenter; ymin = yCenter; zmax = zCenter
-        case (false, false, true)  => cs += 1L + 3L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymin = yCenter; zmax = zCenter
-        case (true,  true, false)  => cs += 1L + 4L * (math.pow(8, g - i).toLong - 1L) / 7L; xmax = xCenter; ymax = yCenter; zmin = zCenter
-        case (false, true, false)  => cs += 1L + 5L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymax = yCenter; zmin = zCenter
-        case (true,  false, false) => cs += 1L + 6L * (math.pow(8, g - i).toLong - 1L) / 7L; xmax = xCenter; ymin = yCenter; zmin = zCenter
+        case (true, true, true) => cs += 1L; xmax = xCenter; ymax = yCenter; zmax = zCenter
+        case (false, true, true) => cs += 1L + 1L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymax = yCenter; zmax = zCenter
+        case (true, false, true) => cs += 1L + 2L * (math.pow(8, g - i).toLong - 1L) / 7L; xmax = xCenter; ymin = yCenter; zmax = zCenter
+        case (false, false, true) => cs += 1L + 3L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymin = yCenter; zmax = zCenter
+        case (true, true, false) => cs += 1L + 4L * (math.pow(8, g - i).toLong - 1L) / 7L; xmax = xCenter; ymax = yCenter; zmin = zCenter
+        case (false, true, false) => cs += 1L + 5L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymax = yCenter; zmin = zCenter
+        case (true, false, false) => cs += 1L + 6L * (math.pow(8, g - i).toLong - 1L) / 7L; xmax = xCenter; ymin = yCenter; zmin = zCenter
         case (false, false, false) => cs += 1L + 7L * (math.pow(8, g - i).toLong - 1L) / 7L; xmin = xCenter; ymin = yCenter; zmin = zCenter
       }
       i += 1
@@ -316,7 +318,9 @@ class XZ3SFC(val g: Short, val xBounds: (Double, Double), val yBounds: (Double, 
     val min = sequenceCode(x, y, z, length)
     // if a partial match, we just use the single sequence code as an interval
     // if a full match, we have to match all sequence codes starting with the single sequence code
-    val max = if (partial) { min } else {
+    val max = if (partial) {
+      min
+    } else {
       // from lemma 3 in the XZ-Ordering paper
       min + (math.pow(8, g - length + 1).toLong - 1L) / 7L
     }
@@ -360,12 +364,48 @@ class XZ3SFC(val g: Short, val xBounds: (Double, Double), val yBounds: (Double, 
     } catch {
       case _: IllegalArgumentException if lenient =>
 
-        val bxmin = if (xmin < xLo) { xLo } else if (xmin > xHi) { xHi } else { xmin }
-        val bymin = if (ymin < yLo) { yLo } else if (ymin > yHi) { yHi } else { ymin }
-        val bzmin = if (zmin < zLo) { zLo } else if (zmin > zHi) { zHi } else { zmin }
-        val bxmax = if (xmax < xLo) { xLo } else if (xmax > xHi) { xHi } else { xmax }
-        val bymax = if (ymax < yLo) { yLo } else if (ymax > yHi) { yHi } else { ymax }
-        val bzmax = if (zmax < zLo) { zLo } else if (zmax > zHi) { zHi } else { zmax }
+        val bxmin = if (xmin < xLo) {
+          xLo
+        } else if (xmin > xHi) {
+          xHi
+        } else {
+          xmin
+        }
+        val bymin = if (ymin < yLo) {
+          yLo
+        } else if (ymin > yHi) {
+          yHi
+        } else {
+          ymin
+        }
+        val bzmin = if (zmin < zLo) {
+          zLo
+        } else if (zmin > zHi) {
+          zHi
+        } else {
+          zmin
+        }
+        val bxmax = if (xmax < xLo) {
+          xLo
+        } else if (xmax > xHi) {
+          xHi
+        } else {
+          xmax
+        }
+        val bymax = if (ymax < yLo) {
+          yLo
+        } else if (ymax > yHi) {
+          yHi
+        } else {
+          ymax
+        }
+        val bzmax = if (zmax < zLo) {
+          zLo
+        } else if (zmax > zHi) {
+          zHi
+        } else {
+          zmax
+        }
 
         val nxmin = (bxmin - xLo) / xSize
         val nymin = (bymin - yLo) / ySize
@@ -387,14 +427,9 @@ object XZ3SFC {
   // indicator that we have searched a full level of the oct tree
   private val LevelTerminator = XElement(-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0)
 
-  private val cache = new java.util.concurrent.ConcurrentHashMap[(Short, TimePeriod), XZ3SFC]()
 
   def apply(g: Short, period: TimePeriod): XZ3SFC = {
-    var sfc = cache.get((g, period))
-    if (sfc == null) {
-      sfc = new XZ3SFC(g, (-180.0, 180.0), (-90.0, 90.0), (0.0, BinnedTime.maxOffset(period).toDouble))
-      cache.put((g, period), sfc)
-    }
+    var sfc: XZ3SFC = new XZ3SFC(g, (-180.0, 180.0), (-90.0, 90.0), (0.0, BinnedTime.maxOffset(period).toDouble))
     sfc
   }
 
@@ -402,11 +437,7 @@ object XZ3SFC {
             period: TimePeriod,
             xBounds: (Double, Double),
             yBounds: (Double, Double)): XZ3SFC = {
-    var sfc = cache.get((g, period))
-    if (sfc == null) {
-      sfc = new XZ3SFC(g, xBounds, yBounds, (0.0, BinnedTime.maxOffset(period).toDouble))
-      cache.put((g, period), sfc)
-    }
+    var sfc: XZ3SFC = new XZ3SFC(g, xBounds, yBounds, (0.0, BinnedTime.maxOffset(period).toDouble))
     sfc
   }
 
@@ -451,11 +482,11 @@ object XZ3SFC {
 
     def isContained(window: QueryWindow): Boolean =
       window.xmin <= xmin && window.ymin <= ymin && window.zmin <= zmin &&
-          window.xmax >= xext && window.ymax >= yext && window.zmax >= zext
+        window.xmax >= xext && window.ymax >= yext && window.zmax >= zext
 
     def overlaps(window: QueryWindow): Boolean =
       window.xmax >= xmin && window.ymax >= ymin && window.zmax >= zmin &&
-          window.xmin <= xext && window.ymin <= yext && window.zmin <= zext
+        window.xmin <= xext && window.ymin <= yext && window.zmin <= zext
 
     def children: Seq[XElement] = {
       val xCenter = (xmin + xmax) / 2.0
@@ -473,4 +504,5 @@ object XZ3SFC {
       Seq(c0, c1, c2, c3, c4, c5, c6, c7)
     }
   }
+
 }

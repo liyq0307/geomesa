@@ -13,18 +13,11 @@ import org.locationtech.sfcurve.IndexRange
 import org.locationtech.sfcurve.zorder.{Z2, ZRange}
 
 object Z2SFC {
-  private val cache = new java.util.concurrent.ConcurrentHashMap[Int, Z2SFC]()
 
   def apply(): Z2SFC = new Z2SFC(31)
 
   def apply(xBounds: (Double, Double), yBounds: (Double, Double)): Z2SFC = {
-    var sfc = cache.get(31)
-
-    if (sfc == null) {
-      sfc = new Z2SFC(31, xBounds, yBounds)
-      cache.put(31, sfc)
-    }
-
+    var sfc: Z2SFC = new Z2SFC(31, xBounds, yBounds)
     sfc
   }
 }
@@ -54,8 +47,20 @@ class Z2SFC(precision: Int,
   }
 
   protected def lenientIndex(x: Double, y: Double): Z2 = {
-    val bx = if (x < lon.min) { lon.min } else if (x > lon.max) { lon.max } else { x }
-    val by = if (y < lat.min) { lat.min } else if (y > lat.max) { lat.max } else { y }
+    val bx = if (x < lon.min) {
+      lon.min
+    } else if (x > lon.max) {
+      lon.max
+    } else {
+      x
+    }
+    val by = if (y < lat.min) {
+      lat.min
+    } else if (y > lat.max) {
+      lat.max
+    } else {
+      y
+    }
     Z2(lon.normalize(bx), lat.normalize(by))
   }
 

@@ -63,7 +63,9 @@ class XZ2SFC(g: Short, xBounds: (Double, Double), yBounds: (Double, Double)) {
     val l1 = math.floor(math.log(maxDim) / XZSFC.LogPointFive).toInt
 
     // the length will either be (l1) or (l1 + 1)
-    val length = if (l1 >= g) { g } else {
+    val length = if (l1 >= g) {
+      g
+    } else {
       val w2 = math.pow(0.5, l1 + 1) // width of an element at resolution l2 (l1 + 1)
 
       // predicate for checking how many axis the polygon intersects
@@ -274,9 +276,9 @@ class XZ2SFC(g: Short, xBounds: (Double, Double), yBounds: (Double, Double)) {
       val xCenter = (xmin + xmax) / 2.0
       val yCenter = (ymin + ymax) / 2.0
       (x < xCenter, y < yCenter) match {
-        case (true,  true)  => cs += 1L                                             ; xmax = xCenter; ymax = yCenter
-        case (false, true)  => cs += 1L + 1L * (math.pow(4, g - i).toLong - 1L) / 3L; xmin = xCenter; ymax = yCenter
-        case (true,  false) => cs += 1L + 2L * (math.pow(4, g - i).toLong - 1L) / 3L; xmax = xCenter; ymin = yCenter
+        case (true, true) => cs += 1L; xmax = xCenter; ymax = yCenter
+        case (false, true) => cs += 1L + 1L * (math.pow(4, g - i).toLong - 1L) / 3L; xmin = xCenter; ymax = yCenter
+        case (true, false) => cs += 1L + 2L * (math.pow(4, g - i).toLong - 1L) / 3L; xmax = xCenter; ymin = yCenter
         case (false, false) => cs += 1L + 3L * (math.pow(4, g - i).toLong - 1L) / 3L; xmin = xCenter; ymin = yCenter
       }
       i += 1
@@ -298,7 +300,9 @@ class XZ2SFC(g: Short, xBounds: (Double, Double), yBounds: (Double, Double)) {
     val min = sequenceCode(x, y, length)
     // if a partial match, we just use the single sequence code as an interval
     // if a full match, we have to match all sequence codes starting with the single sequence code
-    val max = if (partial) { min } else {
+    val max = if (partial) {
+      min
+    } else {
       // from lemma 3 in the XZ-Ordering paper
       min + (math.pow(4, g - length + 1).toLong - 1L) / 3L
     }
@@ -335,10 +339,34 @@ class XZ2SFC(g: Short, xBounds: (Double, Double), yBounds: (Double, Double)) {
     } catch {
       case _: IllegalArgumentException if lenient =>
 
-        val bxmin = if (xmin < xLo) { xLo } else if (xmin > xHi) { xHi } else { xmin }
-        val bymin = if (ymin < yLo) { yLo } else if (ymin > yHi) { yHi } else { ymin }
-        val bxmax = if (xmax < xLo) { xLo } else if (xmax > xHi) { xHi } else { xmax }
-        val bymax = if (ymax < yLo) { yLo } else if (ymax > yHi) { yHi } else { ymax }
+        val bxmin = if (xmin < xLo) {
+          xLo
+        } else if (xmin > xHi) {
+          xHi
+        } else {
+          xmin
+        }
+        val bymin = if (ymin < yLo) {
+          yLo
+        } else if (ymin > yHi) {
+          yHi
+        } else {
+          ymin
+        }
+        val bxmax = if (xmax < xLo) {
+          xLo
+        } else if (xmax > xHi) {
+          xHi
+        } else {
+          xmax
+        }
+        val bymax = if (ymax < yLo) {
+          yLo
+        } else if (ymax > yHi) {
+          yHi
+        } else {
+          ymax
+        }
 
         val nxmin = (bxmin - xLo) / xSize
         val nymin = (bymin - yLo) / ySize
@@ -358,25 +386,14 @@ object XZ2SFC {
   // indicator that we have searched a full level of the quad/oct tree
   private val LevelTerminator = XElement(-1.0, -1.0, -1.0, -1.0, 0)
 
-  private val cache = new java.util.concurrent.ConcurrentHashMap[Short, XZ2SFC]()
 
   def apply(g: Short): XZ2SFC = {
-    var sfc = cache.get(g)
-    if (sfc == null) {
-      sfc = new XZ2SFC(g, (-180.0, 180.0), (-90.0, 90.0))
-      cache.put(g, sfc)
-    }
+    var sfc = new XZ2SFC(g, (-180.0, 180.0), (-90.0, 90.0))
     sfc
   }
 
   def apply(g: Short, xBounds: (Double, Double), yBounds: (Double, Double)): XZ2SFC = {
-    var sfc = cache.get(g)
-
-    if (sfc == null) {
-      sfc = new XZ2SFC(g, xBounds, yBounds)
-      cache.put(g, sfc)
-    }
-
+    var sfc = new XZ2SFC(g, xBounds, yBounds)
     sfc
   }
 
@@ -425,4 +442,5 @@ object XZ2SFC {
       Seq(c0, c1, c2, c3)
     }
   }
+
 }

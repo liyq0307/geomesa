@@ -14,6 +14,7 @@ import java.util.{Date, UUID}
 import org.locationtech.jts.geom._
 import org.apache.commons.text.StringEscapeUtils
 import org.geotools.feature.AttributeTypeBuilder
+import org.geotools.referencing.CRS
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.SimpleFeatureType
 
@@ -170,12 +171,29 @@ object AttributeSpec {
 
     private val default = options.get(OPT_DEFAULT).exists(_.toBoolean)
 
+    var tempCRS = ""
     override def toSpec: String = if (default) { s"*${super.toSpec}" } else { super.toSpec }
 
     override def builderHook(builder: AttributeTypeBuilder): Unit = {
-      require(!options.get(OPT_SRID).exists(_.toInt != 4326),
-        s"Invalid SRID '${options(OPT_SRID)}'. Only 4326 is supported.")
-      builder.crs(CRS_EPSG_4326)
+      if(tempCRS.startsWith("EPSG")||scala.util.Try(tempCRS.toInt).isSuccess){
+
+        if(scala.util.Try(tempCRS.toInt).isSuccess){
+
+          tempCRS = "EPSG:"+tempCRS
+        }
+
+        try {
+          builder.crs(CRS.decode(tempCRS, true))
+        } catch {
+          case t: Throwable => builder.crs(org.locationtech.geomesa.utils.geotools.CRS_EPSG_4326)
+        }
+
+      }
+      else{
+        builder.crs(org.locationtech.geomesa.utils.geotools.CRS_EPSG_4326)
+
+      }
+
     }
 
     // default geoms are indicated by the *
@@ -183,6 +201,7 @@ object AttributeSpec {
     override protected def specOptions: Map[String, String] = options - OPT_DEFAULT - OPT_INDEX
     override protected def configOptions: Map[String, String] = options - OPT_INDEX
     override protected def descriptorOptions: Map[String, String] = options - OPT_INDEX
+
   }
 
   /**

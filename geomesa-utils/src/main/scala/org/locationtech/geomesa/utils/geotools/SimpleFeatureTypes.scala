@@ -244,6 +244,17 @@ object SimpleFeatureTypes {
           .map(_.name)
     }
 
+    for( attr <- spec.attributes){
+
+      if(attr.isInstanceOf[GeomAttributeSpec]&&spec.options.contains("geomesa.srid")){
+        //var ops =
+        attr.asInstanceOf[GeomAttributeSpec].tempCRS = spec.options.apply("geomesa.srid").toString
+
+      }
+
+    }
+
+
     val b = factory.map(new SimpleFeatureTypeBuilder(_)).getOrElse(new SimpleFeatureTypeBuilder())
     b.setNamespaceURI(namespace)
     b.setName(name)

@@ -28,8 +28,8 @@ class Z3SFC(period: TimePeriod,
 
   require(precision > 0 && precision < 22, "Precision (bits) per dimension must be in [1,21]")
 
-  override val lon: NormalizedDimension  = new BitNormalizedDimension(xBounds._1, xBounds._2, precision)
-  override val lat: NormalizedDimension  = new BitNormalizedDimension(yBounds._1, yBounds._2, precision)
+  override val lon: NormalizedDimension = new BitNormalizedDimension(xBounds._1, xBounds._2, precision)
+  override val lat: NormalizedDimension = new BitNormalizedDimension(yBounds._1, yBounds._2, precision)
   override val time: NormalizedDimension = NormalizedTime(precision, BinnedTime.maxOffset(period).toDouble)
 
   val wholePeriod = Seq((time.min.toLong, time.max.toLong))
@@ -45,9 +45,27 @@ class Z3SFC(period: TimePeriod,
   }
 
   protected def lenientIndex(x: Double, y: Double, t: Long): Z3 = {
-    val bx = if (x < lon.min) { lon.min } else if (x > lon.max) { lon.max } else { x }
-    val by = if (y < lat.min) { lat.min } else if (y > lat.max) { lat.max } else { y }
-    val bt = if (t < time.min) { time.min } else if (t > time.max) { time.max } else { t }
+    val bx = if (x < lon.min) {
+      lon.min
+    } else if (x > lon.max) {
+      lon.max
+    } else {
+      x
+    }
+    val by = if (y < lat.min) {
+      lat.min
+    } else if (y > lat.max) {
+      lat.max
+    } else {
+      y
+    }
+    val bt = if (t < time.min) {
+      time.min
+    } else if (t > time.max) {
+      time.max
+    } else {
+      t
+    }
     Z3(lon.normalize(bx), lat.normalize(by), time.normalize(bt))
   }
 
@@ -60,7 +78,7 @@ class Z3SFC(period: TimePeriod,
                       t: Seq[(Long, Long)],
                       precision: Int,
                       maxRanges: Option[Int]): Seq[IndexRange] = {
-    val zbounds = for { (xmin, ymin, xmax, ymax) <- xy ; (tmin, tmax) <- t } yield {
+    val zbounds = for {(xmin, ymin, xmax, ymax) <- xy; (tmin, tmax) <- t} yield {
       ZRange(index(xmin, ymin, tmin).z, index(xmax, ymax, tmax).z)
     }
     Z3.zranges(zbounds.toArray, precision, maxRanges)
@@ -69,35 +87,30 @@ class Z3SFC(period: TimePeriod,
 
 object Z3SFC {
 
-  private val SfcDay   = new Z3SFC(TimePeriod.Day)
-  private val SfcWeek  = new Z3SFC(TimePeriod.Week)
+  private val SfcDay = new Z3SFC(TimePeriod.Day)
+  private val SfcWeek = new Z3SFC(TimePeriod.Week)
   private val SfcMonth = new Z3SFC(TimePeriod.Month)
-  private val SfcYear  = new Z3SFC(TimePeriod.Year)
+  private val SfcYear = new Z3SFC(TimePeriod.Year)
 
   def apply(period: TimePeriod): Z3SFC = period match {
-    case TimePeriod.Day   => SfcDay
-    case TimePeriod.Week  => SfcWeek
+    case TimePeriod.Day => SfcDay
+    case TimePeriod.Week => SfcWeek
     case TimePeriod.Month => SfcMonth
-    case TimePeriod.Year  => SfcYear
+    case TimePeriod.Year => SfcYear
   }
-
-  private val cache = new java.util.concurrent.ConcurrentHashMap[Int, Z3SFC]()
 
   def apply(period: TimePeriod,
             xBounds: (Double, Double),
             yBounds: (Double, Double)): Z3SFC = {
-    var sfc = cache.get(21)
+    var sfc: Z3SFC = null
 
-    if (sfc == null) {
-      sfc = {
-        period match {
-          case TimePeriod.Day => new Z3SFC(TimePeriod.Day, 21, xBounds, yBounds)
-          case TimePeriod.Week => new Z3SFC(TimePeriod.Week, 21, xBounds, yBounds)
-          case TimePeriod.Month => new Z3SFC(TimePeriod.Month, 21, xBounds, yBounds)
-          case TimePeriod.Year => new Z3SFC(TimePeriod.Year, 21, xBounds, yBounds)
-        }
+    sfc = {
+      period match {
+        case TimePeriod.Day => new Z3SFC(TimePeriod.Day, 21, xBounds, yBounds)
+        case TimePeriod.Week => new Z3SFC(TimePeriod.Week, 21, xBounds, yBounds)
+        case TimePeriod.Month => new Z3SFC(TimePeriod.Month, 21, xBounds, yBounds)
+        case TimePeriod.Year => new Z3SFC(TimePeriod.Year, 21, xBounds, yBounds)
       }
-      cache.put(21, sfc)
     }
 
     sfc
