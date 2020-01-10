@@ -17,21 +17,25 @@ import org.apache.accumulo.core.data.{Key, Mutation, Range, Value}
 import org.apache.accumulo.core.file.keyfunctor.RowFunctor
 import org.apache.accumulo.core.security.ColumnVisibility
 import org.apache.hadoop.io.Text
-import org.geotools.filter.identity.FeatureIdImpl
 import org.locationtech.geomesa.accumulo.AccumuloVersion
-import org.locationtech.geomesa.accumulo.data.AccumuloIndexAdapter.{AccumuloIndexWriter, ZIterPriority}
+import org.locationtech.geomesa.accumulo.data.AccumuloIndexAdapter.{AccumuloIndexWriter, AccumuloResultsToFeatures, ZIterPriority}
 import org.locationtech.geomesa.accumulo.data.AccumuloQueryPlan.{BatchScanPlan, EmptyPlan}
 import org.locationtech.geomesa.accumulo.index.{AccumuloJoinIndex, JoinIndex}
+import org.locationtech.geomesa.accumulo.iterators.ArrowIterator.AccumuloArrowResultsToFeatures
+import org.locationtech.geomesa.accumulo.iterators.BinAggregatingIterator.AccumuloBinResultsToFeatures
+import org.locationtech.geomesa.accumulo.iterators.DensityIterator.AccumuloDensityResultsToFeatures
+import org.locationtech.geomesa.accumulo.iterators.StatsIterator.AccumuloStatsResultsToFeatures
 import org.locationtech.geomesa.accumulo.iterators._
 import org.locationtech.geomesa.accumulo.util.GeoMesaBatchWriterConfig
-import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
-import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
-import org.locationtech.geomesa.index.api.IndexAdapter.IndexWriter
+import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
+import org.locationtech.geomesa.index.api.QueryPlan.IndexResultsToFeatures
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.conf.ColumnGroups
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.index.id.IdIndex
+import org.locationtech.geomesa.index.index.s2.{S2Index, S2IndexValues}
+import org.locationtech.geomesa.index.index.s3.{S3Index, S3IndexValues}
 import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index, Z2IndexValues}
 import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index, Z3IndexValues}
 import org.locationtech.geomesa.index.iterators.StatsScan
@@ -54,8 +58,11 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
   private val tableOps = ds.connector.tableOperations()
 
   // noinspection ScalaDeprecation
-  override def createTable(index: GeoMesaFeatureIndex[_, _], table: String, splits: => Seq[Array[Byte]]): Unit = {
-
+  override def createTable(
+      index: GeoMesaFeatureIndex[_, _],
+      partition: Option[String],
+      splits: => Seq[Array[Byte]]): Unit = {
+    val table = index.configureTableName(partition) // writes table name to metadata
     // create table if it doesn't exist
     val created = if (ds.connector.isInstanceOf[org.apache.accumulo.core.client.mock.MockConnector]) {
       // we need to synchronize creation of tables in mock accumulo as it's not thread safe
@@ -104,10 +111,22 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
     }
   }
 
-  // noinspection ScalaDeprecation
+  override def renameTable(from: String, to: String): Unit = {
+    if (tableOps.exists(from)) {
+      // noinspection ScalaDeprecation
+      if (ds.connector.isInstanceOf[org.apache.accumulo.core.client.mock.MockConnector]) {
+        // we need to synchronize renaming tables in mock accumulo as it's not thread safe
+        ds.connector.synchronized(tableOps.rename(from, to))
+      } else {
+        tableOps.rename(from, to)
+      }
+    }
+  }
+
   override def deleteTables(tables: Seq[String]): Unit = {
     tables.par.foreach { table =>
       if (tableOps.exists(table)) {
+        // noinspection ScalaDeprecation
         if (ds.connector.isInstanceOf[org.apache.accumulo.core.client.mock.MockConnector]) {
           // we need to synchronize deleting of tables in mock accumulo as it's not thread safe
           ds.connector.synchronized(tableOps.delete(table))
@@ -135,61 +154,68 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
   override def createQueryPlan(strategy: QueryStrategy): AccumuloQueryPlan = {
     import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 
-    if (strategy.ranges.isEmpty) { EmptyPlan(strategy.filter) } else {
-      val QueryStrategy(filter, byteRanges, _, _, ecql, hints, _) = strategy
-      val index = filter.index
-      // index api defines empty start/end for open-ended range - in accumulo, it's indicated with null
-      // index api defines start row inclusive, end row exclusive
-      val ranges = byteRanges.map {
-        case BoundedByteRange(start, end) =>
-            val startKey = if (start.length == 0) { null } else { new Key(new Text(start)) }
-            val endKey = if (end.length == 0) { null } else { new Key(new Text(end)) }
-            new Range(startKey, true, endKey, false)
+    val QueryStrategy(filter, byteRanges, _, _, ecql, hints, _) = strategy
+    val index = filter.index
+    // index api defines empty start/end for open-ended range - in accumulo, it's indicated with null
+    // index api defines start row inclusive, end row exclusive
+    val ranges = byteRanges.map {
+      case BoundedByteRange(start, end) =>
+          val startKey = if (start.length == 0) { null } else { new Key(new Text(start)) }
+          val endKey = if (end.length == 0) { null } else { new Key(new Text(end)) }
+          new Range(startKey, true, endKey, false)
 
-        case SingleRowByteRange(row) =>
-          new Range(new Text(row))
-      }
-      val numThreads = if (index.name == IdIndex.name) { ds.config.recordThreads } else { ds.config.queryThreads }
-      val tables = index.getTablesForQuery(filter.filter)
-      val (colFamily, schema) = {
-        val (cf, s) = groups.group(index.sft, hints.getTransformDefinition, ecql)
-        (Some(new Text(AccumuloIndexAdapter.mapColumnFamily(index)(cf))), s)
-      }
+      case SingleRowByteRange(row) =>
+        new Range(new Text(row))
+    }
+    val numThreads = if (index.name == IdIndex.name) { ds.config.recordThreads } else { ds.config.queryThreads }
+    val tables = index.getTablesForQuery(filter.filter)
+    val (colFamily, schema) = {
+      val (cf, s) = groups.group(index.sft, hints.getTransformDefinition, ecql)
+      (Some(new Text(AccumuloIndexAdapter.mapColumnFamily(index)(cf))), s)
+    }
 
-      index match {
-        case i: AccumuloJoinIndex =>
-          i.createQueryPlan(filter, tables, ranges, colFamily, schema, ecql, hints, numThreads)
+    index match {
+      case i: AccumuloJoinIndex =>
+        i.createQueryPlan(filter, tables, ranges, colFamily, schema, ecql, hints, numThreads)
 
-        case _ =>
-          val (iter, eToF, reduce) = if (strategy.hints.isBinQuery) {
-            val iter = BinAggregatingIterator.configure(schema, index, ecql, hints)
-            (Seq(iter), BinAggregatingIterator.kvsToFeatures(), None)
-          } else if (strategy.hints.isArrowQuery) {
-            val (iter, reduce) = ArrowIterator.configure(schema, index, ds.stats, filter.filter, ecql, hints)
-            (Seq(iter), ArrowIterator.kvsToFeatures(), Some(reduce))
-          } else if (strategy.hints.isDensityQuery) {
-            val iter = DensityIterator.configure(schema, index, ecql, hints)
-            (Seq(iter), DensityIterator.kvsToFeatures(), None)
-          } else if (strategy.hints.isStatsQuery) {
-            val iter = StatsIterator.configure(schema, index, ecql, hints)
-            val reduce = Some(StatsScan.reduceFeatures(schema, hints)(_))
-            (Seq(iter), StatsIterator.kvsToFeatures(), reduce)
-          } else {
-            val iter = FilterTransformIterator.configure(schema, index, ecql, hints).toSeq
-            (iter, AccumuloIndexAdapter.entriesToFeatures(index, hints.getReturnSft), None)
-          }
+      case _ =>
+        val (iter, eToF, reduce) = if (strategy.hints.isBinQuery) {
+          val iter = BinAggregatingIterator.configure(schema, index, ecql, hints)
+          (Seq(iter), new AccumuloBinResultsToFeatures(), None)
+        } else if (strategy.hints.isArrowQuery) {
+          val (iter, reduce) = ArrowIterator.configure(schema, index, ds.stats, filter.filter, ecql, hints)
+          (Seq(iter), new AccumuloArrowResultsToFeatures(), Some(reduce))
+        } else if (strategy.hints.isDensityQuery) {
+          val iter = DensityIterator.configure(schema, index, ecql, hints)
+          (Seq(iter), new AccumuloDensityResultsToFeatures(), None)
+        } else if (strategy.hints.isStatsQuery) {
+          val iter = StatsIterator.configure(schema, index, ecql, hints)
+          val reduce = Some(StatsScan.StatsReducer(schema, hints))
+          (Seq(iter), new AccumuloStatsResultsToFeatures(), reduce)
+        } else {
+          val iter = FilterTransformIterator.configure(schema, index, ecql, hints).toSeq
+          val toFeatures = AccumuloResultsToFeatures(index, hints.getReturnSft)
+          (iter, toFeatures, None)
+        }
 
+        if (ranges.isEmpty) { EmptyPlan(strategy.filter, reduce) } else {
           // configure additional iterators based on the index
           // TODO pull this out to be SPI loaded so that new indices can be added seamlessly
           val indexIter = if (index.name == Z3Index.name) {
             strategy.values.toSeq.map { case v: Z3IndexValues =>
-              val hasSplits = index.keySpace.sharding.length > 0
-              val sharing = index.keySpace.sharing.nonEmpty
-              Z3Iterator.configure(v, hasSplits, sharing, ZIterPriority)
+              Z3Iterator.configure(v, index.keySpace.sharding.length + index.keySpace.sharing.length, ZIterPriority)
             }
           } else if (index.name == Z2Index.name) {
             strategy.values.toSeq.map { case v: Z2IndexValues =>
-              Z2Iterator.configure(v, index.keySpace.sharing.nonEmpty, ZIterPriority)
+              Z2Iterator.configure(v, index.keySpace.sharding.length + index.keySpace.sharing.length, ZIterPriority)
+            }
+          } else if (index.name == S3Index.name) {
+            strategy.values.toSeq.map { case v: S3IndexValues =>
+              S3Iterator.configure(v, index.keySpace.sharding.length, ZIterPriority)
+            }
+          } else if (index.name == S2Index.name) {
+            strategy.values.toSeq.map { case v: S2IndexValues =>
+              S2Iterator.configure(v, index.keySpace.sharding.length, ZIterPriority)
             }
           } else {
             Seq.empty
@@ -203,8 +229,12 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
 
           val iters = iter ++ indexIter ++ visIter
 
-          BatchScanPlan(filter, tables, ranges, iters, colFamily, eToF, reduce, numThreads)
-      }
+          val sort = hints.getSortFields
+          val max = hints.getMaxFeatures
+          val project = hints.getProjection
+
+          BatchScanPlan(filter, tables, ranges, iters, colFamily, eToF, reduce, sort, max, project, numThreads)
+        }
     }
   }
 
@@ -284,39 +314,6 @@ object AccumuloIndexAdapter {
   }
 
   /**
-    * Turns accumulo results into simple features
-    *
-    * @param index feature index
-    * @param returnSft return simple feature type (transform, etc)
-    * @return
-    */
-  def entriesToFeatures(index: GeoMesaFeatureIndex[_, _],
-                        returnSft: SimpleFeatureType): Entry[Key, Value] => SimpleFeature = {
-    // Perform a projecting decode of the simple feature
-    if (index.serializedWithId) {
-      entriesToFeaturesWithId(KryoFeatureSerializer(returnSft))
-    } else {
-      entriesToFeatures(index, KryoFeatureSerializer(returnSft, SerializationOptions.withoutId))
-    }
-  }
-
-  private def entriesToFeatures(index: GeoMesaFeatureIndex[_, _],
-                                deserializer: KryoFeatureSerializer)
-                               (kv: Entry[Key, Value]): SimpleFeature = {
-    val sf = deserializer.deserialize(kv.getValue.get)
-    val row = kv.getKey.getRow
-    sf.getIdentifier.asInstanceOf[FeatureIdImpl].setID(index.getIdFromRow(row.getBytes, 0, row.getLength, sf))
-    applyVisibility(sf, kv.getKey)
-    sf
-  }
-
-  private def entriesToFeaturesWithId(deserializer: KryoFeatureSerializer)(kv: Entry[Key, Value]): SimpleFeature = {
-    val sf = deserializer.deserialize(kv.getValue.get)
-    applyVisibility(sf, kv.getKey)
-    sf
-  }
-
-  /**
     * Accumulo index writer implementation
     *
     * @param ds data store
@@ -324,10 +321,14 @@ object AccumuloIndexAdapter {
     * @param wrapper feature wrapper
     * @param partition partition to write to (if partitioned schema)
     */
-  class AccumuloIndexWriter(ds: AccumuloDataStore,
-                            indices: Seq[GeoMesaFeatureIndex[_, _]],
-                            wrapper: FeatureWrapper,
-                            partition: Option[String]) extends IndexWriter(indices, wrapper) {
+  class AccumuloIndexWriter(
+      ds: AccumuloDataStore,
+      indices: Seq[GeoMesaFeatureIndex[_, _]],
+      wrapper: FeatureWrapper[WritableFeature],
+      partition: Option[String]
+    ) extends BaseIndexWriter[WritableFeature](indices, wrapper) {
+
+    import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
     private val multiWriter = ds.connector.createMultiTableBatchWriter(GeoMesaBatchWriterConfig())
     private val writers = indices.toArray.map { index =>
@@ -339,6 +340,7 @@ object AccumuloIndexAdapter {
     }
 
     private val colFamilyMappings = indices.map(mapColumnFamily).toArray
+    private val timestamps = indices.exists(i => !i.sft.isLogicalTime)
 
     // cache our vis to avoid the re-parsing done in the ColumnVisibility constructor
     private val defaultVisibility = new ColumnVisibility(ds.config.defaultVisibilities)
@@ -346,7 +348,12 @@ object AccumuloIndexAdapter {
 
     private var i = 0
 
-    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
+    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]], update: Boolean): Unit = {
+      if (timestamps && update) {
+        // for updates, ensure that our timestamps don't clobber each other
+        multiWriter.flush()
+        Thread.sleep(1)
+      }
       i = 0
       while (i < values.length) {
         values(i) match {
@@ -436,7 +443,53 @@ object AccumuloIndexAdapter {
   }
 
   /**
-    * Wrapper for byte array to use as a key in the cached visibilites map
+    * Accumulo entries to features
+    *
+    * @param _index index
+    * @param _sft simple feature type
+    */
+  abstract class AccumuloResultsToFeatures(_index: GeoMesaFeatureIndex[_, _], _sft: SimpleFeatureType)
+      extends IndexResultsToFeatures[Entry[Key, Value]](_index, _sft)
+
+  object AccumuloResultsToFeatures {
+
+    def apply(index: GeoMesaFeatureIndex[_, _], sft: SimpleFeatureType): AccumuloResultsToFeatures = {
+      if (index.serializedWithId) {
+        new AccumuloIndexWithIdResultsToFeatures(index, sft)
+      } else {
+        new AccumuloIndexResultsToFeatures(index, sft)
+      }
+    }
+
+    class AccumuloIndexResultsToFeatures(_index: GeoMesaFeatureIndex[_, _], _sft: SimpleFeatureType)
+        extends AccumuloResultsToFeatures(_index, _sft) {
+
+      def this() = this(null, null) // no-arg constructor required for serialization
+
+      override def apply(result: Entry[Key, Value]): SimpleFeature = {
+        val row = result.getKey.getRow
+        val id = index.getIdFromRow(row.getBytes, 0, row.getLength, null)
+        val sf = serializer.deserialize(id, result.getValue.get)
+        AccumuloIndexAdapter.applyVisibility(sf, result.getKey)
+        sf
+      }
+    }
+
+    class AccumuloIndexWithIdResultsToFeatures(_index: GeoMesaFeatureIndex[_, _], _sft: SimpleFeatureType)
+        extends AccumuloResultsToFeatures(_index, _sft) {
+
+      def this() = this(null, null) // no-arg constructor required for serialization
+
+      override def apply(result: Entry[Key, Value]): SimpleFeature = {
+        val sf = serializer.deserialize(result.getValue.get)
+        AccumuloIndexAdapter.applyVisibility(sf, result.getKey)
+        sf
+      }
+    }
+  }
+
+  /**
+    * Wrapper for byte array to use as a key in the cached visibilities map
     *
     * @param vis vis
     */

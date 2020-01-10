@@ -9,17 +9,17 @@
 
 package org.locationtech.geomesa.fs.storage.orc
 
-import com.typesafe.scalalogging.LazyLogging
-import org.locationtech.jts.geom.Geometry
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.orc.TypeDescription
 import org.locationtech.geomesa.features.serialization.ObjectType
 import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
+import org.locationtech.geomesa.fs.storage.api.FileSystemStorage.FileSystemWriter
 import org.locationtech.geomesa.fs.storage.api._
-import org.locationtech.geomesa.fs.storage.common.MetadataFileSystemStorage.WriterCallback
-import org.locationtech.geomesa.fs.storage.common.{FileSystemPathReader, MetadataFileSystemStorage, MetadataObservingFileSystemWriter}
+import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage
+import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
+import org.locationtech.geomesa.fs.storage.common.observer.FileSystemObserver
+import org.locationtech.jts.geom.Geometry
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter.Filter
@@ -29,25 +29,23 @@ import org.opengis.filter.Filter
   *
   * @param metadata metadata
   */
-class OrcFileSystemStorage(conf: Configuration, metadata: StorageMetadata)
-    extends MetadataFileSystemStorage(conf, metadata) with LazyLogging {
+class OrcFileSystemStorage(context: FileSystemContext, metadata: StorageMetadata)
+    extends AbstractFileSystemStorage(context, metadata, OrcFileSystemStorage.FileExtension) {
 
-  override protected def extension: String = OrcFileSystemStorage.FileExtension
+  override protected def createWriter(file: Path, observer: FileSystemObserver): FileSystemWriter =
+    new OrcFileSystemWriter(metadata.sft, context.conf, file, observer)
 
-  override protected def createWriter(sft: SimpleFeatureType, file: Path, cb: WriterCallback): FileSystemWriter =
-    new OrcFileSystemWriter(sft, conf, file) with MetadataObservingFileSystemWriter {
-      override def callback: WriterCallback = cb
-    }
-
-  override protected def createReader(sft: SimpleFeatureType,
-                                      filter: Option[Filter],
-                                      transform: Option[(String, SimpleFeatureType)]): FileSystemPathReader =
-    new OrcFileSystemReader(sft, conf, filter.map(FastFilterFactory.optimize(sft, _)), transform)
+  override protected def createReader(
+      filter: Option[Filter],
+      transform: Option[(String, SimpleFeatureType)]): FileSystemPathReader = {
+    val optimized = filter.map(FastFilterFactory.optimize(metadata.sft, _))
+    new OrcFileSystemReader(metadata.sft, context.conf, optimized, transform)
+  }
 }
 
 object OrcFileSystemStorage {
 
-  val OrcEncoding   = "orc"
+  val Encoding      = "orc"
   val FileExtension = "orc"
 
   def geometryXField(attribute: String): String = s"${attribute}_x"
@@ -167,7 +165,6 @@ object OrcFileSystemStorage {
       case ObjectType.DOUBLE  => TypeDescription.createDouble()
       case ObjectType.BOOLEAN => TypeDescription.createBoolean()
       case ObjectType.BYTES   => TypeDescription.createBinary()
-      case ObjectType.JSON    => TypeDescription.createString()
       case ObjectType.UUID    => TypeDescription.createString()
       case _ => throw new IllegalArgumentException(s"Unexpected simple object type $binding")
     }

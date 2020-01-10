@@ -10,8 +10,8 @@ package org.locationtech.geomesa.utils.geotools.sft
 
 import com.typesafe.config._
 import org.locationtech.geomesa.utils.geotools.ConfigSftParsing
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.KEYWORDS_KEY
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.InternalConfigs.KEYWORDS_DELIMITER
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.Keywords
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.InternalConfigs.KeywordsDelimiter
 import org.locationtech.geomesa.utils.geotools.sft.SimpleFeatureSpec._
 import org.opengis.feature.simple.SimpleFeatureType
 
@@ -30,7 +30,7 @@ object SimpleFeatureSpecConfig {
   val NamePath       = "name"
 
   // config keys that are not attribute options - all other fields are assumed to be options
-  private val NonOptions = Seq(TypePath, NamePath)
+  private val NonOptions = Set(TypePath, NamePath)
 
   /**
     * Parse a SimpleFeatureType spec from a typesafe Config
@@ -78,9 +78,9 @@ object SimpleFeatureSpecConfig {
     val updated = if (includeUserData) {
       val prefixes = sft.getUserDataPrefixes
       // special handling for keywords delimiter
-      val keywords = Map(KEYWORDS_KEY -> sft.getKeywords.asJava).filterNot(_._2.isEmpty)
+      val keywords = Map(Keywords -> sft.getKeywords.asJava).filterNot(_._2.isEmpty)
       val toConvert = keywords ++ sft.getUserData.asScala.collect {
-        case (k, v) if v != null && prefixes.exists(k.toString.startsWith) && k != KEYWORDS_KEY => (k.toString, v)
+        case (k, v) if v != null && prefixes.exists(k.toString.startsWith) && k != Keywords => (k.toString, v)
       }
       val userData = ConfigValueFactory.fromMap(toConvert.asJava)
       base.withValue(UserDataPath, userData)
@@ -117,18 +117,27 @@ object SimpleFeatureSpecConfig {
   }
 
   private def parse(conf: Config): (Option[String], SimpleFeatureSpec) = {
-    import org.locationtech.geomesa.utils.conf.ConfConversions._
+    import org.locationtech.geomesa.utils.conf.ConfConversions.RichConfig
 
     val name = conf.getStringOpt(TypeNamePath)
     val attributes = conf.getConfigListOpt("fields").getOrElse(conf.getConfigList(AttributesPath)).asScala.map(buildField)
-    val opts = getOptions(conf.getConfigOpt(UserDataPath).getOrElse(ConfigFactory.empty))
+    val opts = {
+      val userDataConfig = conf.getConfigOpt(UserDataPath).getOrElse(ConfigFactory.empty)
+      val base = userDataConfig.toStringMap()
+      if (!base.contains(Keywords)) { base } else {
+        // special case to handle keywords
+        base ++ userDataConfig.withOnlyPath(Keywords).toStringMap(KeywordsDelimiter)
+      }
+    }
 
     (name, SimpleFeatureSpec(attributes, opts))
   }
 
   private def buildField(conf: Config): AttributeSpec = {
+    import org.locationtech.geomesa.utils.conf.ConfConversions.RichConfig
+
     val attribute = SimpleFeatureSpecParser.parseAttribute(s"${conf.getString(NamePath)}:${conf.getString(TypePath)}")
-    val options = getOptions(conf)
+    val options = conf.toStringMap().filterNot { case (k, _) => NonOptions.contains(k) }
 
     attribute match {
       case s: SimpleAttributeSpec => s.copy(options = options)
@@ -138,16 +147,6 @@ object SimpleFeatureSpecConfig {
     }
   }
 
-  def normalizeKey(k: String): String = String.join(".", ConfigUtil.splitPath(k))
-
-  private def getOptions(conf: Config): Map[String, String] = {
-    val asMap = conf.entrySet().asScala.map(e => normalizeKey(e.getKey) -> e.getValue.unwrapped()).toMap
-    asMap.filterKeys(!NonOptions.contains(_)).map {
-      // Special case to handle adding keywords
-      case (KEYWORDS_KEY, v: java.util.List[String]) => KEYWORDS_KEY -> String.join(KEYWORDS_DELIMITER, v)
-      case (k, v: java.util.List[String]) => k -> String.join(",", v)
-      case (k, v) => k -> s"$v"
-    }
-  }
-
+  @deprecated("org.locationtech.geomesa.utils.conf.ConfConversions.normalizeKey")
+  def normalizeKey(k: String): String = org.locationtech.geomesa.utils.conf.ConfConversions.normalizeKey(k)
 }

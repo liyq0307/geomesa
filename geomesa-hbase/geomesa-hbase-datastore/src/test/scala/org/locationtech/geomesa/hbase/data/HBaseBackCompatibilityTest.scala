@@ -13,15 +13,18 @@ import java.nio.charset.StandardCharsets
 
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.arrow.memory.{BufferAllocator, RootAllocator}
 import org.apache.hadoop.hbase.client.{Put, Scan}
 import org.apache.hadoop.hbase.{HColumnDescriptor, HTableDescriptor, TableName}
 import org.geotools.data.simple.SimpleFeatureSource
 import org.geotools.data.{DataStoreFinder, DataUtilities, Query, Transaction}
 import org.geotools.filter.text.ecql.ECQL
+import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.opengis.feature.simple.SimpleFeature
 import org.locationtech.geomesa.hbase.HBaseSystemProperties.TableAvailabilityTimeout
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreParams.{ConnectionParam, HBaseCatalogParam}
+import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
@@ -66,6 +69,8 @@ class HBaseBackCompatibilityTest extends HBaseTest with LazyLogging  {
 
   val path = "src/test/resources/data/" // note: if running through intellij, use an absolute path
 
+  implicit val allocator: BufferAllocator = new RootAllocator(Long.MaxValue)
+
   lazy val params = Map(ConnectionParam.getName -> connection, HBaseCatalogParam.getName -> name).asJava
 
   step {
@@ -75,6 +80,7 @@ class HBaseBackCompatibilityTest extends HBaseTest with LazyLogging  {
   "HBase data store" should {
 
     "Support back-compatibility to version 2.0.2" in { runVersionTest("2.0.2") }
+    "Support back-compatibility to version 2.3.1" in { runVersionTest("2.3.1") }
 
     "Write data to disk" in {
 
@@ -86,10 +92,7 @@ class HBaseBackCompatibilityTest extends HBaseTest with LazyLogging  {
       try {
         ds.createSchema(sft)
         WithClose(ds.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-          features.foreach { f =>
-            FeatureUtils.copyToWriter(writer, f, useProvidedFid = true)
-            writer.write()
-          }
+          features.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
         }
       } finally {
         ds.dispose()
@@ -115,8 +118,7 @@ class HBaseBackCompatibilityTest extends HBaseTest with LazyLogging  {
       val featureToAdd = ScalaSimpleFeature.create(sft, "10", "name10", "10", "2016-01-01T00:30:00.000Z", "POINT(-110 45)")
 
       val writer = ds.getFeatureWriterAppend(name, Transaction.AUTO_COMMIT)
-      FeatureUtils.copyToWriter(writer, featureToAdd, useProvidedFid = true)
-      writer.write()
+      FeatureUtils.write(writer, featureToAdd, useProvidedFid = true)
       writer.close()
 
       // make sure we can read it back
@@ -150,6 +152,7 @@ class HBaseBackCompatibilityTest extends HBaseTest with LazyLogging  {
         foreach(transforms) { transform =>
           doQuery(fs, new Query(name, filter, transform), results.map(features.apply))
         }
+        doArrowQuery(fs, new Query(name, filter)) must containTheSameElementsAs(results)
       }
 
       // delete one of the old features
@@ -190,6 +193,17 @@ class HBaseBackCompatibilityTest extends HBaseTest with LazyLogging  {
     }
 
     results must containTheSameElementsAs(transformed)
+  }
+
+  def doArrowQuery(fs: SimpleFeatureSource, query: Query): Seq[Int] = {
+    query.getHints.put(QueryHints.ARROW_ENCODE, java.lang.Boolean.TRUE)
+    val out = new ByteArrayOutputStream
+    val results = SelfClosingIterator(fs.getFeatures(query).features)
+    results.foreach(sf => out.write(sf.getAttribute(0).asInstanceOf[Array[Byte]]))
+    def in() = new ByteArrayInputStream(out.toByteArray)
+    WithClose(SimpleFeatureArrowFileReader.streaming(in)) { reader =>
+      SelfClosingIterator(reader.features()).map(_.getID.toInt).toSeq
+    }
   }
 
   def writeVersion(file: File): Unit = {

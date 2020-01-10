@@ -31,12 +31,22 @@ class DateFunctionFactory extends TransformerFunctionFactory {
     Date.from(ZonedDateTime.now(ZoneOffset.UTC).toInstant)
   }
 
-  private val millisToDate = TransformerFunction("millisToDate") { args =>
-    new Date(args(0).asInstanceOf[Long])
+  private val millisToDate = TransformerFunction.pure("millisToDate") { args =>
+    args(0) match {
+      case null => null
+      case d: Long => new Date(d)
+      case d: Int  => new Date(d)
+      case d => throw new IllegalArgumentException(s"Invalid millisecond: $d")
+    }
   }
 
-  private val secsToDate = TransformerFunction("secsToDate") { args =>
-    new Date(args(0).asInstanceOf[Long] * 1000L)
+  private val secsToDate = TransformerFunction.pure("secsToDate") { args =>
+    args(0) match {
+      case null => null
+      case d: Long => new Date(d * 1000L)
+      case d: Int  => new Date(d * 1000L)
+      case d => throw new IllegalArgumentException(s"Invalid second: $d")
+    }
   }
 
   // yyyy-MM-dd'T'HH:mm:ss.SSSZZ (ZZ is time zone with colon)
@@ -149,13 +159,18 @@ class DateFunctionFactory extends TransformerFunctionFactory {
 
 object DateFunctionFactory {
 
-  abstract class StandardDateParser(names: Seq[String]) extends NamedTransformerFunction(names) {
+  abstract class StandardDateParser(names: Seq[String]) extends NamedTransformerFunction(names, pure = true) {
     val format: DateTimeFormatter
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any =
-      DateParsing.parseDate(args(0).toString, format)
+    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
+      args(0) match {
+        case null => null
+        case d: String => DateParsing.parseDate(d, format)
+        case d => DateParsing.parseDate(d.toString, format)
+      }
+    }
   }
 
-  class CustomFormatDateParser extends NamedTransformerFunction(Seq("date")) {
+  class CustomFormatDateParser extends NamedTransformerFunction(Seq("date"), pure = true) {
 
     private var format: DateTimeFormatter = _
 
@@ -165,11 +180,15 @@ object DateFunctionFactory {
       if (format == null) {
         format = DateTimeFormatter.ofPattern(args(0).asInstanceOf[String]).withZone(ZoneOffset.UTC)
       }
-      DateParsing.parseDate(args(1).toString, format)
+      args(1) match {
+        case null => null
+        case d: String => DateParsing.parseDate(d, format)
+        case d => DateParsing.parseDate(d.toString, format)
+      }
     }
   }
 
-  class DateToString extends NamedTransformerFunction(Seq("dateToString")) {
+  class DateToString extends NamedTransformerFunction(Seq("dateToString"), pure = true) {
 
     private var format: DateTimeFormatter = _
 

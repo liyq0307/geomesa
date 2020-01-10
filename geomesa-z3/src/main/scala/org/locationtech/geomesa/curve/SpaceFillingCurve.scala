@@ -8,6 +8,7 @@
 
 package org.locationtech.geomesa.curve
 
+import com.google.common.geometry.S2CellId
 import org.locationtech.sfcurve.IndexRange
 
 trait SpaceFillingCurve[T] {

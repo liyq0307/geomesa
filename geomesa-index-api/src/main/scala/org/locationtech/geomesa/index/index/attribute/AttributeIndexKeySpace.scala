@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.util.{Collections, Locale}
 
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.filter.{Bounds, FilterHelper, FilterValues, filterToString}
 import org.locationtech.geomesa.index.api.IndexKeySpace.IndexKeySpaceFactory
 import org.locationtech.geomesa.index.api.ShardStrategy.AttributeShardStrategy
@@ -152,7 +152,7 @@ class AttributeIndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStra
                          multiplier: Int): Iterator[ScanRange[AttributeIndexKey]] = {
 
     import AttributeIndexKey.encodeForQuery
-    import org.locationtech.geomesa.filter.WILDCARD_SUFFIX
+    import org.locationtech.geomesa.filter.WildcardSuffix
 
     if (values.values.isEmpty) {
       // we have an attribute, but weren't able to extract any bounds... scan all values
@@ -175,7 +175,7 @@ class AttributeIndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStra
             if (lower == upper) {
               val row = AttributeIndexKey(fieldIndexShort, encodeForQuery(lower, binding), inclusive = true)
               Iterator.single(SingleRowRange(row))
-            } else if (lower + WILDCARD_SUFFIX == upper) {
+            } else if (lower + WildcardSuffix == upper) {
               val row = AttributeIndexKey(fieldIndexShort, encodeForQuery(lower, binding), inclusive = true)
               Iterator.single(PrefixRange(row))
             } else {
@@ -265,7 +265,7 @@ class AttributeIndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStra
     import org.locationtech.geomesa.utils.index.ByteArrays.concat
 
     val bytes = ranges.map {
-      case SingleRowRange(row)   => SingleRowByteRange(lower(row))
+      case SingleRowRange(row)   => BoundedByteRange(lower(row), upper(row))
       case BoundedRange(lo, hi)  => BoundedByteRange(lower(lo), upper(hi))
       case PrefixRange(prefix)   => BoundedByteRange(lower(prefix, prefix = true), upper(prefix, prefix = true))
       case LowerBoundedRange(lo) => BoundedByteRange(lower(lo), upper(AttributeIndexKey(lo.i, null)))
@@ -276,7 +276,6 @@ class AttributeIndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStra
 
     if (prefixes.isEmpty) { bytes } else {
       bytes.flatMap {
-        case SingleRowByteRange(row)  => prefixes.map(p => SingleRowByteRange(concat(p, row)))
         case BoundedByteRange(lo, hi) => prefixes.map(p => BoundedByteRange(concat(p, lo), concat(p, hi)))
       }
     }

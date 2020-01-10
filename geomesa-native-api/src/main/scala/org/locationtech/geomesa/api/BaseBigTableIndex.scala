@@ -16,7 +16,7 @@ import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine}
 import org.locationtech.jts.geom.Geometry
 import org.apache.hadoop.classification.InterfaceStability
 import org.geotools.data.Transaction
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
 import org.geotools.filter.identity.FeatureIdImpl
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.curve.TimePeriod
@@ -31,6 +31,7 @@ import org.opengis.feature.simple.SimpleFeature
 import scala.collection.JavaConverters._
 
 @InterfaceStability.Unstable
+@deprecated("Will be removed without replacement")
 abstract class BaseBigTableIndex[T](protected val ds: GeoMesaDataStore[_],
                                     name: String,
                                     serde: ValueSerializer[T],

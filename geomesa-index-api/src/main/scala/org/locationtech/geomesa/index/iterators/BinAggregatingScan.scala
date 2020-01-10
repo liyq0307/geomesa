@@ -11,16 +11,20 @@ package org.locationtech.geomesa.index.iterators
 import java.nio.{ByteBuffer, ByteOrder}
 import java.util.Date
 
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
+import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
+import org.locationtech.geomesa.index.api.QueryPlan.ResultsToFeatures
 import org.locationtech.geomesa.index.iterators.BinAggregatingScan.{ByteBufferResult, ResultCallback}
 import org.locationtech.geomesa.index.utils.bin.BinSorter
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.EncodingOptions
 import org.locationtech.geomesa.utils.bin.{BinaryOutputCallback, BinaryOutputEncoder}
+import org.locationtech.geomesa.utils.geotools.GeometryUtils
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
 trait BinAggregatingScan extends AggregatingScan[ByteBufferResult] {
+
   import BinAggregatingScan.Configuration._
 
   var encoding: EncodingOptions = _
@@ -31,9 +35,10 @@ trait BinAggregatingScan extends AggregatingScan[ByteBufferResult] {
   var sort: Boolean = false
 
   // create the result object for the current scan
-  override protected def initResult(sft: SimpleFeatureType,
-                                    transform: Option[SimpleFeatureType],
-                                    options: Map[String, String]): ByteBufferResult = {
+  override protected def initResult(
+      sft: SimpleFeatureType,
+      transform: Option[SimpleFeatureType],
+      options: Map[String, String]): ByteBufferResult = {
     val geom = options.get(GeomOpt).map(_.toInt).filter(_ != -1)
     val dtg = options.get(DateOpt).map(_.toInt).filter(_ != -1)
     val track = options.get(TrackOpt).map(_.toInt).filter(_ != -1)
@@ -56,10 +61,14 @@ trait BinAggregatingScan extends AggregatingScan[ByteBufferResult] {
   }
 
   // add the feature to the current aggregated result
-  override def aggregateResult(sf: SimpleFeature, result: ByteBufferResult): Unit = encoder.encode(sf, callback)
+  override protected def aggregateResult(sf: SimpleFeature, result: ByteBufferResult): Unit =
+    encoder.encode(sf, callback)
+
+  override protected def notFull(result: ByteBufferResult): Boolean =
+    result.buffer.position < result.buffer.limit
 
   // encode the result as a byte array
-  override def encodeResult(result: ByteBufferResult): Array[Byte] = {
+  override protected def encodeResult(result: ByteBufferResult): Array[Byte] = {
     val bytes = if (result.overflow.position() > 0) {
       // overflow bytes - copy the two buffers into one
       val copy = Array.ofDim[Byte](result.buffer.position + result.overflow.position)
@@ -181,5 +190,33 @@ object BinAggregatingScan {
       val buffer = result.ensureCapacity(24)
       put(buffer, trackId, lat, lon, dtg, label)
     }
+  }
+
+  /**
+    * Converts bin results to features
+    *
+    * @tparam T result type
+    */
+  abstract class BinResultsToFeatures[T] extends ResultsToFeatures[T] {
+
+    override def init(state: Map[String, String]): Unit = {}
+
+    override def state: Map[String, String] = Map.empty
+
+    override def schema: SimpleFeatureType = BinaryOutputEncoder.BinEncodedSft
+
+    override def apply(result: T): SimpleFeature =
+      new ScalaSimpleFeature(BinaryOutputEncoder.BinEncodedSft, "", Array(bytes(result), GeometryUtils.zeroPoint))
+
+    protected def bytes(result: T): Array[Byte]
+
+    def canEqual(other: Any): Boolean = other.isInstanceOf[BinResultsToFeatures[T]]
+
+    override def equals(other: Any): Boolean = other match {
+      case that: BinResultsToFeatures[T] if that.canEqual(this) => true
+      case _ => false
+    }
+
+    override def hashCode(): Int = schema.hashCode()
   }
 }

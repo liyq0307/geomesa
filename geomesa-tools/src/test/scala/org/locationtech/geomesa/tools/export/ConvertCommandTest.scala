@@ -8,17 +8,18 @@
 
 package org.locationtech.geomesa.tools.export
 
-import java.io.{File, FilenameFilter}
+import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Path}
+import java.util.concurrent.atomic.AtomicInteger
 
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.io.FileUtils
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.tools.export.formats.ExportFormat
 import org.locationtech.geomesa.tools.ingest.IngestCommand
-import org.locationtech.geomesa.tools.utils.DataFormats
-import org.locationtech.geomesa.tools.utils.DataFormats.DataFormat
-import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.geomesa.utils.io.PathUtils
 import org.opengis.feature.simple.SimpleFeatureType
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
@@ -28,114 +29,95 @@ class ConvertCommandTest extends Specification with LazyLogging {
 
   sequential
 
-  val csvInput = getClass.getResource("/convert/csv-data.csv").getFile
-  val csvConf  = {
-    val file = new File(getClass.getResource("/convert/csv-convert.conf").getFile)
-    FileUtils.readFileToString(file, StandardCharsets.UTF_8)
-  }
-
-  val tsvInput = getClass.getResource("/convert/tsv-data.tsv").getFile
-  val tsvConf  = {
-    val file = new File(getClass.getResource("/convert/tsv-convert.conf").getFile)
-    FileUtils.readFileToString(file, StandardCharsets.UTF_8)
-  }
-
-  val jsonInput = getClass.getResource("/convert/json-data.json").getFile
-  val jsonConf  = {
-    val file = new File(getClass.getResource("/convert/json-convert.conf").getFile)
-    FileUtils.readFileToString(file, StandardCharsets.UTF_8)
-  }
-
-  val inFormats = Seq(DataFormats.Csv, DataFormats.Tsv, DataFormats.Json)
-  val outFormats = DataFormats.values.toSeq
-
-  for (in <- inFormats; out <- outFormats) {
-    logger.debug(s"Testing $in to $out converter")
-    testPair(in, out)
-  }
-
-  def getInputFileAndConf(fmt: DataFormat): (String, String) = {
-    fmt match {
-      case DataFormats.Csv  => (csvInput,  csvConf)
-      case DataFormats.Tsv  => (tsvInput,  tsvConf)
-      case DataFormats.Json => (jsonInput, jsonConf)
+  val inputFilesAndConfs: Map[ExportFormat, (String, String)] = {
+    val csvInput = getClass.getResource("/convert/csv-data.csv").getFile
+    val csvConf  = {
+      val file = new File(getClass.getResource("/convert/csv-convert.conf").getFile)
+      FileUtils.readFileToString(file, StandardCharsets.UTF_8)
     }
+
+    val tsvInput = getClass.getResource("/convert/tsv-data.tsv").getFile
+    val tsvConf  = {
+      val file = new File(getClass.getResource("/convert/tsv-convert.conf").getFile)
+      FileUtils.readFileToString(file, StandardCharsets.UTF_8)
+    }
+
+    val jsonInput = getClass.getResource("/convert/json-data.json").getFile
+    val jsonConf  = {
+      val file = new File(getClass.getResource("/convert/json-convert.conf").getFile)
+      FileUtils.readFileToString(file, StandardCharsets.UTF_8)
+    }
+
+    Map(
+      ExportFormat.Csv  -> (csvInput  -> csvConf),
+      ExportFormat.Tsv  -> (tsvInput  -> tsvConf),
+      ExportFormat.Json -> (jsonInput -> jsonConf)
+    )
   }
 
-  def testPair(inFmt: DataFormat, outFmt: DataFormat): Unit = {
-    s"Convert Command should convert $inFmt -> $outFmt" in {
-      val (inputFile, conf) = getInputFileAndConf(inFmt)
+  val inFormats = Seq(ExportFormat.Csv, ExportFormat.Tsv, ExportFormat.Json)
+  val outFormats = ExportFormat.Formats.filter(_ != ExportFormat.Null)
 
-      def withCommand[T](test: ConvertCommand => T): T = {
-        val command = new ConvertCommand
-        command.params.files.add(inputFile)
-        command.params.config = conf
-        command.params.spec = conf
-        command.params.outputFormat = outFmt
-        command.params.force = true
-        command.params.file =
-          if (outFmt == DataFormats.Leaflet) {
-            File.createTempFile("convertTest", s".html")
-          } else {
-            File.createTempFile("convertTest", s".${outFmt.toString.toLowerCase}")
-          }
+  val counter = new AtomicInteger(0)
 
-        try {
-          test(command)
-        } finally {
-          if (!command.params.file.delete()) {
-            command.params.file.deleteOnExit()
-          }
-          if (outFmt == DataFormats.Shp) {
-            val root = command.params.file.getName.takeWhile(_ != '.') + "."
-            command.params.file.getParentFile.listFiles(new FilenameFilter() {
-              override def accept(dir: File, name: String) = name.startsWith(root)
-            }).foreach { file =>
-              if (!file.delete()) {
-                file.deleteOnExit()
-              }
-            }
-          }
-        }
-      }
+  def createCommand(inFmt: ExportFormat, outFmt: ExportFormat): ConvertCommand = {
+    val (inputFile, conf) = inputFilesAndConfs(inFmt)
+    val file = new File(dir.toFile, s"${counter.getAndIncrement()}/out.${outFmt.extensions.headOption.orNull}")
+    val command = new ConvertCommand
+    command.params.files.add(inputFile)
+    command.params.config = conf
+    command.params.spec = conf
+    command.params.explicitOutputFormat = outFmt
+    command.params.force = true
+    command.params.file = file.getAbsolutePath
+    command
+  }
 
-      "get a Converter" in {
-        withCommand { command =>
+  var dir: Path = _
+
+  step {
+    dir = Files.createTempDirectory("gm-convert-test")
+  }
+
+  "Convert Command" should {
+    "get a converter" in {
+      forall(inFormats) { inFmt =>
+        forall(outFormats) { outFmt =>
+          val command = createCommand(inFmt, outFmt)
           val sftAndConverter = IngestCommand.getSftAndConverter(command.params, Seq.empty, None, None)
           sftAndConverter must beASuccessfulTry(beSome[(SimpleFeatureType, Config)])
         }
       }
-      "get an Exporter" in {
-        withCommand { command =>
-          WithClose(ConvertCommand.getExporter(command.params, null))(_ must not(beNull))
-        }
-      }
-      "export data" in {
-        withCommand { command =>
+    }
+
+    "export data" in {
+      forall(inFormats) { inFmt =>
+        forall(outFormats) { outFmt =>
+          logger.debug(s"Testing $inFmt to $outFmt converter")
+          val command = createCommand(inFmt, outFmt)
           command.execute()
-          if (command.params.outputFormat == DataFormats.Null) {
-            command.params.file.length() mustEqual 0
-          } else {
-            command.params.file.length() must beGreaterThan(0L)
-          }
+          new File(command.params.file).length() must beGreaterThan(0L)
         }
       }
-      "use type inference" in {
-        if (inFmt == DataFormats.Csv || inFmt == DataFormats.Tsv) {
-          withCommand { command =>
-            command.params.config = null
-            command.params.spec = null
-            command.execute()
-            if (command.params.outputFormat == DataFormats.Null) {
-              command.params.file.length() mustEqual 0
-            } else {
-              command.params.file.length() must beGreaterThan(0L)
-            }
-          }
-        } else {
-          ok
+    }
+
+    "use type inference" in {
+      forall(Seq(ExportFormat.Csv, ExportFormat.Tsv)) { inFmt =>
+        forall(outFormats) { outFmt =>
+          logger.debug(s"Testing $inFmt to $outFmt type inference")
+          val command = createCommand(inFmt, outFmt)
+          command.params.config = null
+          command.params.spec = null
+          command.execute()
+          new File(command.params.file).length() must beGreaterThan(0L)
         }
       }
+    }
+  }
+
+  step {
+    if (dir != null) {
+      PathUtils.deleteRecursively(dir)
     }
   }
 }

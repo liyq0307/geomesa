@@ -8,6 +8,7 @@
 
 package org.locationtech.geomesa.convert.shp
 
+import java.io.ByteArrayInputStream
 import java.nio.file.Paths
 
 import com.typesafe.config.ConfigFactory
@@ -50,7 +51,6 @@ class ShapefileConverterTest extends Specification {
           |     { name = "area", transform = "add(shp('ALAND'),shp('AWATER'))" },
           |     { name = "geom", transform = "shp('the_geom')" },
           |   ]
-          |   options = { verbose = true }
           | }
         """.stripMargin)
 
@@ -76,7 +76,7 @@ class ShapefileConverterTest extends Specification {
     }
 
     "infer converters" in {
-      val inferred = ShapefileConverterFactory.infer(shpFile, None)
+      val inferred = new ShapefileConverterFactory().infer(new ByteArrayInputStream(Array.empty), None, Some(shpFile))
       inferred must beSome
 
       val (sft, conf) = inferred.get

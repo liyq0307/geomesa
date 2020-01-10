@@ -19,7 +19,7 @@ geospatial analytics.
 ## Join the Community
 
 * <a href="https://gitter.im/locationtech/geomesa?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge" target="_blank"><img src="https://badges.gitter.im/Join%20Chat.svg" alt="Join the chat at https://gitter.im/locationtech/geomesa"></img></a>
-* GeoMesa [Users](https://locationtech.org/mhonarc/lists/geomesa-users/) and [Dev](https://locationtech.org/mhonarc/lists/geomesa-dev/) mailing lists
+* GeoMesa [Users](https://accounts.eclipse.org/mailing-list/geomesa-users) and [Dev](https://accounts.eclipse.org/mailing-list/geomesa-dev) mailing lists
 * GeoMesa [JIRA](https://geomesa.atlassian.net/issues/?jql=order+by+created+DESC) for issue tracking
 
 ## Documentation
@@ -98,11 +98,11 @@ in other repositories. To include GeoMesa in your project, add the following rep
   </repository>
   <repository>
     <id>osgeo</id>
-    <url>http://download.osgeo.org/webdav/geotools</url>
+    <url>https://download.osgeo.org/webdav/geotools</url>
   </repository>
   <repository>
-    <id>conjars.org</id>
-    <url>http://conjars.org/repo</url>
+    <id>confluent</id>
+    <url>https://packages.confluent.io/maven/</url>
   </repository>
 </repositories>
 ```
@@ -154,8 +154,8 @@ Similarly, integration with `sbt` is straightforward:
 resolvers ++= Seq(
   "locationtech-releases" at "https://repo.locationtech.org/content/groups/releases",
   "boundlessgeo" at "https://repo.boundlessgeo.com/main",
-  "osgeo" at "http://download.osgeo.org/webdav/geotools",
-  "conjars.org" at "http://conjars.org/repo"
+  "osgeo" at "https://download.osgeo.org/webdav/geotools",
+  "confluent" at "https://packages.confluent.io/maven"
 )
 
 // Select desired modules

@@ -8,15 +8,18 @@
 
 package org.locationtech.geomesa.fs.tools
 
+import java.io.File
 import java.util
+import java.util.ServiceLoader
 
 import com.beust.jcommander.{IValueValidator, Parameter, ParameterException}
-import org.locationtech.geomesa.fs.FileSystemDataStore
-import org.locationtech.geomesa.fs.FileSystemDataStoreFactory.FileSystemDataStoreParams
-import org.locationtech.geomesa.fs.storage.common.FileSystemStorageFactory
+import org.locationtech.geomesa.fs.data.FileSystemDataStore
+import org.locationtech.geomesa.fs.data.FileSystemDataStoreFactory.FileSystemDataStoreParams
+import org.locationtech.geomesa.fs.storage.api.FileSystemStorageFactory
 import org.locationtech.geomesa.fs.tools.FsDataStoreCommand.FsParams
-import org.locationtech.geomesa.tools.DataStoreCommand
 import org.locationtech.geomesa.tools.utils.ParameterConverters.KeyValueConverter
+import org.locationtech.geomesa.tools.{DataStoreCommand, DistributedCommand}
+import org.locationtech.geomesa.utils.classpath.ClassPathUtils
 import org.locationtech.geomesa.utils.io.PathUtils
 
 /**
@@ -33,7 +36,8 @@ trait FsDataStoreCommand extends DataStoreCommand[FileSystemDataStore] {
     val builder = Map.newBuilder[String, String]
     builder += (FileSystemDataStoreParams.PathParam.getName -> url.toString)
     if (params.configuration != null && !params.configuration.isEmpty) {
-      builder += (FileSystemDataStoreParams.ConfParam.getName -> params.configuration.asScala.mkString("\n"))
+      val xml = FileSystemDataStoreParams.convertPropsToXml(params.configuration.asScala.mkString("\n"))
+      builder += (FileSystemDataStoreParams.ConfigsParam.getName -> xml)
     }
     builder.result()
   }
@@ -41,43 +45,54 @@ trait FsDataStoreCommand extends DataStoreCommand[FileSystemDataStore] {
 
 object FsDataStoreCommand {
 
+  import scala.collection.JavaConverters._
+
+  trait FsDistributedCommand extends FsDataStoreCommand with DistributedCommand {
+
+    abstract override def libjarsFiles: Seq[String] =
+      Seq("org/locationtech/geomesa/fs/tools/fs-libjars.list") ++ super.libjarsFiles
+
+    abstract override def libjarsPaths: Iterator[() => Seq[File]] = Iterator(
+      () => ClassPathUtils.getJarsFromEnvironment("GEOMESA_FS_HOME", "lib"),
+      () => ClassPathUtils.getJarsFromClasspath(classOf[FileSystemDataStore])
+    ) ++ super.libjarsPaths
+  }
+
   trait FsParams {
     @Parameter(names = Array("--path", "-p"), description = "Path to root of filesystem datastore", required = true)
     var path: String = _
 
-    @Parameter(names = Array("--config"), description = "Configuration properties, in the form k=v", required = false, variableArity = true)
+    @Parameter(names = Array("--config"), description = "Configuration properties, in the form k=v", variableArity = true)
     var configuration: java.util.List[String] = _
   }
 
-  trait EncodingParam {
-    @Parameter(names = Array("--encoding", "-e"), description = "Encoding (parquet, orc, converter, etc)", validateValueWith = classOf[EncodingValidator], required = true)
-    var encoding: String = _
-  }
-
   trait PartitionParam {
-    @Parameter(names = Array("--partitions"), description = "Partitions to operate on (if empty all partitions will be used)", required = false, variableArity = true)
+    @Parameter(names = Array("--partitions"), description = "Partitions to operate on (if empty all partitions will be used)", variableArity = true)
     var partitions: java.util.List[String] = new util.ArrayList[String]()
   }
 
-  trait SchemeParams {
-    @Parameter(names = Array("--partition-scheme"), description = "PartitionScheme typesafe config string or file", required = true)
+  trait OptionalEncodingParam {
+    @Parameter(names = Array("--encoding", "-e"), description = "Encoding (parquet, orc, converter, etc)", validateValueWith = classOf[EncodingValidator])
+    var encoding: String = _
+  }
+
+  trait OptionalSchemeParams {
+    @Parameter(names = Array("--partition-scheme"), description = "PartitionScheme typesafe config string or file")
     var scheme: java.lang.String = _
 
-    @Parameter(names = Array("--leaf-storage"), description = "Use Leaf Storage for Partition Scheme", required = false, arity = 1)
+    @Parameter(names = Array("--leaf-storage"), description = "Use Leaf Storage for Partition Scheme", arity = 1)
     var leafStorage: java.lang.Boolean = true
 
-    @Parameter(names = Array("--storage-opt"), variableArity = true, description = "Additional storage opts (k=v)", required = false, converter = classOf[KeyValueConverter])
+    @Parameter(names = Array("--storage-opt"), variableArity = true, description = "Additional storage opts (k=v)", converter = classOf[KeyValueConverter])
     var storageOpts: java.util.List[(String, String)] = new java.util.ArrayList[(String, String)]()
   }
 
   class EncodingValidator extends IValueValidator[String] {
     override def validate(name: String, value: String): Unit = {
-      try {
-        FileSystemStorageFactory.factory(value)
-      } catch {
-        case _: IllegalArgumentException =>
-          throw new ParameterException(s"$value is not a valid encoding for parameter $name." +
-              s"Available encodings are: ${FileSystemStorageFactory.factories().map(_.getEncoding).mkString(", ")}")
+      val encodings = ServiceLoader.load(classOf[FileSystemStorageFactory]).asScala.map(_.encoding).toList
+      if (!encodings.exists(_.equalsIgnoreCase(value))) {
+        throw new ParameterException(s"$value is not a valid encoding for parameter $name." +
+            s"Available encodings are: ${encodings.mkString(", ")}")
       }
     }
   }

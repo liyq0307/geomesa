@@ -9,6 +9,7 @@
 package org.locationtech.geomesa.kafka.data
 
 import java.io.Closeable
+import java.time.Duration
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, Executors}
@@ -97,17 +98,16 @@ object KafkaCacheLoader {
     override def close(): Unit = {}
   }
 
-  class KafkaCacheLoaderImpl(sft: SimpleFeatureType,
-                             override val cache: KafkaFeatureCache,
-                             override protected val consumers: Seq[Consumer[Array[Byte], Array[Byte]]],
-                             override protected val topic: String,
-                             override protected val frequency: Long,
-                             lazyDeserialization: Boolean,
-                             doInitialLoad: Boolean,
-                             initialLoadConfig: Option[EventTimeConfig])
-      extends ThreadedConsumer with KafkaCacheLoader {
-
-    private val serializer = GeoMessageSerializer(sft, `lazy` = lazyDeserialization)
+  class KafkaCacheLoaderImpl(
+      sft: SimpleFeatureType,
+      override val cache: KafkaFeatureCache,
+      consumers: Seq[Consumer[Array[Byte], Array[Byte]]],
+      topic: String,
+      frequency: Long,
+      serializer: GeoMessageSerializer,
+      doInitialLoad: Boolean,
+      initialLoadConfig: Option[EventTimeConfig]
+    ) extends ThreadedConsumer(consumers, Duration.ofMillis(frequency)) with KafkaCacheLoader {
 
     try { classOf[ConsumerRecord[Any, Any]].getMethod("timestamp") } catch {
       case _: NoSuchMethodException => logger.warn("This version of Kafka doesn't support timestamps, using system time")
@@ -135,8 +135,9 @@ object KafkaCacheLoader {
     }
 
     override protected [KafkaCacheLoader] def consume(record: ConsumerRecord[Array[Byte], Array[Byte]]): Unit = {
-      val message = serializer.deserialize(record.key(), record.value(), RecordVersions.getHeaders(record))
-      val timestamp = try { record.timestamp() } catch { case _: NoSuchMethodError => System.currentTimeMillis() }
+      val headers = RecordVersions.getHeaders(record)
+      val timestamp = RecordVersions.getTimestamp(record)
+      val message = serializer.deserialize(record.key(), record.value(), headers, timestamp)
       logger.trace(s"Consumed message [$topic:${record.partition}:${record.offset}] $message")
       message match {
         case m: Change => fireEvent(m, timestamp); cache.put(m.feature)
@@ -157,13 +158,15 @@ object KafkaCacheLoader {
     * @param serializer message serializer
     * @param toLoad main cache loader, used for callback when bulk loading is done
     */
-  private class InitialLoader(sft: SimpleFeatureType,
-                              override protected val consumers: Seq[Consumer[Array[Byte], Array[Byte]]],
-                              override protected val topic: String,
-                              override protected val frequency: Long,
-                              serializer: GeoMessageSerializer,
-                              eventTime: Option[EventTimeConfig],
-                              toLoad: KafkaCacheLoaderImpl) extends ThreadedConsumer with Runnable {
+  private class InitialLoader(
+      sft: SimpleFeatureType,
+      consumers: Seq[Consumer[Array[Byte], Array[Byte]]],
+      topic: String,
+      frequency: Long,
+      serializer: GeoMessageSerializer,
+      eventTime: Option[EventTimeConfig],
+      toLoad: KafkaCacheLoaderImpl
+  ) extends ThreadedConsumer(consumers, Duration.ofMillis(frequency), false) with Runnable {
 
     private val cache = KafkaFeatureCache.nonIndexing(sft, eventTime)
 
@@ -172,12 +175,11 @@ object KafkaCacheLoader {
     private var latch: CountDownLatch = _
     private val done = new AtomicBoolean(false)
 
-    override protected def closeConsumers: Boolean = false
-
     override protected def consume(record: ConsumerRecord[Array[Byte], Array[Byte]]): Unit = {
       if (done.get) { toLoad.consume(record) } else {
-        val message = serializer.deserialize(record.key, record.value, RecordVersions.getHeaders(record))
-        val timestamp = try { record.timestamp() } catch { case _: NoSuchMethodError => System.currentTimeMillis() }
+        val headers = RecordVersions.getHeaders(record)
+        val timestamp = RecordVersions.getTimestamp(record)
+        val message = serializer.deserialize(record.key, record.value, headers, timestamp)
         logger.trace(s"Consumed message [$topic:${record.partition}:${record.offset}] $message")
         message match {
           case m: Change => toLoad.fireEvent(m, timestamp); cache.put(m.feature)

@@ -46,6 +46,13 @@ geomesa.convert.scripts.path
 This property allows for adding files to the classpath. It should be set to a colon-separated list of file
 paths. This is useful for getting scripts onto the classpath for use by map-reduce ingest jobs.
 
+geomesa.density.batch.size
+++++++++++++++++++++++++++
+
+This property controls the batch size used for running distributed density (heatmap) queries. It needs to be set on
+each region or tablet server. If a query is closed or cancelled before completion, the batch size will determine how
+long the distributed scan will keep running before seeing the cancellation.
+
 geomesa.distributed.lock.timeout
 ++++++++++++++++++++++++++++++++
 
@@ -97,6 +104,46 @@ front, so estimates will cause problems. To force GeoMesa to calculate the exact
 set, you may set this property to ``true``. You may also override this behavior on a per-query basis
 by using the query hint ``org.locationtech.geomesa.accumulo.index.QueryHints.EXACT_COUNT``.
 
+geomesa.geometry.processing
++++++++++++++++++++++++++++
+
+This property controls how query geometries will be handled with respect to the anti-meridian. Acceptable values are
+one of ``spatial4j`` or ``none``. ``spatial4j`` (the default) will use the Spatial4J library, which will interpret a
+geometry with a segment spanning more than 180 degrees of longitude as being inverted around the anti-meridian. To
+prevent a geometry from being inverted, add way-points every 180 degrees. ``none`` will interpret geometries
+literally. In this case, to query around the anti-meridian, use an OR filter or a geometry collection.
+
+As an example, the following filters both specify a 2-degree area around the anti-meridian:
+
+.. code-block:: java
+
+  // spatial4j processing
+  "intersects(geom, 'POLYGON((-179 90, 179 90, 179 -90, -179 -90, -179 90))')"
+  // no processing
+  "intersects(geom, 'MULTIPOLYGON(((-179 90, -180 90, -180 -90, -179 -90, -179 90)),((179 90, 180 90, 180 -90, 179 -90, 179 90)))')"
+
+While the following filters both specify a 358-degree globe-spanning polygon:
+
+.. code-block:: java
+
+  // spatial4j processing
+  "intersects(geom, 'POLYGON((-179 90, 0 90, 179 90, 179 -90, 0 -90, -179 -90, -179 90))')"
+  // no processing
+  "intersects(geom, 'POLYGON((-179 90, 179 90, 179 -90, -179 -90, -179 90))')"
+
+geomesa.ilike.max.length
+++++++++++++++++++++++++
+
+Controls the max length of an ``ilike`` predicate that will be parsed by GeoMesa for attribute index queries.
+Case-insensitive matches must be enumerated for each possible case, which will result in exponentially
+increasing query ranges. The default value is ``10``, which will result in 1024 ranges.
+
+geomesa.ingest.local.batch.size
++++++++++++++++++++++++++++++++
+
+Controls the batch size for local ingests via the command-line tools. By default, feature writers will be
+flushed every 20,000 features.
+
 geomesa.metadata.expiry
 +++++++++++++++++++++++
 
@@ -114,10 +161,10 @@ for details on partitioning.
 geomesa.query.cost.type
 +++++++++++++++++++++++
 
-This property controls how GeoMesa performs query planning. By default, GeoMesa will perform cost-based
-query planning using data statistics to determine the best index for a given query. As a fallback option,
-this property may be set to ``index`` to use heuristic-based query planning. This may also be overridden on a
-per-query basis using the query hint ``org.locationtech.geomesa.accumulo.index.QueryHints.COST_EVALUATION_KEY``
+This property controls how GeoMesa performs query planning. By default, GeoMesa uses heuristics to determine the
+best index for a given query. Alternatively, this property may be set to ``stats`` to use cached data statistics
+and cost-based query planning. This may also be overridden on a per-query basis using the query hint
+``org.locationtech.geomesa.accumulo.index.QueryHints.COST_EVALUATION_KEY``
 set to either ``org.locationtech.geomesa.accumulo.index.QueryPlanner.CostEvaluation.Stats``
 or ``org.locationtech.geomesa.accumulo.index.QueryPlanner.CostEvaluation.Index``. See :ref:`query_planning`
 for more details on query planning strategies.
@@ -182,14 +229,22 @@ geomesa.sft.config.urls
 This property allows for adding GeoMesa simple feature type configurations to the environment. It can be set to
 a comma-separated list of arbitrary URLs. For more information on defining types, see :ref:`cli_sft_conf`.
 
+geomesa.stats.batch.size
+++++++++++++++++++++++++
+
+This property controls the batch size used for running distributed stat queries. It needs to be set on each
+region or tablet server. If a query is closed or cancelled before completion, the batch size will determine how
+long the distributed scan will keep running before seeing the cancellation.
+
 .. _stats_generate_config:
 
 geomesa.stats.generate
 ++++++++++++++++++++++
 
-This property controls whether GeoMesa will generate statistics during ingestion. It is specified as a Boolean,
-``true`` or ``false``. This property will be used if a data store is not explicitly configured using the
-``geomesa.stats.enable`` data store parameter.
+This property controls whether GeoMesa will generate statistics for a given feature type during ingestion. It
+is specified as a Boolean, ``true`` or ``false``. This property will be used when a feature type is first created,
+if stats are not explicitly configured in the feature type user data or through the ``geomesa.stats.enable``
+data store parameter. See :ref:`stat_config` for details on configuring the feature type.
 
 geomesa.strategy.decider
 ++++++++++++++++++++++++

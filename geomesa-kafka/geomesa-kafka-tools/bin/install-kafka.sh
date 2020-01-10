@@ -8,20 +8,10 @@
 #
 zookeeper_version="%%zookeeper.version.recommended%%"
 
-# kafka 0.9 versions
+# kafka versions
 kafka_version="%%kafka.version%%"
 zkclient_version="%%zkclient.version%%"
 jopt_version="%%kafka.jopt.version%%"
-
-# kafka 0.10 versions
-# kafka_version="0.10.2.1"
-# zkclient_version="0.10"
-# jopt_version="4.9"
-
-# kafka 1.0 versions
-# kafka_version="1.0.0"
-# zkclient_version="0.10"
-# jopt_version="5.0.4"
 
 # Load common functions and setup
 if [ -z "${%%gmtools.dist.name%%_HOME}" ]; then
@@ -42,5 +32,14 @@ declare -a urls=(
   "${base_url}net/sf/jopt-simple/jopt-simple/$jopt_version/jopt-simple-$jopt_version.jar"
   "${base_url}com/yammer/metrics/metrics-core/2.2.0/metrics-core-2.2.0.jar"
 )
+
+zk_maj_ver="$(expr match "$zookeeper_version" '\([0-9][0-9]*\)\.')"
+zk_min_ver="$(expr match "$zookeeper_version" '[0-9][0-9]*\.\([0-9][0-9]*\)')"
+zk_bug_ver="$(expr match "$zookeeper_version" '[0-9][0-9]*\.[0-9][0-9]*\.\([0-9][0-9]*\)')"
+
+# compare the version of zookeeper to determine if we need zookeeper-jute (version >= 3.5.5)
+if [[ "$zk_maj_ver" -ge 3 && "$zk_min_ver" -ge 5 && "$zk_bug_ver" -ge 5 ]]; then
+  urls+=("${base_url}org/apache/zookeeper/zookeeper-jute/$zookeeper_version/zookeeper-jute-$zookeeper_version.jar")
+fi
 
 downloadUrls "$install_dir" urls[@]

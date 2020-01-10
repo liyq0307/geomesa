@@ -14,12 +14,9 @@ import java.nio.file._
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.regex.Pattern
-import java.util.zip.GZIPInputStream
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.commons.compress.compressors.bzip2.{BZip2CompressorInputStream, BZip2Utils}
-import org.apache.commons.compress.compressors.gzip.GzipUtils
-import org.apache.commons.compress.compressors.xz.{XZCompressorInputStream, XZUtils}
+import org.apache.commons.io.FilenameUtils
 import org.apache.hadoop.fs.FsUrlStreamHandlerFactory
 import org.locationtech.geomesa.utils.io.fs.FileSystemDelegate.FileHandle
 import org.locationtech.geomesa.utils.io.fs.{FileSystemDelegate, HadoopDelegate, LocalDelegate}
@@ -39,21 +36,28 @@ object PathUtils extends FileSystemDelegate with LazyLogging {
 
   private val factorySet = new AtomicBoolean(false)
 
-  // Make sure that the Hadoop URL Factory is configured.
-  def configureURLFactory(): Unit = {
+  /**
+    * Ensure that the Hadoop URL Factory is configured, so that urls staring with hdfs:// can be parsed
+    */
+  private def configureURLFactory(): Unit = {
     if (factorySet.compareAndSet(false, true)) {
       try { // Calling this method twice in the same JVM causes a java.lang.Error
         URL.setURLStreamHandlerFactory(new FsUrlStreamHandlerFactory)
         logger.trace("Configured Hadoop URL Factory.")
       } catch {
         case _: Throwable =>
-          logger.warn("Could not register Hadoop URL Factory.  Some filesystems may not be available.")
+          logger.warn("Could not register Hadoop URL Factory. Some filesystems may not be available.")
       }
     }
   }
 
+  override def interpretPath(path: String): Seq[FileHandle] = chooseDelegate(path).interpretPath(path)
+
+  override def getHandle(path: String): FileHandle = chooseDelegate(path).getHandle(path)
+
   /**
     * Checks to see if the path uses a URL pattern and then if it is *not* file://
+    *
     * @param path Input resource path
     * @return     Whether or not the resource is remote.
     */
@@ -68,7 +72,7 @@ object PathUtils extends FileSystemDelegate with LazyLogging {
     */
   def getUrl(path: String): URL = {
     try {
-      if (isRemote(path)) {
+      if (uriRegex.matcher(path).matches()) {
         // we need to add the hadoop url factories to the JVM to support hdfs, S3, or wasb
         // we only want to call this once per jvm or it will throw an error
         configureURLFactory()
@@ -82,21 +86,59 @@ object PathUtils extends FileSystemDelegate with LazyLogging {
     }
   }
 
-  override def interpretPath(path: String): Seq[FileHandle] = chooseDelegate(path).interpretPath(path)
+  /**
+    * Returns the file extension, minus any compression that may be present
+    *
+    * @param path file path
+    * @return
+    */
+  def getUncompressedExtension(path: String): String =
+    FilenameUtils.getExtension(CompressionUtils.getUncompressedFilename(path))
 
-  def handleCompression(is: InputStream, filename: String): InputStream = {
-    if (GzipUtils.isCompressedFilename(filename)) {
-      new GZIPInputStream(new BufferedInputStream(is))
-    } else if (BZip2Utils.isCompressedFilename(filename)) {
-      new BZip2CompressorInputStream(new BufferedInputStream(is))
-    } else if (XZUtils.isCompressedFilename(filename)) {
-      new XZCompressorInputStream(new BufferedInputStream(is))
-    } else {
-      new BufferedInputStream(is)
+  /**
+    * Gets the base file name and the extension. Useful for adding unique ids to a common file name,
+    * while preserving the extension
+    *
+    * @param path path
+    * @param includeDot if true, the '.' will be preserved in the extension, otherwise it will be dropped
+    * @return (base name including path prefix, extension)
+    */
+  def getBaseNameAndExtension(path: String, includeDot: Boolean = true): (String, String) = {
+    def dotIndex(base: Int): Int = if (includeDot) { base } else { base + 1}
+    val split = FilenameUtils.indexOfExtension(path)
+    if (split == -1) { (path, "") } else {
+      val withoutExtension = path.substring(0, split)
+      // look for file names like 'foo.tar.gz'
+      val secondSplit = FilenameUtils.indexOfExtension(withoutExtension)
+      if (secondSplit != -1 && CompressionUtils.isCompressedFilename(path)) {
+        (path.substring(0, secondSplit), path.substring(dotIndex(secondSplit)))
+      } else {
+        (withoutExtension, path.substring(dotIndex(split)))
+      }
     }
   }
 
-  def deleteRecursively(f: Path): Unit = Files.walkFileTree(f, new DeleteFileVisitor)
+  /**
+    * Wrap the input stream in a decompressor, if the file is compressed
+    *
+    * @param is input stream
+    * @param filename filename (used to determine compression)
+    * @return
+    */
+  def handleCompression(is: InputStream, filename: String): InputStream = {
+    val buffered = new BufferedInputStream(is)
+    CompressionUtils.Utils.find(_.isCompressedFilename(filename)) match {
+      case None => buffered
+      case Some(utils) => utils.compress(buffered)
+    }
+  }
+
+  /**
+    * Delete a path, including all children
+    *
+    * @param path path
+    */
+  def deleteRecursively(path: Path): Unit = Files.walkFileTree(path, new DeleteFileVisitor)
 
   private def chooseDelegate(path: String): FileSystemDelegate =
     if (hadoopAvailable && uriRegex.matcher(path).matches()) { hadoopDelegate } else { localDelegate }

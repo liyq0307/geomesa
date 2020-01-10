@@ -74,7 +74,7 @@ object CloseableIterator {
     override def close(): Unit = iter.close()
   }
 
-  private final class CloseableSingleIterator[A](elem: A, closeIter: => Unit) extends CloseableIterator[A] {
+  private final class CloseableSingleIterator[A](elem: => A, closeIter: => Unit) extends CloseableIterator[A] {
     private var result = true
     override def hasNext: Boolean = result
     override def next(): A = if (result) { result = false; elem } else { empty.next() }
@@ -149,6 +149,8 @@ trait CloseableIterator[+A] extends Iterator[A] with Closeable {
   override def map[B](f: A => B): CloseableIterator[B] = new CloseableIteratorImpl(super.map(f), close())
 
   override def filter(p: A => Boolean): CloseableIterator[A] = new CloseableIteratorImpl(super.filter(p), close())
+
+  override def filterNot(p: A => Boolean): CloseableIterator[A] = new CloseableIteratorImpl(super.filterNot(p), close())
 
   override def take(n: Int): CloseableIterator[A] = new CloseableIteratorImpl(super.take(n), close())
 

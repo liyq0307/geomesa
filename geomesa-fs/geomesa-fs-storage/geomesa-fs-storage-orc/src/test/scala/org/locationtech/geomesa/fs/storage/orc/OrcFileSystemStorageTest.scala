@@ -9,21 +9,27 @@
 package org.locationtech.geomesa.fs.storage.orc
 
 import java.nio.file.Files
-import java.util.{Collections, UUID}
+import java.util.UUID
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileContext, Path}
 import org.geotools.data.Query
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.fs.storage.api.{FileSystemStorage, FileSystemWriter}
-import org.locationtech.geomesa.fs.storage.common.PartitionScheme
+import org.locationtech.geomesa.fs.storage.api.FileSystemStorage.FileSystemWriter
+import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{PartitionMetadata, StorageFile}
+import org.locationtech.geomesa.fs.storage.api.{FileSystemContext, FileSystemStorage, Metadata, NamedOptions}
+import org.locationtech.geomesa.fs.storage.common.StorageKeys
+import org.locationtech.geomesa.fs.storage.common.metadata.FileBasedMetadataFactory
+import org.locationtech.geomesa.fs.storage.common.partitions.DateTimeScheme
+import org.locationtech.geomesa.fs.storage.common.utils.PathCache
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.opengis.filter.Filter
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
@@ -33,12 +39,12 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
 
   val config = new Configuration()
 
+  // 8 bits resolution creates 3 partitions with our test data
+  val scheme = NamedOptions("z2-8bits")
+
   "OrcFileSystemWriter" should {
     "read and write features" in {
-
       val sft = SimpleFeatureTypes.createType("orc-test", "*geom:Point:srid=4326,name:String,age:Int,dtg:Date")
-      // 8 bits resolution creates 3 partitions with our test data
-      PartitionScheme.addToSft(sft, PartitionScheme(sft, "z2", Collections.singletonMap("z2-resolution", "8")))
 
       val features = (0 until 10).map { i =>
         val sf = new ScalaSimpleFeature(sft, i.toString)
@@ -51,17 +57,18 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
       }
 
       withTestDir { dir =>
-        import scala.collection.JavaConversions._
-
-        val storage = new OrcFileSystemStorageFactory()
-            .create(FileContext.getFileContext(dir.toUri), new Configuration(), dir, sft)
+        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val metadata =
+          new FileBasedMetadataFactory()
+              .create(context, Map.empty, Metadata(sft, "orc", scheme, leafStorage = true))
+        val storage = new OrcFileSystemStorageFactory().apply(context, metadata)
 
         storage must not(beNull)
 
         val writers = scala.collection.mutable.Map.empty[String, FileSystemWriter]
 
         features.foreach { f =>
-          val partition = storage.getPartition(f)
+          val partition = storage.metadata.scheme.getPartitionName(f)
           val writer = writers.getOrElseUpdate(partition, storage.getWriter(partition))
           writer.write(f)
         }
@@ -70,12 +77,12 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
 
         logger.debug(s"wrote to ${writers.size} partitions for ${features.length} features")
 
-        val partitions = storage.getPartitions().map(_.name)
+        val partitions = storage.getPartitions.map(_.name)
         partitions must haveLength(writers.size)
 
         val transformsList = Seq(null, Array("geom"), Array("geom", "dtg"), Array("geom", "name"))
 
-        val doTest = testQuery(storage, sft, partitions) _
+        val doTest = testQuery(storage, sft) _
 
         foreach(transformsList) { transforms =>
           doTest("INCLUDE", transforms, features)
@@ -89,6 +96,12 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
           doTest("name = 'name5'", transforms, features.slice(5, 6))
           doTest("age < 5", transforms, features.take(5))
         }
+
+        // verify we can load an existing storage
+        val loaded = new FileBasedMetadataFactory().load(context)
+        loaded.foreach(_.reload()) // ensure state is loaded
+        loaded must beSome
+        testQuery(new OrcFileSystemStorageFactory().apply(context, loaded.get), sft)("INCLUDE", null, features)
       }
     }
 
@@ -98,8 +111,6 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
             "uuid:UUID,bytes:Bytes,list:List[Int],map:Map[String,Long]," +
             "line:LineString,mpt:MultiPoint,poly:Polygon,mline:MultiLineString,mpoly:MultiPolygon," +
             "dtg:Date,*geom:Point:srid=4326")
-      // 8 bits resolution creates 3 partitions with our test data
-      PartitionScheme.addToSft(sft, PartitionScheme(sft, "z2", Collections.singletonMap("z2-resolution", "8")))
 
       val features = (0 until 10).map { i =>
         val sf = new ScalaSimpleFeature(sft, i.toString)
@@ -132,17 +143,18 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
       }
 
       withTestDir { dir =>
-        import scala.collection.JavaConversions._
-
-        val storage = new OrcFileSystemStorageFactory()
-            .create(FileContext.getFileContext(dir.toUri), new Configuration(), dir, sft)
+        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val metadata =
+          new FileBasedMetadataFactory()
+              .create(context, Map.empty, Metadata(sft, "orc", scheme, leafStorage = true))
+        val storage = new OrcFileSystemStorageFactory().apply(context, metadata)
 
         storage must not(beNull)
 
         val writers = scala.collection.mutable.Map.empty[String, FileSystemWriter]
 
         features.foreach { f =>
-          val partition = storage.getPartition(f)
+          val partition = storage.metadata.scheme.getPartitionName(f)
           val writer = writers.getOrElseUpdate(partition, storage.getWriter(partition))
           writer.write(f)
         }
@@ -151,12 +163,12 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
 
         logger.debug(s"wrote to ${writers.size} partitions for ${features.length} features")
 
-        val partitions = storage.getPartitions().map(_.name)
+        val partitions = storage.getPartitions.map(_.name)
         partitions must haveLength(writers.size)
 
         val transformsList = Seq(null, Array("geom"), Array("geom", "dtg"), Array("geom", "name"))
 
-        val doTest: (String, Array[String], Seq[SimpleFeature]) => MatchResult[Any] = testQuery(storage, sft, partitions) _
+        val doTest = testQuery(storage, sft) _
 
         foreach(transformsList) { transforms =>
           doTest("INCLUDE", transforms, features)
@@ -173,9 +185,160 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
         }
       }
     }
+
+    "modify and delete features" in {
+      val sft = SimpleFeatureTypes.createType("orc-test", "*geom:Point:srid=4326,name:String,age:Int,dtg:Date")
+
+      val features = (0 until 10).map { i =>
+        val sf = new ScalaSimpleFeature(sft, i.toString)
+        sf.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
+        sf.setAttribute(1, s"name$i")
+        sf.setAttribute(2, s"$i")
+        sf.setAttribute(3, f"2014-01-${i + 1}%02dT00:00:01.000Z")
+        sf.setAttribute(0, s"POINT(4$i 5$i)")
+        sf
+      }
+
+      withTestDir { dir =>
+        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val metadata =
+          new FileBasedMetadataFactory()
+              .create(context, Map.empty, Metadata(sft, "orc", scheme, leafStorage = true))
+        val storage = new OrcFileSystemStorageFactory().apply(context, metadata)
+
+        storage must not(beNull)
+
+        val writers = scala.collection.mutable.Map.empty[String, FileSystemWriter]
+
+        features.foreach { f =>
+          val partition = storage.metadata.scheme.getPartitionName(f)
+          val writer = writers.getOrElseUpdate(partition, storage.getWriter(partition))
+          writer.write(f)
+        }
+
+        writers.foreach(_._2.close())
+
+        logger.debug(s"wrote to ${writers.size} partitions for ${features.length} features")
+
+        testQuery(storage, sft)("INCLUDE", null, features)
+
+        val updater = storage.getWriter(Filter.INCLUDE)
+
+        updater.hasNext must beTrue
+        while (updater.hasNext) {
+          val feature = updater.next
+          if (feature.getID == "0") {
+            updater.remove()
+          } else if (feature.getID == "1") {
+            feature.setAttribute(1, "name-updated")
+            updater.write()
+          }
+        }
+        updater.close()
+
+        val updates = features.drop(2) :+ {
+          val mod = ScalaSimpleFeature.copy(features.drop(1).head)
+          mod.setAttribute("name", "name-updated")
+          mod
+        }
+
+        testQuery(storage, sft)("INCLUDE", null, updates)
+      }
+    }
+
+    "use custom file observers" in {
+      val userData = s"${StorageKeys.ObserversKey}=${classOf[TestObserverFactory].getName}"
+      val sft = SimpleFeatureTypes.createType("orc-test",
+        s"*geom:Point:srid=4326,name:String,age:Int,dtg:Date;$userData")
+
+      val features = (0 until 10).map { i =>
+        val sf = new ScalaSimpleFeature(sft, i.toString)
+        sf.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
+        sf.setAttribute(1, s"name$i")
+        sf.setAttribute(2, s"$i")
+        sf.setAttribute(3, f"2014-01-${i + 1}%02dT00:00:01.000Z")
+        sf.setAttribute(0, s"POINT(4$i 5$i)")
+        sf
+      }
+
+      withTestDir { dir =>
+        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val metadata =
+          new FileBasedMetadataFactory()
+              .create(context, Map.empty, Metadata(sft, "orc", scheme, leafStorage = true))
+        val storage = new OrcFileSystemStorageFactory().apply(context, metadata)
+
+        storage must not(beNull)
+
+        val writers = scala.collection.mutable.Map.empty[String, FileSystemWriter]
+
+        features.foreach { f =>
+          val partition = storage.metadata.scheme.getPartitionName(f)
+          val writer = writers.getOrElseUpdate(partition, storage.getWriter(partition))
+          writer.write(f)
+        }
+
+        TestObserverFactory.observers must haveSize(3) // 3 partitions due to our data and scheme
+        forall(TestObserverFactory.observers)(_.closed must beFalse)
+
+        writers.foreach(_._2.close())
+        forall(TestObserverFactory.observers)(_.closed must beTrue)
+        TestObserverFactory.observers.flatMap(_.features) must containTheSameElementsAs(features)
+        TestObserverFactory.observers.clear()
+
+        logger.debug(s"wrote to ${writers.size} partitions for ${features.length} features")
+
+        val updater = storage.getWriter(Filter.INCLUDE)
+
+        updater.hasNext must beTrue
+        while (updater.hasNext) {
+          val feature = updater.next
+          if (feature.getID == "0") {
+            updater.remove()
+          } else if (feature.getID == "1") {
+            feature.setAttribute(1, "name-updated")
+            updater.write()
+          }
+        }
+
+        TestObserverFactory.observers must haveSize(2) // 2 partitions were updated
+        forall(TestObserverFactory.observers)(_.closed must beFalse)
+
+        updater.close()
+
+        forall(TestObserverFactory.observers)(_.closed must beTrue)
+        TestObserverFactory.observers.flatMap(_.features) must haveLength(2)
+      }
+    }
+
+    "transition old metadata files" in {
+      withTestDir { dir =>
+        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val meta = new Path(dir, "metadata.json")
+        context.fc.util.copy(new Path(getClass.getClassLoader.getResource("metadata-old.json").toURI), meta)
+        context.fc.util.exists(meta) must beTrue
+        PathCache.invalidate(context.fc, meta)
+
+        val metadata = new FileBasedMetadataFactory().load(context)
+        metadata.foreach(_.reload()) // ensure state is loaded
+        metadata must beSome
+        val storage = new OrcFileSystemStorageFactory().apply(context, metadata.get)
+
+        storage.metadata.encoding mustEqual "orc"
+        storage.metadata.sft.getTypeName mustEqual "example-csv"
+        storage.metadata.scheme must beAnInstanceOf[DateTimeScheme]
+        storage.getPartitions must containTheSameElementsAs(
+          Seq(
+            PartitionMetadata("2015/05/06", Seq(StorageFile("06_Wb48cb7293793447480c0885f3f4bb56a.orc", 0L)), None, 0L),
+            PartitionMetadata("2015/06/07", Seq(StorageFile("07_W25d311113f0b4bad819f209f00a58173.orc", 0L)), None, 0L),
+            PartitionMetadata("2015/10/23", Seq(StorageFile("23_Weedeb59bad0d4521b2ae46189eac4a4d.orc", 0L)), None, 0L)
+          )
+        )
+      }
+    }
   }
 
-  def withTestDir[R](code: (Path) => R): R = {
+  def withTestDir[R](code: Path => R): R = {
     val file = new Path(Files.createTempDirectory("gm-orc-test").toUri)
     try { code(file) } finally {
       file.getFileSystem(new Configuration).delete(file, true)
@@ -183,8 +346,7 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
   }
 
   def testQuery(storage: FileSystemStorage,
-                sft: SimpleFeatureType,
-                partitions: Seq[String])
+                sft: SimpleFeatureType)
                (filter: String,
                 transforms: Array[String],
                 results: Seq[SimpleFeature]): MatchResult[Any] = {
@@ -192,7 +354,7 @@ class OrcFileSystemStorageTest extends Specification with LazyLogging {
 
     val query = new Query(sft.getTypeName, ECQL.toFilter(filter), transforms)
     val features = {
-      val iter = SelfClosingIterator(storage.getReader(partitions, query))
+      val iter = SelfClosingIterator(storage.getReader(query))
       // note: need to copy features in iterator as same object is re-used
       iter.map(ScalaSimpleFeature.copy).toList
     }

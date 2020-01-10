@@ -10,8 +10,8 @@ package org.locationtech.geomesa.hbase.data
 
 import java.nio.charset.StandardCharsets
 import java.util.regex.Pattern
-import java.util.{Collections, Locale}
-import org.apache.hadoop.hbase.regionserver.BloomType
+import java.util.{Collections, Locale, UUID}
+
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hbase.client._
@@ -20,32 +20,36 @@ import org.apache.hadoop.hbase.filter.MultiRowRangeFilter.RowRange
 import org.apache.hadoop.hbase.filter.{FilterList, KeyOnlyFilter, MultiRowRangeFilter, Filter => HFilter}
 import org.apache.hadoop.hbase.io.compress.Compression
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding
+import org.apache.hadoop.hbase.regionserver.BloomType
 import org.apache.hadoop.hbase.security.visibility.CellVisibility
 import org.apache.hadoop.hbase.{Coprocessor, HColumnDescriptor, HTableDescriptor, TableName}
-import org.geotools.filter.identity.FeatureIdImpl
-import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
-import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.hbase.HBaseSystemProperties
 import org.locationtech.geomesa.hbase.HBaseSystemProperties.{CoprocessorPath, TableAvailabilityTimeout}
+import org.locationtech.geomesa.hbase.coprocessor.aggregators.HBaseArrowAggregator.HBaseArrowResultsToFeatures
+import org.locationtech.geomesa.hbase.coprocessor.aggregators.HBaseBinAggregator.HBaseBinResultsToFeatures
+import org.locationtech.geomesa.hbase.coprocessor.aggregators.HBaseDensityAggregator.HBaseDensityResultsToFeatures
+import org.locationtech.geomesa.hbase.coprocessor.aggregators.HBaseStatsAggregator.HBaseStatsResultsToFeatures
 import org.locationtech.geomesa.hbase.coprocessor.aggregators.{HBaseArrowAggregator, HBaseBinAggregator, HBaseDensityAggregator, HBaseStatsAggregator}
-import org.locationtech.geomesa.hbase.coprocessor.{AllCoprocessors, CoprocessorConfig}
+import org.locationtech.geomesa.hbase.coprocessor.{AllCoprocessors, GeoMesaCoprocessor}
 import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.{CoprocessorPlan, EmptyPlan, ScanPlan}
-import org.locationtech.geomesa.hbase.filters.{CqlTransformFilter, Z2HBaseFilter, Z3HBaseFilter}
+import org.locationtech.geomesa.hbase.filters._
 import org.locationtech.geomesa.hbase.utils.HBaseVersions
-import org.locationtech.geomesa.index.api.IndexAdapter.IndexWriter
+import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
+import org.locationtech.geomesa.index.api.QueryPlan.IndexResultsToFeatures
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api.{WritableFeature, _}
-import org.locationtech.geomesa.index.filters.{Z2Filter, Z3Filter}
+import org.locationtech.geomesa.index.filters.{S2Filter, S3Filter, Z2Filter, Z3Filter}
 import org.locationtech.geomesa.index.index.id.IdIndex
+import org.locationtech.geomesa.index.index.s2.{S2Index, S2IndexValues}
+import org.locationtech.geomesa.index.index.s3.{S3Index, S3IndexValues}
 import org.locationtech.geomesa.index.index.z2.{Z2Index, Z2IndexValues}
 import org.locationtech.geomesa.index.index.z3.{Z3Index, Z3IndexValues}
 import org.locationtech.geomesa.index.iterators.StatsScan
-import org.locationtech.geomesa.index.planning.LocalQueryRunner
-import org.locationtech.geomesa.index.planning.LocalQueryRunner.ArrowDictionaryHook
-import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.index.planning.LocalQueryRunner.{ArrowDictionaryHook, LocalTransformReducer}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, FlushWithLogging, WithClose}
+import org.locationtech.geomesa.utils.text.StringSerialization
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.util.control.NonFatal
@@ -56,18 +60,22 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
 
   import scala.collection.JavaConverters._
 
-  override def createTable(index: GeoMesaFeatureIndex[_, _], table: String, splits: => Seq[Array[Byte]]): Unit = {
-    val name = TableName.valueOf(table)
+  override def createTable(
+      index: GeoMesaFeatureIndex[_, _],
+      partition: Option[String],
+      splits: => Seq[Array[Byte]]): Unit = {
+    // write table name to metadata
+    val name = TableName.valueOf(index.configureTableName(partition, tableNameLimit))
 
     WithClose(ds.connection.getAdmin) { admin =>
       if (!admin.tableExists(name)) {
         logger.debug(s"Creating table $name")
 
         val conf = admin.getConfiguration
-        val compression = Option(index.sft.getUserData.get(Configs.COMPRESSION_ENABLED)).collect {
+        val compression = Option(index.sft.getUserData.get(Configs.TableCompression)).collect {
           case e: String if e.toBoolean =>
             // note: all compression types in HBase are case-sensitive and lower-cased
-            val compressionType = index.sft.getUserData.get(Configs.COMPRESSION_TYPE) match {
+            val compressionType = index.sft.getUserData.get(Configs.TableCompressionType) match {
               case null => "gz"
               case t: String => t.toLowerCase(Locale.US)
             }
@@ -125,15 +133,23 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
         }
       }
 
-      // wait for the table to come online
-      if (!admin.isTableAvailable(name)) {
-        val timeout = TableAvailabilityTimeout.toDuration.filter(_.isFinite())
-        logger.debug(s"Waiting for table '$table' to become available with " +
-            s"${timeout.map(t => s"a timeout of $t").getOrElse("no timeout")}")
-        val stop = timeout.map(t => System.currentTimeMillis() + t.toMillis)
-        while (!admin.isTableAvailable(name) && stop.forall(_ > System.currentTimeMillis())) {
-          Thread.sleep(1000)
-        }
+      waitForTable(admin, name)
+    }
+  }
+
+  override def renameTable(from: String, to: String): Unit = {
+    WithClose(ds.connection.getAdmin) { admin =>
+      val existing = TableName.valueOf(from)
+      val renamed = TableName.valueOf(to)
+      if (admin.tableExists(existing)) {
+        // renaming in hbase requires creating a snapshot and using that to create the new table
+        val snapshot = StringSerialization.alphaNumericSafeString(UUID.randomUUID().toString)
+        admin.disableTable(existing)
+        admin.snapshot(snapshot, existing)
+        admin.cloneSnapshot(snapshot, renamed)
+        admin.deleteSnapshot(snapshot)
+        admin.deleteTable(existing)
+        waitForTable(admin, renamed)
       }
     }
   }
@@ -181,86 +197,111 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
 
     import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 
-    if (strategy.ranges.isEmpty) { EmptyPlan(strategy.filter) } else {
-      val QueryStrategy(filter, byteRanges, _, _, ecql, hints, _) = strategy
-      val index = filter.index
+    val QueryStrategy(filter, byteRanges, _, _, ecql, hints, _) = strategy
+    val index = filter.index
 
-      // index api defines empty start/end for open-ended range
-      // index api defines start row inclusive, end row exclusive
-      // both these conventions match the conventions for hbase scan objects
-      val ranges = byteRanges.map {
-        case BoundedByteRange(start, end) => new Scan(start, end)
-        case SingleRowByteRange(row)      => new Scan(row, ByteArrays.rowFollowingRow(row)).setSmall(true)
+    // index api defines empty start/end for open-ended range
+    // index api defines start row inclusive, end row exclusive
+    // both these conventions match the conventions for hbase scan objects
+    val ranges = byteRanges.map {
+      case BoundedByteRange(start, end) => new Scan(start, end)
+      case SingleRowByteRange(row)      => new Scan(row, ByteArrays.rowFollowingRow(row)).setSmall(true)
+    }
+
+    val tables = index.getTablesForQuery(filter.filter).map(TableName.valueOf)
+    val (colFamily, schema) = groups.group(index.sft, hints.getTransformDefinition, ecql)
+
+    val transform: Option[(String, SimpleFeatureType)] = hints.getTransform
+
+    if (!ds.config.remoteFilter) {
+      // everything is done client side
+      val arrowHook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
+      // note: we assume visibility filtering is still done server-side as it's part of core hbase
+      // note: we use the full filter here, since we can't use the z3 server-side filter
+      // for some attribute queries we wouldn't need the full filter...
+      val reducer = Some(new LocalTransformReducer(schema, filter.filter, None, transform, hints, arrowHook))
+
+      if (ranges.isEmpty) { EmptyPlan(filter, reducer) } else {
+        val scans = configureScans(ranges, colFamily, Seq.empty, coprocessor = false)
+        val resultsToFeatures = new HBaseResultsToFeatures(index, schema)
+        val sort = hints.getSortFields
+        val max = hints.getMaxFeatures
+        val project = hints.getProjection
+        ScanPlan(filter, tables, ranges, scans, resultsToFeatures, reducer, sort, max, project)
+      }
+    } else {
+      lazy val returnSchema = transform.map(_._2).getOrElse(schema)
+
+      val notSampling = hints.getSampling.isEmpty
+
+      lazy val cqlFilter = if (ecql.isEmpty && transform.isEmpty && notSampling) { Seq.empty } else {
+        Seq((CqlTransformFilter.Priority, CqlTransformFilter(schema, strategy.index, ecql, transform, hints)))
       }
 
-      val tables = index.getTablesForQuery(filter.filter).map(TableName.valueOf)
-      val (colFamily, schema) = groups.group(index.sft, hints.getTransformDefinition, ecql)
-
-      val transform: Option[(String, SimpleFeatureType)] = hints.getTransform
-
-      if (!ds.config.remoteFilter) {
-        // everything is done client side
-        val scans = configureScans(ranges, colFamily, Seq.empty, coprocessor = false)
-        val resultsToFeatures: CloseableIterator[Result] => CloseableIterator[SimpleFeature] = rows => {
-          val arrowHook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
-          val features = filter.filter match {
-            case None    => HBaseIndexAdapter.resultsToFeatures(index, schema)(rows)
-            case Some(f) => HBaseIndexAdapter.resultsToFeatures(index, schema)(rows).filter(f.evaluate)
+      // TODO pull this out to be SPI loaded so that new indices can be added seamlessly
+      val indexFilter = strategy.index match {
+        case _: Z3Index =>
+          strategy.values.map { case v: Z3IndexValues =>
+            (Z3HBaseFilter.Priority, Z3HBaseFilter(Z3Filter(v), index.keySpace.sharding.length))
           }
-          LocalQueryRunner.transform(schema, features, transform, hints, arrowHook)
-        }
-        ScanPlan(filter, tables, ranges, scans, resultsToFeatures)
-      } else {
-        lazy val returnSchema = transform.map(_._2).getOrElse(schema)
 
-        val coprocessorConfig = if (hints.isDensityQuery) {
+        case _: Z2Index =>
+          strategy.values.map { case v: Z2IndexValues =>
+            (Z2HBaseFilter.Priority, Z2HBaseFilter(Z2Filter(v), index.keySpace.sharding.length))
+          }
+
+        case _: S2Index =>
+          strategy.values.map { case v: S2IndexValues =>
+            (S2HBaseFilter.Priority, S2HBaseFilter(S2Filter(v), index.keySpace.sharding.length))
+          }
+
+        case _: S3Index =>
+          strategy.values.map { case v: S3IndexValues =>
+            (S3HBaseFilter.Priority, S3HBaseFilter(S3Filter(v), index.keySpace.sharding.length))
+          }
+        // TODO GEOMESA-1807 deal with non-points in a pushdown XZ filter
+
+        case _ => None
+      }
+
+      // if there is a coprocessorConfig it handles filter/transform
+      lazy val Seq(cScan) = configureScans(ranges, colFamily, indexFilter.toSeq.map(_._2), coprocessor = true)
+
+      val max = hints.getMaxFeatures
+      val projection = hints.getProjection
+      lazy val timeout = strategy.index.ds.config.queryTimeout.map(GeoMesaCoprocessor.timeout)
+
+      if (hints.isDensityQuery) {
+        if (ranges.isEmpty) { EmptyPlan(filter, None) } else {
           val options = HBaseDensityAggregator.configure(schema, index, ecql, hints)
-          Some(CoprocessorConfig(options, HBaseDensityAggregator.bytesToFeatures))
-        } else if (hints.isArrowQuery) {
-          val (options, reduce) = HBaseArrowAggregator.configure(schema, index, ds.stats, filter.filter, ecql, hints)
-          Some(CoprocessorConfig(options, HBaseArrowAggregator.bytesToFeatures, reduce))
-        } else if (hints.isStatsQuery) {
+          val results = new HBaseDensityResultsToFeatures()
+          CoprocessorPlan(filter, tables, ranges, cScan, options ++ timeout, results, None, max, projection)
+        }
+      } else if (hints.isArrowQuery) {
+        val (options, reducer) = HBaseArrowAggregator.configure(schema, index, ds.stats, filter.filter, ecql, hints)
+        if (ranges.isEmpty) { EmptyPlan(filter, Some(reducer)) } else {
+          val results = new HBaseArrowResultsToFeatures()
+          CoprocessorPlan(filter, tables, ranges, cScan, options ++ timeout, results, Some(reducer), max, projection)
+        }
+      } else if (hints.isStatsQuery) {
+        val reducer = Some(StatsScan.StatsReducer(returnSchema, hints))
+        if (ranges.isEmpty) { EmptyPlan(filter, reducer) } else {
           val options = HBaseStatsAggregator.configure(schema, index, ecql, hints)
-          val reduce = StatsScan.reduceFeatures(returnSchema, hints) _
-          Some(CoprocessorConfig(options, HBaseStatsAggregator.bytesToFeatures, reduce))
-        } else if (hints.isBinQuery) {
+          val results = new HBaseStatsResultsToFeatures()
+          CoprocessorPlan(filter, tables, ranges, cScan, options ++ timeout, results, reducer, max, projection)
+        }
+      } else if (hints.isBinQuery) {
+        if (ranges.isEmpty) { EmptyPlan(filter,  None) } else {
           val options = HBaseBinAggregator.configure(schema, index, ecql, hints)
-          Some(CoprocessorConfig(options, HBaseBinAggregator.bytesToFeatures))
-        } else {
-          None
+          val results = new HBaseBinResultsToFeatures()
+          CoprocessorPlan(filter, tables, ranges, cScan, options ++ timeout, results, None, max, projection)
         }
-
-        val filters = {
-          // if there is a coprocessorConfig it handles filter/transform
-          val cqlFilter = if (coprocessorConfig.isDefined || (ecql.isEmpty && transform.isEmpty)) { Seq.empty } else {
-            Seq((CqlTransformFilter.Priority, CqlTransformFilter(schema, ecql, transform)))
-          }
-
-          // TODO pull this out to be SPI loaded so that new indices can be added seamlessly
-          val indexFilter = strategy.filter.index match {
-            case _: Z3Index =>
-              strategy.values.toSeq.map { case v: Z3IndexValues =>
-                (Z3HBaseFilter.Priority, Z3HBaseFilter(Z3Filter(v), index.keySpace.sharding.length))
-              }
-
-            case _: Z2Index =>
-              strategy.values.toSeq.map { case v: Z2IndexValues =>
-                (Z2HBaseFilter.Priority, Z2HBaseFilter(Z2Filter(v), index.keySpace.sharding.length))
-              }
-
-            // TODO GEOMESA-1807 deal with non-points in a pushdown XZ filter
-
-            case _ => Seq.empty
-          }
-
-          (cqlFilter ++ indexFilter).sortBy(_._1).map(_._2)
-        }
-
-        val scans = configureScans(ranges, colFamily, filters, coprocessorConfig.isDefined)
-
-        coprocessorConfig match {
-          case None => ScanPlan(filter, tables, ranges, scans, HBaseIndexAdapter.resultsToFeatures(index, returnSchema))
-          case Some(c) => val Seq(scan) = scans; CoprocessorPlan(filter, tables, ranges, scan, c)
+      } else {
+        if (ranges.isEmpty) { EmptyPlan(filter, None) } else {
+          val filters = (cqlFilter ++ indexFilter).sortBy(_._1).map(_._2)
+          val scans = configureScans(ranges, colFamily, filters, coprocessor = false)
+          val results = new HBaseResultsToFeatures(index, returnSchema)
+          ScanPlan(filter, tables, ranges, scans, results, None, hints.getSortFields, max, projection)
         }
       }
     }
@@ -270,7 +311,6 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
                             indices: Seq[GeoMesaFeatureIndex[_, _]],
                             partition: Option[String]): HBaseIndexWriter =
     new HBaseIndexWriter(ds, indices, WritableFeature.wrapper(sft, groups), partition)
-
 
   /**
     * Configure the hbase scan
@@ -389,6 +429,24 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
       groupedScans.asScala
     }
   }
+
+  /**
+    * Waits for a table to come online after being created
+    *
+    * @param admin hbase admin
+    * @param table table name
+    */
+  private def waitForTable(admin: Admin, table: TableName): Unit = {
+    if (!admin.isTableAvailable(table)) {
+      val timeout = TableAvailabilityTimeout.toDuration.filter(_.isFinite())
+      logger.debug(s"Waiting for table '$table' to become available with " +
+          s"${timeout.map(t => s"a timeout of $t").getOrElse("no timeout")}")
+      val stop = timeout.map(t => System.currentTimeMillis() + t.toMillis)
+      while (!admin.isTableAvailable(table) && stop.forall(_ > System.currentTimeMillis())) {
+        Thread.sleep(1000)
+      }
+    }
+  }
 }
 
 object HBaseIndexAdapter extends LazyLogging {
@@ -419,31 +477,18 @@ object HBaseIndexAdapter extends LazyLogging {
   /**
     * Deserializes row bytes into simple features
     *
-    * @param index feature index
-    * @param returnSft schema of result rows
-    * @return
+    * @param _index index
+    * @param _sft sft
     */
-  def resultsToFeatures(index: GeoMesaFeatureIndex[_, _],
-                        returnSft: SimpleFeatureType): CloseableIterator[Result] => CloseableIterator[SimpleFeature] =
-    rowsToFeatures(index, KryoFeatureSerializer(returnSft, SerializationOptions.withoutId))
+  class HBaseResultsToFeatures(_index: GeoMesaFeatureIndex[_, _], _sft: SimpleFeatureType) extends
+    IndexResultsToFeatures[Result](_index, _sft) {
 
-  /**
-    * Deserializes row bytes into simple features
-    *
-    * @param index feature index
-    * @param serializer serializer
-    * @param rows rows
-    * @return
-    */
-  private def rowsToFeatures(index: GeoMesaFeatureIndex[_, _],
-                             serializer: KryoFeatureSerializer)
-                            (rows: CloseableIterator[Result]): CloseableIterator[SimpleFeature] = {
-    rows.map { row =>
-      val cell = row.rawCells()(0)
-      val sf = serializer.deserialize(cell.getValueArray, cell.getValueOffset, cell.getValueLength)
-      val id = index.getIdFromRow(cell.getRowArray, cell.getRowOffset, cell.getRowLength, sf)
-      sf.getIdentifier.asInstanceOf[FeatureIdImpl].setID(id)
-      sf
+    def this() = this(null, null) // no-arg constructor required for serialization
+
+    override def apply(result: Result): SimpleFeature = {
+      val cell = result.rawCells()(0)
+      val id = index.getIdFromRow(cell.getRowArray, cell.getRowOffset, cell.getRowLength, null)
+      serializer.deserialize(id, cell.getValueArray, cell.getValueOffset, cell.getValueLength)
     }
   }
 
@@ -454,10 +499,12 @@ object HBaseIndexAdapter extends LazyLogging {
     * @param indices indices to write to
     * @param partition partition to write to
     */
-  class HBaseIndexWriter(ds: HBaseDataStore,
-                         indices: Seq[GeoMesaFeatureIndex[_, _]],
-                         wrapper: FeatureWrapper,
-                         partition: Option[String]) extends IndexWriter(indices, wrapper) {
+  class HBaseIndexWriter(
+      ds: HBaseDataStore,
+      indices: Seq[GeoMesaFeatureIndex[_, _]],
+      wrapper: FeatureWrapper[WritableFeature],
+      partition: Option[String]
+    ) extends BaseIndexWriter(indices, wrapper) {
 
     private val batchSize = HBaseSystemProperties.WriteBatchSize.toLong
 
@@ -473,7 +520,12 @@ object HBaseIndexAdapter extends LazyLogging {
 
     private var i = 0
 
-    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
+    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]], update: Boolean): Unit = {
+      if (update) {
+        // for updates, ensure that our timestamps don't clobber each other
+        flush()
+        Thread.sleep(1)
+      }
       i = 0
       while (i < values.length) {
         val mutator = mutators(i)

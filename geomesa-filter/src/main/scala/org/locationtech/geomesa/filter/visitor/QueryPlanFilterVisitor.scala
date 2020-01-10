@@ -11,7 +11,8 @@ package org.locationtech.geomesa.filter.visitor
 import java.util.{Collections, Date}
 
 import org.geotools.filter.visitor.{DuplicatingFilterVisitor, ExpressionTypeVisitor, IsStaticExpressionVisitor}
-import org.locationtech.geomesa.filter.FilterHelper
+import org.locationtech.geomesa.filter.{FilterHelper, GeometryProcessing}
+import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter._
@@ -28,7 +29,7 @@ import scala.util.{Success, Try}
   */
 class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVisitor {
 
-  import FilterHelper.{isFilterWholeWorld, visitBinarySpatialOp}
+  import FilterHelper.isFilterWholeWorld
   import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
 
   import scala.collection.JavaConverters._
@@ -95,32 +96,32 @@ class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVi
 
   override def visit(f: DWithin, data: AnyRef): AnyRef =
     if (isFilterWholeWorld(f)) { Filter.INCLUDE } else {
-      visitBinarySpatialOp(super.visit(f, data).asInstanceOf[DWithin], sft, getFactory(data))
+      GeometryProcessing.process(super.visit(f, data).asInstanceOf[BinarySpatialOperator], sft, getFactory(data))
     }
 
   override def visit(f: BBOX, data: AnyRef): AnyRef =
     if (isFilterWholeWorld(f)) { Filter.INCLUDE } else {
-      visitBinarySpatialOp(super.visit(f, data).asInstanceOf[BBOX], sft, getFactory(data))
+      GeometryProcessing.process(super.visit(f, data).asInstanceOf[BinarySpatialOperator], sft, getFactory(data))
     }
 
   override def visit(f: Within, data: AnyRef): AnyRef =
     if (isFilterWholeWorld(f)) { Filter.INCLUDE } else {
-      visitBinarySpatialOp(super.visit(f, data).asInstanceOf[Within], sft, getFactory(data))
+      GeometryProcessing.process(super.visit(f, data).asInstanceOf[BinarySpatialOperator], sft, getFactory(data))
     }
 
   override def visit(f: Intersects, data: AnyRef): AnyRef =
     if (isFilterWholeWorld(f)) { Filter.INCLUDE } else {
-      visitBinarySpatialOp(super.visit(f, data).asInstanceOf[Intersects], sft, getFactory(data))
+      GeometryProcessing.process(super.visit(f, data).asInstanceOf[BinarySpatialOperator], sft, getFactory(data))
     }
 
   override def visit(f: Overlaps, data: AnyRef): AnyRef =
     if (isFilterWholeWorld(f)) { Filter.INCLUDE } else {
-      visitBinarySpatialOp(super.visit(f, data).asInstanceOf[Overlaps], sft, getFactory(data))
+      GeometryProcessing.process(super.visit(f, data).asInstanceOf[BinarySpatialOperator], sft, getFactory(data))
     }
 
   override def visit(f: Contains, data: AnyRef): AnyRef =
     if (isFilterWholeWorld(f)) { Filter.INCLUDE } else {
-      visitBinarySpatialOp(super.visit(f, data).asInstanceOf[Contains], sft, getFactory(data))
+      GeometryProcessing.process(super.visit(f, data).asInstanceOf[BinarySpatialOperator], sft, getFactory(data))
     }
   
   override def visit(expression: PropertyName, extraData: AnyRef): AnyRef = {
@@ -328,7 +329,7 @@ class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVi
 
   private def bind(e: Expression, extraData: AnyRef, target: Class[_]): Expression = {
     if (e.isInstanceOf[Literal]) {
-      val bound = e.evaluate(null, target)
+      val bound = FastConverter.convert(e.evaluate(null), target)
       if (bound != null) {
         return getFactory(extraData).literal(bound)
       }
@@ -338,11 +339,12 @@ class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVi
 
   private def bind(e: Expression, extraData: AnyRef, target: Class[_], fallback: Class[_]): Expression = {
     if (e.isInstanceOf[Literal]) {
-      var bound = e.evaluate(null, target)
+      val lit = e.evaluate(null)
+      var bound = FastConverter.convert(lit, target)
       if (bound != null) {
         return getFactory(extraData).literal(bound)
       }
-      bound = e.evaluate(null, fallback)
+      bound = FastConverter.convert(lit, fallback)
       if (bound != null) {
         return getFactory(extraData).literal(bound)
       }

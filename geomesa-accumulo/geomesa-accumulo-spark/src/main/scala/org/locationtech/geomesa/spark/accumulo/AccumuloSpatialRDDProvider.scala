@@ -19,7 +19,6 @@ import org.apache.accumulo.core.client.mapreduce.lib.impl.InputConfigurator
 import org.apache.accumulo.core.client.security.tokens.{KerberosToken, PasswordToken}
 import org.apache.accumulo.core.security.Authorizations
 import org.apache.accumulo.core.util.{Pair => AccPair}
-import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred.JobConf
@@ -36,22 +35,23 @@ import org.locationtech.geomesa.jobs.accumulo.AccumuloJobUtils
 import org.locationtech.geomesa.jobs.mapreduce._
 import org.locationtech.geomesa.spark.{SpatialRDD, SpatialRDDProvider}
 import org.locationtech.geomesa.utils.geotools.FeatureUtils
+import org.locationtech.geomesa.utils.io.{WithClose, WithStore}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
-import scala.collection.JavaConversions._
-
 class AccumuloSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
-  import org.locationtech.geomesa.spark.CaseInsensitiveMapFix._
 
-  override def canProcess(params: java.util.Map[String, java.io.Serializable]): Boolean =
+  import scala.collection.JavaConverters._
+
+  override def canProcess(params: java.util.Map[String, _ <: java.io.Serializable]): Boolean =
     AccumuloDataStoreFactory.canProcess(params)
 
   override def rdd(conf: Configuration,
                    sc: SparkContext,
                    params: Map[String, String],
                    query: Query): SpatialRDD = {
-    val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+    val paramsAsJava = params.asJava
+    val ds = DataStoreFinder.getDataStore(paramsAsJava).asInstanceOf[AccumuloDataStore]
 
     lazy val transform = query.getHints.getTransformSchema
 
@@ -61,30 +61,25 @@ class AccumuloSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
       } else {
         // note: we've ensured there is only one table per query plan, below
         InputConfigurator.setInputTableName(classOf[AccumuloInputFormat], conf, qp.tables.head)
-        InputConfigurator.setRanges(classOf[AccumuloInputFormat], conf, qp.ranges)
-        qp.iterators.foreach(InputConfigurator.addIterator(classOf[AccumuloInputFormat], conf, _))
+        InputConfigurator.setRanges(classOf[AccumuloInputFormat], conf, qp.ranges.asJava)
+        InputConfigurator.setBatchScan(classOf[AccumuloInputFormat], conf, true)
 
+        qp.iterators.foreach(InputConfigurator.addIterator(classOf[AccumuloInputFormat], conf, _))
         qp.columnFamily.foreach { colFamily =>
           val cf = Collections.singletonList(new AccPair[Text, Text](colFamily, null))
           InputConfigurator.fetchColumns(classOf[AccumuloInputFormat], conf, cf)
         }
-
-        InputConfigurator.setBatchScan(classOf[AccumuloInputFormat], conf, true)
-        InputConfigurator.setBatchScan(classOf[GeoMesaAccumuloInputFormat], conf, true)
-        GeoMesaConfigurator.setSerialization(conf)
-        GeoMesaConfigurator.setTable(conf, qp.tables.head)
-        GeoMesaConfigurator.setDataStoreInParams(conf, params)
-        GeoMesaConfigurator.setFeatureType(conf, sft.getTypeName)
-
+        GeoMesaConfigurator.setResultsToFeatures(conf, qp.resultsToFeatures)
+        qp.reducer.foreach(GeoMesaConfigurator.setReducer(conf, _))
         // set the secondary filter if it exists and is  not Filter.INCLUDE
-        qp.filter.secondary
-          .collect { case f if f != Filter.INCLUDE => f }
-          .foreach { f => GeoMesaConfigurator.setFilter(conf, ECQL.toCQL(f)) }
-
-        transform.foreach(GeoMesaConfigurator.setTransformSchema(conf, _))
+        qp.filter.secondary.foreach { f =>
+          if (f != Filter.INCLUDE) {
+            GeoMesaConfigurator.setFilter(conf, ECQL.toCQL(f))
+          }
+        }
 
         // Configure Auths from DS
-        val auths = AccumuloDataStoreParams.AuthsParam.lookupOpt(params)
+        val auths = AccumuloDataStoreParams.AuthsParam.lookupOpt(paramsAsJava)
         auths.foreach { a =>
           val authorizations = new Authorizations(a.split(","): _*)
           InputConfigurator.setScanAuthorizations(classOf[AccumuloInputFormat], conf, authorizations)
@@ -103,11 +98,11 @@ class AccumuloSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
         SparkHadoopUtil.get.addCredentials(jconf)
 
         // Get username from params
-        val username = AccumuloDataStoreParams.UserParam.lookup(params)
+        val username = AccumuloDataStoreParams.UserParam.lookup(paramsAsJava)
 
         // Get password or keytabPath from params. Precisely one of these should be set due to prior validation
-        val password = AccumuloDataStoreParams.PasswordParam.lookup(params)
-        val keytabPath = AccumuloDataStoreParams.KeytabPathParam.lookup(params)
+        val password = AccumuloDataStoreParams.PasswordParam.lookup(paramsAsJava)
+        val keytabPath = AccumuloDataStoreParams.KeytabPathParam.lookup(paramsAsJava)
 
         // Create authentication token according to password or Kerberos
         val authToken = if (password != null) {
@@ -118,9 +113,9 @@ class AccumuloSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
         }
 
         // Get params and set instance
-        val instance = AccumuloDataStoreParams.InstanceIdParam.lookup(params)
-        val zookeepers = AccumuloDataStoreParams.ZookeepersParam.lookup(params)
-        if (AccumuloDataStoreParams.MockParam.lookup(params)) {
+        val instance = AccumuloDataStoreParams.InstanceIdParam.lookup(paramsAsJava)
+        val zookeepers = AccumuloDataStoreParams.ZookeepersParam.lookup(paramsAsJava)
+        if (AccumuloDataStoreParams.MockParam.lookup(paramsAsJava)) {
           AbstractInputFormat.setMockInstance(jconf, instance)
         } else {
           AbstractInputFormat.setZooKeeperInstance(jconf, new ClientConfiguration()
@@ -128,21 +123,27 @@ class AccumuloSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
         }
 
         // Set connectorInfo. If needed, this will add a DelegationToken to jconf.getCredentials
-        val user = AccumuloDataStoreParams.UserParam.lookup(params)
+        val user = AccumuloDataStoreParams.UserParam.lookup(paramsAsJava)
         AbstractInputFormat.setConnectorInfo(jconf, user, authToken)
 
         // Iterate over tokens in credentials and add the Accumulo one to the configuration directly
         // This is because the credentials seem to disappear between here and the YARN executor
         // See https://stackoverflow.com/questions/44525351/delegation-tokens-with-accumulo-spark
-        for (tok <- jconf.getCredentials.getAllTokens) {
-          if (tok.getKind.toString=="ACCUMULO_AUTH_TOKEN") {
+        val tokens = jconf.getCredentials.getAllTokens.iterator()
+        var hasNext = tokens.hasNext
+        while (hasNext) {
+          val token = tokens.next()
+          if (token.getKind.toString == "ACCUMULO_AUTH_TOKEN") {
             logger.info("Adding ACCUMULO_AUTH_TOKEN to configuration")
-            jconf.set("org.locationtech.geomesa.token", tok.encodeToUrlString())
+            jconf.set("org.locationtech.geomesa.token", token.encodeToUrlString())
+            hasNext = false
+          } else {
+            hasNext = tokens.hasNext
           }
         }
 
         // From sc.newAPIHadoopRDD
-        new NewHadoopRDD(sc, classOf[GeoMesaAccumuloInputFormat], classOf[Text], classOf[SimpleFeature], jconf).map(U => U._2)
+        new NewHadoopRDD(sc, classOf[GeoMesaAccumuloInputFormat], classOf[Text], classOf[SimpleFeature], jconf).map(_._2)
       }
     }
 
@@ -180,32 +181,22 @@ class AccumuloSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
     * Writes this RDD to a GeoMesa table.
     * The type must exist in the data store, and all of the features in the RDD must be of this type.
     *
-    * @param rdd
-    * @param params
-    * @param typeName
+    * @param rdd rdd
+    * @param params params
+    * @param typeName type name
     */
   def save(rdd: RDD[SimpleFeature], params: Map[String, String], typeName: String): Unit = {
-    val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
-    try {
+    WithStore[AccumuloDataStore](params) { ds =>
       require(ds.getSchema(typeName) != null,
-        "Feature type must exist before calling save.  Call createSchema on the DataStore first.")
-    } finally {
-      ds.dispose()
+        "Feature type must exist before calling save. Call createSchema on the DataStore first.")
     }
 
     rdd.foreachPartition { iter =>
-      val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
-      val featureWriter = ds.getFeatureWriterAppend(typeName, Transaction.AUTO_COMMIT)
-      try {
-        iter.foreach { rawFeature =>
-          FeatureUtils.copyToWriter(featureWriter, rawFeature, useProvidedFid = true)
-          featureWriter.write()
+      WithStore[AccumuloDataStore](params) { ds =>
+        WithClose(ds.getFeatureWriterAppend(typeName, Transaction.AUTO_COMMIT)) { writer =>
+          iter.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
         }
-      } finally {
-        IOUtils.closeQuietly(featureWriter)
-        ds.dispose()
       }
     }
   }
-
 }

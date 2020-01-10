@@ -8,15 +8,12 @@
 
 package org.locationtech.geomesa.fs.tools.ingest
 
-import java.io.File
-
 import com.beust.jcommander.{Parameter, ParameterException, Parameters}
 import com.typesafe.config.Config
 import org.apache.hadoop.fs.Path
-import org.locationtech.geomesa.fs.FileSystemDataStore
+import org.locationtech.geomesa.fs.data.FileSystemDataStore
 import org.locationtech.geomesa.fs.storage.orc.OrcFileSystemStorage
-import org.locationtech.geomesa.fs.tools.FsDataStoreCommand
-import org.locationtech.geomesa.fs.tools.FsDataStoreCommand.{EncodingParam, FsParams, SchemeParams}
+import org.locationtech.geomesa.fs.tools.FsDataStoreCommand.{FsDistributedCommand, FsParams, OptionalEncodingParam, OptionalSchemeParams}
 import org.locationtech.geomesa.fs.tools.data.FsCreateSchemaCommand
 import org.locationtech.geomesa.fs.tools.ingest.FileSystemConverterJob.{OrcConverterJob, ParquetConverterJob}
 import org.locationtech.geomesa.fs.tools.ingest.FsIngestCommand.FsIngestParams
@@ -26,20 +23,11 @@ import org.locationtech.geomesa.tools.DistributedRunParam.RunModes.RunMode
 import org.locationtech.geomesa.tools.ingest.DistributedConverterIngest.ConverterIngestJob
 import org.locationtech.geomesa.tools.ingest.IngestCommand.IngestParams
 import org.locationtech.geomesa.tools.ingest._
-import org.locationtech.geomesa.utils.classpath.ClassPathUtils
 import org.opengis.feature.simple.SimpleFeatureType
 
-// TODO we need multi threaded ingest for this
-class FsIngestCommand extends IngestCommand[FileSystemDataStore] with FsDataStoreCommand {
+class FsIngestCommand extends IngestCommand[FileSystemDataStore] with FsDistributedCommand {
 
   override val params = new FsIngestParams
-
-  override val libjarsFile: String = "org/locationtech/geomesa/fs/tools/ingest-libjars.list"
-
-  override def libjarsPaths: Iterator[() => Seq[File]] = Iterator(
-    () => ClassPathUtils.getJarsFromEnvironment("GEOMESA_FS_HOME"),
-    () => ClassPathUtils.getJarsFromClasspath(classOf[FileSystemDataStore])
-  )
 
   override protected def createIngest(
       mode: RunMode,
@@ -47,6 +35,9 @@ class FsIngestCommand extends IngestCommand[FileSystemDataStore] with FsDataStor
       converter: Config,
       inputs: Seq[String]): Runnable = {
     FsCreateSchemaCommand.setOptions(sft, params)
+    if (params.combineInputs) {
+      throw new NotImplementedError("--combine-inputs is not supported for the FileSystem data store")
+    }
     mode match {
       case RunModes.Local =>
         super.createIngest(mode, sft, converter, inputs)
@@ -58,18 +49,15 @@ class FsIngestCommand extends IngestCommand[FileSystemDataStore] with FsDataStor
         val tmpPath = Option(params.tempDir).map(new Path(_))
         val wait = params.waitForCompletion
         val newJob = params.encoding match {
-          case OrcFileSystemStorage.OrcEncoding =>
-            () => new OrcConverterJob(connection, sft, converter, inputs, libjarsFile, libjarsPaths, reducers, tmpPath)
-          case ParquetFileSystemStorage.ParquetEncoding =>
-            () => new ParquetConverterJob(connection, sft, converter, inputs, libjarsFile, libjarsPaths, reducers, tmpPath)
+          case OrcFileSystemStorage.Encoding =>
+            () => new OrcConverterJob(connection, sft, converter, inputs, libjarsFiles, libjarsPaths, reducers, tmpPath)
+          case ParquetFileSystemStorage.Encoding =>
+            () => new ParquetConverterJob(connection, sft, converter, inputs, libjarsFiles, libjarsPaths, reducers, tmpPath)
           case _ => throw new ParameterException(s"Ingestion is not supported for encoding '${params.encoding}'")
         }
-        new DistributedConverterIngest(connection, sft, converter, inputs, libjarsFile, libjarsPaths, wait) {
+        new DistributedConverterIngest(connection, sft, converter, inputs, libjarsFiles, libjarsPaths, wait) {
           override protected def createJob(): ConverterIngestJob = newJob()
         }
-
-      case RunModes.DistributedCombine =>
-        throw new NotImplementedError("Distributed combine ingest is not supported for the FileSystem data store")
 
       case _ =>
         throw new NotImplementedError(s"Missing implementation for mode $mode")
@@ -80,7 +68,7 @@ class FsIngestCommand extends IngestCommand[FileSystemDataStore] with FsDataStor
 object FsIngestCommand {
 
   @Parameters(commandDescription = "Ingest/convert various file formats into GeoMesa")
-  class FsIngestParams extends IngestParams with FsParams with EncodingParam with SchemeParams with TempDirParam {
+  class FsIngestParams extends IngestParams with FsParams with OptionalEncodingParam with OptionalSchemeParams with TempDirParam {
     @Parameter(names = Array("--num-reducers"), description = "Num reducers (required for distributed ingest)", required = false)
     var reducers: java.lang.Integer = _
   }

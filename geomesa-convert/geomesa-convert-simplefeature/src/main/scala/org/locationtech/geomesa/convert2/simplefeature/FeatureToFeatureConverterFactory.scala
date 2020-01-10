@@ -9,7 +9,7 @@
 package org.locationtech.geomesa.convert2.simplefeature
 
 import com.typesafe.config.Config
-import com.typesafe.scalalogging.StrictLogging
+import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicField, BasicOptions}
 import org.locationtech.geomesa.convert2.AbstractConverterFactory._
 import org.locationtech.geomesa.convert2.simplefeature.FeatureToFeatureConverterFactory.{FeatureToFeatureConfig, FeatureToFeatureConfigConvert}
@@ -22,7 +22,7 @@ import pureconfig.error.ConfigReaderFailures
 
 import scala.util.control.NonFatal
 
-class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory {
+class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory with LazyLogging {
 
   import FeatureToFeatureConverterFactory.TypeToProcess
 
@@ -38,7 +38,7 @@ class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory {
   override def apply(sft: SimpleFeatureType, conf: Config): Option[SimpleFeatureConverter] = {
     if (!conf.hasPath("type") || !conf.getString("type").equalsIgnoreCase(TypeToProcess)) { None } else {
       val (config, fields, opts) = try {
-        val c = AbstractConverterFactory.standardDefaults(conf)
+        val c = AbstractConverterFactory.standardDefaults(conf, logger)
         val config = pureconfig.loadConfigOrThrow[FeatureToFeatureConfig](c)
         val fields = pureconfig.loadConfigOrThrow[Seq[BasicField]](c)
         val opts = pureconfig.loadConfigOrThrow[BasicOptions](c)
@@ -46,7 +46,6 @@ class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory {
       } catch {
         case NonFatal(e) => throw new IllegalArgumentException(s"Invalid configuration: ${e.getMessage}")
       }
-      opts.validators.init(sft)
 
       val inputSft = SimpleFeatureTypeLoader.sftForName(config.inputSft).getOrElse {
         throw new IllegalArgumentException(s"Could not load input sft ${config.inputSft}")
@@ -90,19 +89,22 @@ object FeatureToFeatureConverterFactory {
 
   private val InputSftPath = "input-sft"
 
-  case class FeatureToFeatureConfig(`type`: String,
-                                    inputSft: String,
-                                    idField: Option[Expression],
-                                    caches: Map[String, Config],
-                                    userData: Map[String, Expression]) extends ConverterConfig
+  case class FeatureToFeatureConfig(
+      `type`: String,
+      inputSft: String,
+      idField: Option[Expression],
+      caches: Map[String, Config],
+      userData: Map[String, Expression]
+    ) extends ConverterConfig
 
   object FeatureToFeatureConfigConvert extends ConverterConfigConvert[FeatureToFeatureConfig] with StrictLogging {
 
-    override protected def decodeConfig(cur: ConfigObjectCursor,
-                                        `type`: String,
-                                        idField: Option[Expression],
-                                        caches: Map[String, Config],
-                                        userData: Map[String, Expression]): Either[ConfigReaderFailures, FeatureToFeatureConfig] = {
+    override protected def decodeConfig(
+        cur: ConfigObjectCursor,
+        `type`: String,
+        idField: Option[Expression],
+        caches: Map[String, Config],
+        userData: Map[String, Expression]): Either[ConfigReaderFailures, FeatureToFeatureConfig] = {
       for { sftName <- cur.atKey(InputSftPath).right.flatMap(_.asString).right } yield {
         FeatureToFeatureConfig(`type`, sftName, idField, caches, userData)
       }

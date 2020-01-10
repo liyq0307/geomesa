@@ -100,13 +100,17 @@ rst_epilog = """
 
 .. |maven_version| replace:: 3.5.2 or later
 
-.. |geoserver_version| replace:: 2.12.x
+.. |geoserver_version| replace:: 2.15.x
 
-.. |geotools_version| replace:: 18.x
+.. |geotools_version| replace:: 21.x
 
-.. |accumulo_version| replace:: 1.9.2 or later
+.. |accumulo_required_version| replace:: 1.7.x, 1.8.x or 1.9.x
 
-.. |hbase_version| replace:: 1.3.x or 1.4.x
+.. |accumulo_supported_versions| replace:: versions 1.7.x, 1.8.x and 1.9.x
+
+.. |hbase_required_version| replace::  1.3.x or 1.4.x
+
+.. |hbase_supported_versions| replace:: versions 1.3.x and 1.4.x
 
 .. |hbase_bundled_version| replace:: 1.3.1
 
@@ -120,7 +124,9 @@ rst_epilog = """
 
 .. |kudu_version| replace:: 1.7.x
 
-.. |spark_version| replace:: 2.2.x, 2.3.x or 2.4.x
+.. |spark_required_version| replace:: 2.2.x, 2.3.x or 2.4.x
+
+.. |spark_supported_versions| replace:: versions 2.2.x, 2.3.x and 2.4.x
 
 .. |release_last| replace:: %(release_last)s
 

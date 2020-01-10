@@ -31,12 +31,15 @@ import scala.reflect.ClassTag
   * @param initialEndpoints lower/upper end of histogram
   * @tparam T a comparable type which must have a StatHelperFunctions type class
   */
-class Histogram[T] private [stats] (val sft: SimpleFeatureType,
-                                    val property: String,
-                                    initialBins: Int,
-                                    initialEndpoints: (T, T))
-                                   (implicit val defaults: MinMax.MinMaxDefaults[T],
-                                    ct: ClassTag[T]) extends Stat with LazyLogging {
+class Histogram[T](
+    val sft: SimpleFeatureType,
+    val property: String,
+    initialBins: Int,
+    initialEndpoints: (T, T)
+  )(
+    implicit val defaults: MinMax.MinMaxDefaults[T],
+    val ct: ClassTag[T]
+  ) extends Stat with LazyLogging {
 
   override type S = Histogram[T]
 
@@ -154,18 +157,14 @@ class Histogram[T] private [stats] (val sft: SimpleFeatureType,
 
   override def toJsonObject: Map[String, Any] = {
     val binSeq = Seq.tabulate(bins.length) { bin =>
-      val builder = ListMap.newBuilder[String, Any]
-      builder.sizeHint(if (bin == 0) { 4 } else { 3 })
-      builder += "index" -> bin
-      builder += "lower-bound" -> bounds(bin)._1
-      if (bin == 0) {
-        builder += "upper-bound" -> bounds(bin)._2
-      }
-      builder += "count" -> bins.counts(bin)
-      builder.result
+      ListMap[String, Any](
+        "index"       -> bin,
+        "lower-bound" -> bounds(bin)._1,
+        "upper-bound" -> bounds(bin)._2,
+        "count"       -> bins.counts(bin)
+      )
     }
     ListMap("lower-bound" -> bounds._1, "upper-bound" -> bounds._2, "bins" -> binSeq)
-
   }
 
   override def isEmpty: Boolean = bins.counts.forall(_ == 0)

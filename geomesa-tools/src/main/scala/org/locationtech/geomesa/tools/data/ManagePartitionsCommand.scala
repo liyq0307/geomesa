@@ -12,6 +12,7 @@ import java.time.{ZoneOffset, ZonedDateTime}
 
 import com.beust.jcommander.{JCommander, Parameter, ParameterException, Parameters}
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.conf.partition.{TablePartition, TimePartition}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.tools._
@@ -20,6 +21,7 @@ import org.locationtech.geomesa.tools.utils.ParameterConverters.IntervalConverte
 import org.locationtech.geomesa.tools.utils.Prompt
 import org.locationtech.geomesa.utils.index.IndexMode
 import org.locationtech.geomesa.utils.text.StringSerialization
+import org.locationtech.geomesa.utils.date.DateUtils.toInstant
 import org.opengis.feature.simple.SimpleFeatureType
 
 /**
@@ -73,7 +75,7 @@ object ManagePartitionsCommand {
     override protected def modify(ds: DS, sft: SimpleFeatureType, partition: TablePartition, p: String): Unit = {
       Command.user.info(s"Adding partition '$p'")
       ds.manager.indices(sft, mode = IndexMode.Write).par.foreach { index =>
-        ds.adapter.createTable(index, index.configureTableName(Some(p)), index.getSplits(Some(p)))
+        ds.adapter.createTable(index, Some(p), index.getSplits(Some(p)))
       }
     }
   }
@@ -92,7 +94,7 @@ object ManagePartitionsCommand {
       }
       val (start, end) = {
         val (s, e) = new IntervalConverter("value").convert(params.value)
-        (ZonedDateTime.ofInstant(s.toInstant, ZoneOffset.UTC), ZonedDateTime.ofInstant(e.toInstant, ZoneOffset.UTC))
+        (ZonedDateTime.ofInstant(toInstant(s), ZoneOffset.UTC), ZonedDateTime.ofInstant(toInstant(e), ZoneOffset.UTC))
       }
       val tables = params.tables.asScala
 
@@ -109,22 +111,25 @@ object ManagePartitionsCommand {
         val version = s"v${index.version}"
         (index, name, attributes, version)
       }
-      val indicesAndTables = tables.map { table =>
-        val matchedByName = indexNames.filter { case (_, n, _, v) => table.contains(n) && table.contains(v) }
-        if (matchedByName.lengthCompare(1) == 0) {
-          (matchedByName.head._1, table)
-        } else {
-          val matchedByAttributes = matchedByName.filter(m => table.contains(m._3))
-          if (matchedByAttributes.lengthCompare(1) == 0) {
-            (matchedByAttributes.head._1, table)
+      val tableToIndexName = indexNames
+        .toList
+        .sortWith(_._3.size > _._3.size) // Sorted so we get best match first
+        .foldLeft(Map[String,(GeoMesaFeatureIndex[_,_],String,String,String)]()){
+          (mappedTables,indexName) =>
+          val fullMatches = tables.filter(table =>
+            !mappedTables.contains(table) // Don't match again
+              && table.contains(indexName._2) // Correct type name as in z3, attr, id...
+              && table.contains(indexName._3) // Correct attributes
+              && table.contains(indexName._4) // Correct version
+          )
+          if (fullMatches.lengthCompare(1) >= 0) {
+            mappedTables + (fullMatches.head -> indexName)
           } else {
-            throw new IllegalArgumentException(s"Could not match an index to table '$table'")
+           throw new IllegalArgumentException(s"Could not match a table to an index of '${indexName._3}'")
           }
         }
-      }
-
-      indicesAndTables.foreach { case (index, table) =>
-        ds.metadata.insert(sft.getTypeName, index.tableNameKey(Some(params.partition)), table)
+      tableToIndexName.foreach { case (table, indexName) =>
+          ds.metadata.insert(sft.getTypeName, indexName._1.tableNameKey(Some(params.partition)), table)
       }
       time.register(params.partition, start, end)
 

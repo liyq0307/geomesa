@@ -21,6 +21,8 @@ import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat, FileSplit}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
+import scala.util.control.NonFatal
+
 /**
  * Input format that gives us access to the entire file as a byte stream via the record reader.
  */
@@ -82,20 +84,24 @@ object FileStreamInputFormat {
  */
 abstract class FileStreamRecordReader() extends RecordReader[LongWritable, SimpleFeature] with LazyLogging {
 
-  private var dec: Decompressor = null
-  private var stream: InputStream with Seekable = null
-  private var iter: Iterator[SimpleFeature] with Closeable = null
+  private var dec: Decompressor = _
+  private var stream: InputStream with Seekable = _
+  private var iter: Iterator[SimpleFeature] with Closeable = _
   private var length: Float = 0
 
   private val curKey = new LongWritable(0)
-  private var curValue: SimpleFeature = null
+  private var curValue: SimpleFeature = _
 
   def createIterator(stream: InputStream with Seekable,
                      filePath: Path,
                      context: TaskAttemptContext): Iterator[SimpleFeature] with Closeable
 
   override def getProgress: Float = {
-    if (length == 0) 0.0f else math.min(1.0f, stream.getPos / length)
+    if (length == 0) { 0f } else {
+      try { math.min(1f, stream.getPos / length) } catch {
+        case NonFatal(e) => logger.warn(s"Error checking stream position - it may be closed? $e"); 1f
+      }
+    }
   }
 
   override def nextKeyValue(): Boolean = {

@@ -13,11 +13,11 @@ import java.nio.charset.{Charset, StandardCharsets}
 
 import com.typesafe.config.{Config, ConfigFactory}
 import com.typesafe.scalalogging.StrictLogging
+import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert.Modes.{ErrorMode, LineMode, ParseMode}
 import org.locationtech.geomesa.convert.SimpleFeatureConverters.SimpleFeatureConverterWrapper
 import org.locationtech.geomesa.convert.xml.XmlConverter._
 import org.locationtech.geomesa.convert.xml.XmlConverterFactory.{XmlConfigConvert, XmlFieldConvert, XmlOptionsConvert}
-import org.locationtech.geomesa.convert.{EvaluationContext, SimpleFeatureConverter, SimpleFeatureValidator}
 import org.locationtech.geomesa.convert2.AbstractConverterFactory
 import org.locationtech.geomesa.convert2.AbstractConverterFactory.{ConverterConfigConvert, ConverterOptionsConvert, FieldConvert, OptionConvert}
 import org.locationtech.geomesa.convert2.transforms.Expression
@@ -28,7 +28,7 @@ import pureconfig.error.{CannotConvert, ConfigReaderFailures}
 class XmlConverterFactory extends AbstractConverterFactory[XmlConverter, XmlConfig, XmlField, XmlOptions]
     with org.locationtech.geomesa.convert.SimpleFeatureConverterFactory[String] {
 
-  override protected val typeToProcess: String = "xml"
+  override protected val typeToProcess: String = XmlConverterFactory.TypeToProcess
 
   override protected implicit def configConvert: ConverterConfigConvert[XmlConfig] = XmlConfigConvert
   override protected implicit def fieldConvert: FieldConvert[XmlField] = XmlFieldConvert
@@ -42,7 +42,9 @@ class XmlConverterFactory extends AbstractConverterFactory[XmlConverter, XmlConf
   override def canProcess(conf: Config): Boolean =
     conf.hasPath("type") && conf.getString("type").equalsIgnoreCase(typeToProcess)
 
-  override def buildConverter(sft: SimpleFeatureType, conf: Config): SimpleFeatureConverter[String] = {
+  override def buildConverter(
+      sft: SimpleFeatureType,
+      conf: Config): org.locationtech.geomesa.convert.SimpleFeatureConverter[String] = {
     val converter = apply(sft, conf).orNull.asInstanceOf[XmlConverter]
     if (converter == null) {
       throw new IllegalStateException("Could not create converter - did you call canProcess()?")
@@ -62,15 +64,18 @@ class XmlConverterFactory extends AbstractConverterFactory[XmlConverter, XmlConf
 
 object XmlConverterFactory {
 
+  val TypeToProcess = "xml"
+
   object XmlConfigConvert extends ConverterConfigConvert[XmlConfig] with OptionConvert with StrictLogging {
 
     import scala.collection.JavaConverters._
 
-    override protected def decodeConfig(cur: ConfigObjectCursor,
-                                        `type`: String,
-                                        idField: Option[Expression],
-                                        caches: Map[String, Config],
-                                        userData: Map[String, Expression]): Either[ConfigReaderFailures, XmlConfig] = {
+    override protected def decodeConfig(
+        cur: ConfigObjectCursor,
+        `type`: String,
+        idField: Option[Expression],
+        caches: Map[String, Config],
+        userData: Map[String, Expression]): Either[ConfigReaderFailures, XmlConfig] = {
       for {
         provider   <- cur.atKey("xpath-factory").right.flatMap(_.asString).right
         namespace  <- cur.atKey("xml-namespaces").right.flatMap(_.asObjectCursor).right
@@ -111,12 +116,13 @@ object XmlConverterFactory {
   }
 
   object XmlOptionsConvert extends ConverterOptionsConvert[XmlOptions] {
-    override protected def decodeOptions(cur: ConfigObjectCursor,
-                                         validators: SimpleFeatureValidator,
-                                         parseMode: ParseMode,
-                                         errorMode: ErrorMode,
-                                         encoding: Charset,
-                                         verbose: Boolean): Either[ConfigReaderFailures, XmlOptions] = {
+    override protected def decodeOptions(
+        cur: ConfigObjectCursor,
+        validators: Seq[String],
+        reporters: Seq[Config],
+        parseMode: ParseMode,
+        errorMode: ErrorMode,
+        encoding: Charset): Either[ConfigReaderFailures, XmlOptions] = {
       def parse[T](key: String, values: Iterable[T]): Either[ConfigReaderFailures, T] = {
         cur.atKey(key).right.flatMap { value =>
           value.asString.right.flatMap { string =>
@@ -133,7 +139,7 @@ object XmlConverterFactory {
       for {
         lineMode <- parse("line-mode", LineMode.values).right
       } yield {
-        XmlOptions(validators, parseMode, errorMode, lineMode, encoding, verbose)
+        XmlOptions(validators, reporters, parseMode, errorMode, lineMode, encoding)
       }
     }
 

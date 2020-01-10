@@ -138,8 +138,13 @@ depending on geometry type) and ID indices will all be created, as well as any a
 
 To configure the indices, you may set a user data value in your simple feature type. The user data key is
 ``geomesa.indices.enabled``, and it should contain a comma-delimited list containing a subset of index
-identifiers, as specified in :ref:`index_overview`. In addition to specifying the indices, you may optionally
-specify the exact attributes that will be used in the index, by appending them with ``:``\ s after the index name.
+identifiers, as specified in :ref:`index_overview`.
+
+In addition to specifying which types of indices to create, you may optionally specify the exact attributes that will
+be used in each index, by appending them with ``:``\ s after the index name. The following example shows two index
+configurations. The first configuration has a single Z3 index that includes the default attributes. The second
+configuration has two Z3 indices on different geometries, as well as an attribute index on name which includes
+a secondary index on dtg.
 
 .. code-block:: java
 
@@ -148,9 +153,10 @@ specify the exact attributes that will be used in the index, by appending them w
     String spec = "name:String,dtg:Date,*start:Point:srid=4326,end:Point:srid=4326";
     SimpleFeatureType sft = SimpleFeatureTypes.createType("mySft", spec);
     // enable a default z3 index on start + dtg
-    sft1.getUserData().put("geomesa.indices.enabled", "z3");
-    // enable a z3 index on start + dtg, end + dtg, and an attribute index on name with a secondary index on dtg
-    sft1.getUserData().put("geomesa.indices.enabled", "z3:start:dtg,z3:end:dtg,attr:name:dtg");
+    sft.getUserData().put("geomesa.indices.enabled", "z3");
+    // alternatively, enable a z3 index on start + dtg, end + dtg, and an attribute index on
+    // name with a secondary index on dtg. note that this overrides the previous configuration
+    sft.getUserData().put("geomesa.indices.enabled", "z3:start:dtg,z3:end:dtg,attr:name:dtg");
 
 See :ref:`set_sft_options` for details on setting user data. If you are using the GeoMesa ``SchemaBuilder``,
 you may instead call the ``indexes`` methods:
@@ -609,28 +615,29 @@ Interceptors will be invoked in the order they are declared in the user data. In
 on the results of query interceptors, you can enable ``TRACE``-level logging on the class
 ``org.locationtech.geomesa.index.planning.QueryRunner$``.
 
-.. _stat_attribute_config:
+.. _stat_config:
 
 Configuring Cached Statistics
 -----------------------------
 
-GeoMesa allows for collecting summary statistics for attributes during ingest, which are then stored and
-available for instant querying. Hints are set on individual attributes using the key ``keep-stats``, as
-described in :ref:`attribute_options`.
+GeoMesa will collect and store summary statistics for attributes during ingest, which are then available for
+lookup and/or query planning. Stat generation can be enabled or disabled through the simple feature type
+user data using the key ``geomesa.stats.enable``. See :ref:`set_sft_options` for details on setting user data.
 
 .. note::
 
-    Cached statistics are currently only implemented for the Accumulo data store
+    Cached statistics are currently only implemented for the Accumulo and Redis data stores
 
-Stats are always collected for the default geometry, default date and any indexed attributes. See
-:ref:`stats_collected` for more details. In addition, any other attribute can be flagged for stats. This
-will cause the following stats to be collected for those attributes:
+If enabled, stats are always collected for the default geometry, default date and any indexed attributes. See
+:ref:`stats_collected` for more details. In addition, other attributes can be flagged for stats by using the key
+``keep-stats`` on individual attributes, as described in :ref:`attribute_options`. This will cause the following
+stats to be collected for those attributes:
 
 * Min/max (bounds)
 * Top-k
 
-Only attributes of the following types can be flagged for stats: ``String``, ``Integer``, ``Long``,
-``Float``, ``Double``, ``Date`` and ``Geometry``.
+Only attributes of type ``String``, ``Integer``, ``Long``, ``Float``, ``Double``, ``Date`` or ``Geometry`` can be
+flagged for stats.
 
 For example:
 
@@ -653,7 +660,7 @@ features), you must explicitly enable "mixed" indexing mode. All other geometry 
 ``LineString``, ``Polygon``, etc) are not affected.
 
 Mixed geometries must be declared when calling ``createSchema``. It may be specified through
-the simple feature type user data using the key ``geomesa.mixed.geometries``.  See :ref:`set_sft_options` for
+the simple feature type user data using the key ``geomesa.mixed.geometries``. See :ref:`set_sft_options` for
 details on setting user data.
 
 .. code-block:: java

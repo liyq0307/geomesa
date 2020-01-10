@@ -24,7 +24,7 @@ import org.apache.commons.io.IOUtils
 import org.apache.commons.io.input.BOMInputStream
 import org.locationtech.geomesa.convert.Modes.{ErrorMode, LineMode, ParseMode}
 import org.locationtech.geomesa.convert._
-import org.locationtech.geomesa.convert.xml.XmlConverter.{XmlConfig, XmlField, XmlOptions}
+import org.locationtech.geomesa.convert.xml.XmlConverter.{DocParser, XmlConfig, XmlField, XmlOptions}
 import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.convert2.{AbstractConverter, ConverterConfig, ConverterOptions, Field}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
@@ -39,42 +39,9 @@ import scala.util.control.NonFatal
 class XmlConverter(sft: SimpleFeatureType, config: XmlConfig, fields: Seq[XmlField], options: XmlOptions)
     extends AbstractConverter[Element, XmlConfig, XmlField, XmlOptions](sft, config, fields, options) {
 
-  import scala.collection.JavaConverters._
+  private val parser = new DocParser(config.xsd)
 
-  private val docBuilder = {
-    val factory = DocumentBuilderFactory.newInstance()
-    factory.setNamespaceAware(true)
-    factory.newDocumentBuilder()
-  }
-
-  private val xmlValidator = config.xsd.map { path =>
-    val schemaFactory = SchemaFactory.newInstance(W3C_XML_SCHEMA_NS_URI)
-    WithClose(getClass.getClassLoader.getResourceAsStream(path)) { xsdStream =>
-      schemaFactory.newSchema(new StreamSource(xsdStream)).newValidator()
-    }
-  }
-
-  private val xpath = {
-    val factory = try {
-      val res = XPathFactory.newInstance(XPathFactory.DEFAULT_OBJECT_MODEL_URI, config.xpathFactory, getClass.getClassLoader)
-      logger.info(s"Loaded xpath factory ${res.getClass}")
-      res
-    } catch {
-      case NonFatal(e) =>
-        logger.warn(s"Unable to load xpath provider '${config.xpathFactory}': ${e.toString}. " +
-            "Xpath queries may be slower - check your classpath")
-        XPathFactory.newInstance(XPathFactory.DEFAULT_OBJECT_MODEL_URI)
-    }
-    val xp = factory.newXPath()
-    if (config.xmlNamespaces.nonEmpty) {
-      xp.setNamespaceContext(new NamespaceContext() {
-        override def getPrefix(namespaceURI: String): String = null
-        override def getPrefixes(namespaceURI: String): java.util.Iterator[_] = null
-        override def getNamespaceURI(prefix: String): String = config.xmlNamespaces.getOrElse(prefix, null)
-      })
-    }
-    xp
-  }
+  private val xpath = XmlConverter.createXPath(config.xpathFactory, config.xmlNamespaces)
 
   private val rootPath = config.featurePath.map(xpath.compile)
 
@@ -82,26 +49,13 @@ class XmlConverter(sft: SimpleFeatureType, config: XmlConfig, fields: Seq[XmlFie
 
   // TODO GEOMESA-1039 more efficient InputStream processing for multi mode
 
-  override protected def parse(is: InputStream, ec: EvaluationContext): CloseableIterator[Element] = {
-    // detect and exclude the BOM if it exists
-    val bis = new BOMInputStream(is)
-    if (options.lineMode == LineMode.Single) {
-      val lines = IOUtils.lineIterator(bis, options.encoding)
-      val elements = lines.asScala.flatMap { line =>
-        ec.counter.incLineCount()
-        if (TextTools.isWhitespace(line)) { Iterator.empty } else {
-          Iterator.single(parseDocument(new StringReader(line)))
-        }
-      }
-      CloseableIterator(elements, lines.close())
-    } else {
-      val reader = new InputStreamReader(bis, options.encoding)
-      CloseableIterator.fill(1, reader.close()) { ec.counter.incLineCount(); parseDocument(reader) }
-    }
-  }
+  override protected def parse(is: InputStream, ec: EvaluationContext): CloseableIterator[Element] =
+    XmlConverter.iterator(parser, is, options.encoding, options.lineMode, ec)
 
-  override protected def values(parsed: CloseableIterator[Element],
-                                ec: EvaluationContext): CloseableIterator[Array[Any]] = {
+  override protected def values(
+      parsed: CloseableIterator[Element],
+      ec: EvaluationContext): CloseableIterator[Array[Any]] = {
+
     val array = Array.ofDim[Any](2)
     rootPath match {
       case None =>
@@ -122,29 +76,72 @@ class XmlConverter(sft: SimpleFeatureType, config: XmlConfig, fields: Seq[XmlFie
     }
   }
 
-  private  def parseDocument(reader: Reader): Element = {
-    // parse the document once, then extract each feature node and operate on it
-    val document = docBuilder.parse(new InputSource(reader))
-    // if a schema is defined, validate it - this will throw an exception on failure
-    xmlValidator.foreach(_.validate(new DOMSource(document)))
-    document.getDocumentElement
-  }
 }
 
 object XmlConverter extends StrictLogging {
+
+  import scala.collection.JavaConverters._
+
+  def createXPath(factory: String, namespaces: Map[String, String] = Map.empty): XPath = {
+    val fact = try {
+      val res = XPathFactory.newInstance(XPathFactory.DEFAULT_OBJECT_MODEL_URI, factory, getClass.getClassLoader)
+      logger.info(s"Loaded xpath factory ${res.getClass}")
+      res
+    } catch {
+      case NonFatal(e) =>
+        logger.warn(s"Unable to load xpath provider '$factory': ${e.toString}. " +
+            "Xpath queries may be slower - check your classpath")
+        XPathFactory.newInstance(XPathFactory.DEFAULT_OBJECT_MODEL_URI)
+    }
+    val xpath = fact.newXPath()
+    if (namespaces.nonEmpty) {
+      xpath.setNamespaceContext(new NamespaceContext() {
+        override def getPrefix(namespaceURI: String): String = null
+        override def getPrefixes(namespaceURI: String): java.util.Iterator[_] = null
+        override def getNamespaceURI(prefix: String): String = namespaces.getOrElse(prefix, null)
+      })
+    }
+    xpath
+  }
+
+  def iterator(
+      parser: DocParser,
+      is: InputStream,
+      encoding: Charset,
+      mode: LineMode,
+      ec: EvaluationContext): CloseableIterator[Element] = {
+
+    // detect and exclude the BOM if it exists
+    val bis = new BOMInputStream(is)
+    if (mode == LineMode.Single) {
+      val lines = IOUtils.lineIterator(bis, encoding)
+      val elements = lines.asScala.flatMap { line =>
+        ec.line += 1
+        if (TextTools.isWhitespace(line)) { Iterator.empty } else {
+          Iterator.single(parser.parse(new StringReader(line)))
+        }
+      }
+      CloseableIterator(elements, lines.close())
+    } else {
+      val reader = new InputStreamReader(bis, encoding)
+      CloseableIterator.fill(1, reader.close()) { ec.line += 1; parser.parse(reader) }
+    }
+  }
 
   // paths can be absolute, or relative to the feature node
   // they can also include xpath functions to manipulate the result
   // feature path can be any xpath that resolves to a node set (or a single node)
 
-  case class XmlConfig(`type`: String,
-                       xpathFactory: String,
-                       xmlNamespaces: Map[String, String],
-                       xsd: Option[String],
-                       featurePath: Option[String],
-                       idField: Option[Expression],
-                       caches: Map[String, Config],
-                       userData: Map[String, Expression]) extends ConverterConfig
+  case class XmlConfig(
+      `type`: String,
+      xpathFactory: String,
+      xmlNamespaces: Map[String, String],
+      xsd: Option[String],
+      featurePath: Option[String],
+      idField: Option[Expression],
+      caches: Map[String, Config],
+      userData: Map[String, Expression]
+    ) extends ConverterConfig
 
   sealed trait XmlField extends Field {
     def compile(xpath: XPath): Unit
@@ -168,10 +165,41 @@ object XmlConverter extends StrictLogging {
     }
   }
 
-  case class XmlOptions(validators: SimpleFeatureValidator,
-                        parseMode: ParseMode,
-                        errorMode: ErrorMode,
-                        lineMode: LineMode,
-                        encoding: Charset,
-                        verbose: Boolean) extends ConverterOptions
+  case class XmlOptions(
+      validators: Seq[String],
+      reporters: Seq[Config],
+      parseMode: ParseMode,
+      errorMode: ErrorMode,
+      lineMode: LineMode,
+      encoding: Charset
+    ) extends ConverterOptions
+
+  /**
+    * Document parser helper
+    *
+    * @param xsd path to an xsd used to validate parsed documents
+    */
+  class DocParser(xsd: Option[String]) {
+
+    private val builder = {
+      val factory = DocumentBuilderFactory.newInstance()
+      factory.setNamespaceAware(true)
+      factory.newDocumentBuilder()
+    }
+
+    private val validator = xsd.map { path =>
+      val schemaFactory = SchemaFactory.newInstance(W3C_XML_SCHEMA_NS_URI)
+      WithClose(getClass.getClassLoader.getResourceAsStream(path)) { xsdStream =>
+        schemaFactory.newSchema(new StreamSource(xsdStream)).newValidator()
+      }
+    }
+
+    def parse(reader: Reader): Element = {
+      // parse the document once, then extract each feature node and operate on it
+      val document = builder.parse(new InputSource(reader))
+      // if a schema is defined, validate it - this will throw an exception on failure
+      validator.foreach(_.validate(new DOMSource(document)))
+      document.getDocumentElement
+    }
+  }
 }

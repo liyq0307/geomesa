@@ -12,6 +12,7 @@ import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.filter.expression.AttributeExpression
 import org.locationtech.geomesa.filter.expression.AttributeExpression.{FunctionLiteral, PropertyLiteral}
+import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter._
 import org.opengis.filter.expression.{Expression, Function, Literal, PropertyName}
@@ -27,6 +28,12 @@ package object filter {
   //  'namespace' and 'function' calls.
   // As such, we can get away with using a shared Filter Factory.
   implicit val ff: FilterFactory2 = CommonFactoryFinder.getFilterFactory2
+
+  object FilterProperties {
+    val GeometryProcessing: SystemProperty = SystemProperty("geomesa.geometry.processing", "spatial4j")
+    // 10 characters results in 1024 ranges
+    val CaseInsensitiveLimit: SystemProperty = SystemProperty("geomesa.ilike.max.length", "10")
+  }
 
   def filterToString(filter: Filter): String = Try(ECQL.toCQL(filter)).getOrElse(filter.toString)
   def filterToString(filter: Option[Filter]): String = filter.map(filterToString).getOrElse("None")
@@ -339,25 +346,23 @@ package object filter {
     }
   }
 
-  // Currently pulling the wildcard values from the filter
-  // leads to inconsistent results...so use % as wildcard
-  // TODO try to use wildcard values from the Filter itself (https://geomesa.atlassian.net/browse/GEOMESA-309)
-  val MULTICHAR_WILDCARD = "%"
-  val SINGLE_CHAR_WILDCARD = "_"
+  val WildcardMultiChar = '%'
+  val WildcardSingleChar = '_'
+  val Wildcards = Seq(WildcardMultiChar, WildcardSingleChar)
 
-  val WILDCARD_SUFFIX = "\uffff\uffff\uffff"
+  val WildcardSuffix = "\uffff\uffff\uffff"
 
-  /* Like queries that can be handled by current reverse index */
-  def likeEligible(filter: PropertyIsLike): Boolean = containsNoSingles(filter) && trailingOnlyWildcard(filter)
-
-  /* contains no single character wildcards */
-  private def containsNoSingles(filter: PropertyIsLike) =
-    !filter.getLiteral.replace("\\\\", "").replace(s"\\$SINGLE_CHAR_WILDCARD", "").contains(SINGLE_CHAR_WILDCARD)
-
-  private def trailingOnlyWildcard(filter: PropertyIsLike) =
-    (filter.getLiteral.endsWith(MULTICHAR_WILDCARD) &&
-        filter.getLiteral.indexOf(MULTICHAR_WILDCARD) == filter.getLiteral.length - MULTICHAR_WILDCARD.length) ||
-        filter.getLiteral.indexOf(MULTICHAR_WILDCARD) == -1
+  /**
+    * Like queries we can handle with our current index
+    *
+    * @param filter filter
+    * @return
+    */
+  def likeEligible(filter: PropertyIsLike): Boolean = {
+    val lit = filter.getLiteral
+    // no leading wildcard (otherwise it's a full table scan)
+    lit.nonEmpty && !Wildcards.contains(lit.charAt(0))
+  }
 
   def decomposeBinary(f: Filter): Seq[Filter] =
     f match {

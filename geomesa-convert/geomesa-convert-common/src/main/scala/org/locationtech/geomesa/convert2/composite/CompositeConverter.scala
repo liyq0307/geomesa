@@ -12,16 +12,15 @@ import java.io.{ByteArrayInputStream, InputStream}
 import java.nio.charset.StandardCharsets
 
 import org.apache.commons.io.IOUtils
-import org.locationtech.geomesa.convert.{Counter, EnrichmentCache, EvaluationContext}
+import org.locationtech.geomesa.convert.{EnrichmentCache, EvaluationContext}
+import org.locationtech.geomesa.convert2.AbstractCompositeConverter.CompositeEvaluationContext
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter
-import org.locationtech.geomesa.convert2.composite.CompositeConverter.CompositeEvaluationContext
 import org.locationtech.geomesa.convert2.transforms.Predicate
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.CloseWithLogging
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.annotation.tailrec
-import scala.collection.immutable.IndexedSeq
 import scala.util.Try
 
 class CompositeConverter(val targetSft: SimpleFeatureType, delegates: Seq[(Predicate, SimpleFeatureConverter)])
@@ -32,9 +31,14 @@ class CompositeConverter(val targetSft: SimpleFeatureType, delegates: Seq[(Predi
   private val predicates = delegates.mapWithIndex { case ((p, _), i) => (p, i) }.toIndexedSeq
   private val converters = delegates.map(_._2).toIndexedSeq
 
-  override def createEvaluationContext(globalParams: Map[String, Any],
-                                       caches: Map[String, EnrichmentCache],
-                                       counter: Counter): EvaluationContext = {
+  override def createEvaluationContext(globalParams: Map[String, Any]): EvaluationContext =
+    new CompositeEvaluationContext(converters.map(_.createEvaluationContext(globalParams)))
+
+  // noinspection ScalaDeprecation
+  override def createEvaluationContext(
+      globalParams: Map[String, Any],
+      caches: Map[String, EnrichmentCache],
+      counter: org.locationtech.geomesa.convert.Counter): EvaluationContext = {
     new CompositeEvaluationContext(converters.map(_.createEvaluationContext(globalParams, caches, counter)))
   }
 
@@ -65,8 +69,8 @@ class CompositeConverter(val targetSft: SimpleFeatureType, delegates: Seq[(Predi
           delegate.close()
           delegate = predicates.find(evalPred).map(_._2) match {
             case None =>
-              ec.counter.incLineCount()
-              ec.counter.incFailure()
+              ec.line += 1
+              ec.failure.inc()
               CloseableIterator.empty
 
             case Some(i) =>
@@ -87,21 +91,4 @@ class CompositeConverter(val targetSft: SimpleFeatureType, delegates: Seq[(Predi
   }
 
   override def close(): Unit = converters.foreach(CloseWithLogging.apply)
-}
-
-object CompositeConverter {
-
-  class CompositeEvaluationContext(contexts: IndexedSeq[EvaluationContext]) extends EvaluationContext {
-
-    private var current: EvaluationContext = contexts.headOption.orNull
-
-    def setCurrent(i: Int): Unit = current = contexts(i)
-
-    override def get(i: Int): Any = current.get(i)
-    override def set(i: Int, v: Any): Unit = current.set(i, v)
-    override def indexOf(n: String): Int = current.indexOf(n)
-    override def counter: Counter = current.counter
-    override def getCache(k: String): EnrichmentCache = current.getCache(k)
-    override def clear(): Unit = contexts.foreach(_.clear())
-  }
 }

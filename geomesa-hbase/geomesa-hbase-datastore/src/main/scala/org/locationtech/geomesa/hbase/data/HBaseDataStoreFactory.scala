@@ -17,7 +17,6 @@ import org.apache.hadoop.hbase.HBaseConfiguration
 import org.apache.hadoop.hbase.client.Connection
 import org.apache.hadoop.hbase.security.User
 import org.apache.hadoop.hbase.security.visibility.VisibilityClient
-import org.apache.hadoop.hbase.util.Bytes
 import org.geotools.data.DataAccessFactory.Param
 import org.geotools.data.{DataStore, DataStoreFactorySpi}
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreFactory.HBaseDataStoreConfig
@@ -28,9 +27,6 @@ import org.locationtech.geomesa.security.{AuthorizationsProvider, SecurityParams
 import org.locationtech.geomesa.utils.audit.{AuditLogger, AuditProvider, AuditWriter, NoOpAuditProvider}
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.geotools.GeoMesaParam
-
-import scala.collection.JavaConversions._
-
 
 class HBaseDataStoreFactory extends DataStoreFactorySpi with LazyLogging {
 
@@ -104,6 +100,8 @@ object HBaseDataStoreFactory extends GeoMesaDataStoreInfo with LazyLogging {
 
   import HBaseDataStoreParams._
 
+  import scala.collection.JavaConverters._
+
   val HBaseGeoMesaPrincipal = "hbase.geomesa.principal"
   val HBaseGeoMesaKeyTab    = "hbase.geomesa.keytab"
 
@@ -117,16 +115,17 @@ object HBaseDataStoreFactory extends GeoMesaDataStoreInfo with LazyLogging {
     Array(
       HBaseCatalogParam,
       ZookeeperParam,
-      RemoteFilteringParam,
-      CoprocessorUrlParam,
       ConfigPathsParam,
+      ConfigsParam,
+      CoprocessorUrlParam,
       QueryThreadsParam,
       QueryTimeoutParam,
+      RemoteFilteringParam,
+      EnableSecurityParam,
       GenerateStatsParam,
       AuditQueriesParam,
       LooseBBoxParam,
       CachingParam,
-      EnableSecurityParam,
       AuthsParam,
       ForceEmptyAuthsParam
     )
@@ -134,7 +133,7 @@ object HBaseDataStoreFactory extends GeoMesaDataStoreInfo with LazyLogging {
   private [geomesa] val BigTableParamCheck = "google.bigtable.instance.id"
 
   // check that the hbase-site.xml does not have bigtable keys
-  override def canProcess(params: java.util.Map[java.lang.String,Serializable]): Boolean = {
+  override def canProcess(params: java.util.Map[String, _ <: java.io.Serializable]): Boolean = {
     HBaseCatalogParam.exists(params) &&
         Option(HBaseConfiguration.create().get(BigTableParamCheck)).forall(_.trim.isEmpty)
   }
@@ -162,7 +161,7 @@ object HBaseDataStoreFactory extends GeoMesaDataStoreInfo with LazyLogging {
 
     // master auths is the superset of auths this connector/user can support
     val userName = User.getCurrent.getName
-    val masterAuths = VisibilityClient.getAuths(connection, userName).getAuthList.map(a => Bytes.toString(a.toByteArray))
+    val masterAuths = VisibilityClient.getAuths(connection, userName).getAuthList.asScala.map(_.toStringUtf8)
 
     // get the auth params passed in as a comma-delimited string
     val configuredAuths = AuthsParam.lookupOpt(params).getOrElse("").split(",").filter(s => !s.isEmpty)
@@ -170,30 +169,88 @@ object HBaseDataStoreFactory extends GeoMesaDataStoreInfo with LazyLogging {
     // verify that the configured auths are valid for the connector we are using (fail-fast)
     val invalidAuths = configuredAuths.filterNot(masterAuths.contains)
     if (invalidAuths.nonEmpty) {
-      throw new IllegalArgumentException(s"The authorizations '${invalidAuths.mkString(",")}' " +
-        "are not valid for the HBase user and connection being used")
+      val msg = s"The authorizations '${invalidAuths.mkString("', '")}' are not valid for the HBase user '$userName'"
+      if (masterAuths.isEmpty) {
+        // looking up auths requires a system-level user - likely the user does not have permission
+        logger.warn(s"$msg. This may be due to the user not having permissions" +
+            " to read its own authorizations, in which case this warning can be ignored.")
+      } else {
+        throw new IllegalArgumentException(s"$msg. Available authorizations are: ${masterAuths.mkString(", ")}")
+      }
     }
 
     // if the caller provided any non-null string for authorizations, use it;
-    // otherwise, grab all authorizations to which the Accumulo user is entitled
+    // otherwise, grab all authorizations to which the user is entitled
     if (configuredAuths.length != 0 && forceEmptyAuths) {
       throw new IllegalArgumentException("Forcing empty auths is checked, but explicit auths are provided")
     }
-    val auths: List[String] =
-      if (forceEmptyAuths || configuredAuths.length > 0) configuredAuths.toList
-      else masterAuths.toList
+    val auths = if (forceEmptyAuths || configuredAuths.nonEmpty) { configuredAuths.toList } else { masterAuths.toList }
 
     security.getAuthorizationsProvider(params, auths)
   }
 }
 
 object HBaseDataStoreParams extends GeoMesaDataStoreParams with SecurityParams {
-  val HBaseCatalogParam             = new GeoMesaParam[String]("hbase.catalog", "Catalog table name", optional = false, deprecatedKeys = Seq("bigtable.table.name"))
-  val ConnectionParam               = new GeoMesaParam[Connection]("hbase.connection", "Connection", deprecatedKeys = Seq("connection"))
-  val ZookeeperParam                = new GeoMesaParam[String]("hbase.zookeepers", "List of HBase Zookeeper ensemble servers, comma-separated. Prefer including a valid 'hbase-site.xml' on the classpath over setting this parameter")
-  val CoprocessorUrlParam           = new GeoMesaParam[Path]("hbase.coprocessor.url", "Coprocessor Url", deprecatedKeys = Seq("coprocessor.url"))
-  val RemoteFilteringParam          = new GeoMesaParam[java.lang.Boolean]("hbase.remote.filtering", "Remote filtering", default = true, deprecatedKeys = Seq("remote.filtering"))
-  val MaxRangesPerExtendedScanParam = new GeoMesaParam[java.lang.Integer]("hbase.ranges.max-per-extended-scan", "Max Ranges per Extended Scan", default = 100, deprecatedKeys = Seq("max.ranges.per.extended.scan"))
-  val EnableSecurityParam           = new GeoMesaParam[java.lang.Boolean]("hbase.security.enabled", "Enable HBase Security (Visibilities)", default = false, deprecatedKeys = Seq("security.enabled"))
-  val ConfigPathsParam              = new GeoMesaParam[String]("hbase.config.paths", "Additional HBase configuration resource files (comma-delimited)")
+  val HBaseCatalogParam =
+    new GeoMesaParam[String](
+      "hbase.catalog",
+      "Catalog table name",
+      optional = false,
+      deprecatedKeys = Seq("bigtable.table.name"),
+      supportsNiFiExpressions = true)
+
+  val ConnectionParam =
+    new GeoMesaParam[Connection](
+      "hbase.connection",
+      "Connection",
+      deprecatedKeys = Seq("connection"))
+
+  val ZookeeperParam =
+    new GeoMesaParam[String](
+      "hbase.zookeepers",
+      "List of HBase Zookeeper ensemble servers, comma-separated. " +
+          "Prefer including a valid 'hbase-site.xml' on the classpath over setting this parameter",
+      supportsNiFiExpressions = true)
+
+  val CoprocessorUrlParam =
+    new GeoMesaParam[Path](
+      "hbase.coprocessor.url",
+      "Coprocessor Url",
+      deprecatedKeys = Seq("coprocessor.url"),
+      supportsNiFiExpressions = true)
+
+  val RemoteFilteringParam =
+    new GeoMesaParam[java.lang.Boolean](
+      "hbase.remote.filtering",
+      "Remote filtering",
+      default = true,
+      deprecatedKeys = Seq("remote.filtering"))
+
+  val MaxRangesPerExtendedScanParam =
+    new GeoMesaParam[java.lang.Integer](
+      "hbase.ranges.max-per-extended-scan",
+      "Max Ranges per Extended Scan",
+      default = 100,
+      deprecatedKeys = Seq("max.ranges.per.extended.scan"),
+      supportsNiFiExpressions = true)
+
+  val EnableSecurityParam =
+    new GeoMesaParam[java.lang.Boolean](
+      "hbase.security.enabled",
+      "Enable HBase Security (Visibilities)",
+      default = false,
+      deprecatedKeys = Seq("security.enabled"))
+
+  val ConfigPathsParam =
+    new GeoMesaParam[String](
+      "hbase.config.paths",
+      "Additional HBase configuration resource files (comma-delimited)",
+      supportsNiFiExpressions = true)
+
+  val ConfigsParam =
+    new GeoMesaParam[String](
+      "hbase.config.xml",
+      "Additional HBase configuration properties, as a standard XML `<configuration>` element",
+      largeText = true,
+      supportsNiFiExpressions = true)
 }

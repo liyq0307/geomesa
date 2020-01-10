@@ -15,26 +15,31 @@ import java.nio.charset.StandardCharsets
 import com.datastax.driver.core.Row
 import com.datastax.driver.core.exceptions.AlreadyExistsException
 import com.datastax.driver.core.querybuilder.{QueryBuilder, Select}
-import com.typesafe.scalalogging.StrictLogging
+import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
 import org.locationtech.geomesa.cassandra.ColumnSelect
-import org.locationtech.geomesa.cassandra.data.CassandraIndexAdapter.CassandraIndexWriter
+import org.locationtech.geomesa.cassandra.data.CassandraIndexAdapter.{CassandraIndexWriter, CassandraResultsToFeatures}
 import org.locationtech.geomesa.cassandra.index.CassandraColumnMapper
 import org.locationtech.geomesa.cassandra.index.CassandraColumnMapper.{FeatureIdColumnName, SimpleFeatureColumnName}
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
-import org.locationtech.geomesa.index.api.IndexAdapter.IndexWriter
+import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
+import org.locationtech.geomesa.index.api.QueryPlan.IndexResultsToFeatures
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api._
-import org.locationtech.geomesa.index.planning.LocalQueryRunner
-import org.locationtech.geomesa.index.planning.LocalQueryRunner.ArrowDictionaryHook
-import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.index.planning.LocalQueryRunner.{ArrowDictionaryHook, LocalTransformReducer}
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[CassandraDataStore] with StrictLogging {
 
-  override def createTable(index: GeoMesaFeatureIndex[_, _], table: String, splits: => Seq[Array[Byte]]): Unit = {
+  override val tableNameLimit: Option[Int] = Some(CassandraIndexAdapter.TableNameLimit)
+
+  override def createTable(
+      index: GeoMesaFeatureIndex[_, _],
+      partition: Option[String],
+      splits: => Seq[Array[Byte]]): Unit = {
     val cluster = ds.session.getCluster
+    val table = index.configureTableName(partition, tableNameLimit) // writes metadata for table name
 
     if (cluster.getMetadata.getKeyspace(ds.session.getLoggedKeyspace).getTable(table) == null) {
       val columns = CassandraColumnMapper(index).columns
@@ -48,6 +53,9 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
       }
     }
   }
+
+  override def renameTable(from: String, to: String): Unit =
+    throw new NotImplementedError("Cassandra does not support renaming tables")
 
   override def deleteTables(tables: Seq[String]): Unit = {
     tables.foreach { table =>
@@ -73,40 +81,21 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
 
     val QueryStrategy(filter, _, keyRanges, tieredKeyRanges, ecql, hints, _) = strategy
 
-    if (keyRanges.isEmpty) { EmptyPlan(filter) } else {
-      val ks = ds.session.getLoggedKeyspace
+    val hook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
+    val reducer = Some(new LocalTransformReducer(strategy.index.sft, ecql, None, hints.getTransform, hints, hook))
 
+    if (keyRanges.isEmpty) { EmptyPlan(filter, reducer) } else {
       val mapper = CassandraColumnMapper(strategy.index)
       val ranges = keyRanges.flatMap(mapper.select(_, tieredKeyRanges))
       val tables = strategy.index.getTablesForQuery(filter.filter)
-
+      val ks = ds.session.getLoggedKeyspace
       val statements = tables.flatMap(table => ranges.map(r => CassandraIndexAdapter.statement(ks, table, r.clauses)))
-
-      val serializer = KryoFeatureSerializer(strategy.index.sft, SerializationOptions.builder.`lazy`.withoutId.build)
-      val idSerializer = GeoMesaFeatureIndex.idFromBytes(strategy.index.sft)
-
-      val hook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
-      val transform: CloseableIterator[SimpleFeature] => CloseableIterator[SimpleFeature] =
-        LocalQueryRunner.transform(strategy.index.sft, _, hints.getTransform, hints, hook)
-
-      val rowsToFeatures = (rows: CloseableIterator[Row]) => {
-        val features = rows.map { row =>
-          val fid = {
-            val bytes = row.get(FeatureIdColumnName, classOf[String]).getBytes(StandardCharsets.UTF_8)
-            idSerializer.apply(bytes, 0, bytes.length, null)
-          }
-          val sf = row.getBytes(SimpleFeatureColumnName)
-          val bytes = Array.ofDim[Byte](sf.limit())
-          sf.get(bytes)
-          serializer.deserialize(fid, bytes)
-        }
-        ecql match {
-          case None    => transform(features)
-          case Some(e) => transform(features.filter(e.evaluate))
-        }
-      }
-
-      StatementPlan(filter, tables, statements, ds.config.queryThreads, ecql, rowsToFeatures)
+      val rowsToFeatures = new CassandraResultsToFeatures(strategy.index, strategy.index.sft)
+      val threads = ds.config.queryThreads
+      val sort = hints.getSortFields
+      val max = hints.getMaxFeatures
+      val project = hints.getProjection
+      StatementPlan(filter, tables, statements, threads, ecql, rowsToFeatures, reducer, sort, max, project)
     }
   }
 
@@ -116,31 +105,75 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
     new CassandraIndexWriter(ds, indices, WritableFeature.wrapper(sft, groups), partition)
 }
 
-object CassandraIndexAdapter {
+object CassandraIndexAdapter extends LazyLogging {
+
+  val TableNameLimit = 48
 
   def statement(keyspace: String, table: String, criteria: Seq[ColumnSelect]): Select = {
     val select = QueryBuilder.select.all.from(keyspace, table)
     criteria.foreach { c =>
       if (c.start == null) {
         if (c.end != null) {
-          select.where(QueryBuilder.lt(c.column.name, c.end))
+          if (c.endInclusive) {
+            select.where(QueryBuilder.lte(c.column.name, c.end))
+          } else {
+            select.where(QueryBuilder.lt(c.column.name, c.end))
+          }
         }
       } else if (c.end == null) {
-        select.where(QueryBuilder.gte(c.column.name, c.start))
+        if (c.startInclusive) {
+          select.where(QueryBuilder.gte(c.column.name, c.start))
+        } else {
+          select.where(QueryBuilder.gt(c.column.name, c.start))
+        }
       } else if (c.start == c.end) {
         select.where(QueryBuilder.eq(c.column.name, c.start))
       } else {
-        select.where(QueryBuilder.gte(c.column.name, c.start))
-        select.where(QueryBuilder.lt(c.column.name, c.end))
+        if (c.startInclusive) {
+          select.where(QueryBuilder.gte(c.column.name, c.start))
+        } else {
+          select.where(QueryBuilder.gt(c.column.name, c.start))
+        }
+        if (c.endInclusive) {
+          select.where(QueryBuilder.lte(c.column.name, c.end))
+        } else {
+          select.where(QueryBuilder.lt(c.column.name, c.end))
+        }
       }
     }
     select
   }
 
-  class CassandraIndexWriter(ds: CassandraDataStore,
-                             indices: Seq[GeoMesaFeatureIndex[_, _]],
-                             wrapper: FeatureWrapper,
-                             partition: Option[String]) extends IndexWriter(indices, wrapper) with StrictLogging {
+  class CassandraResultsToFeatures(_index: GeoMesaFeatureIndex[_, _], _sft: SimpleFeatureType)
+      extends IndexResultsToFeatures[Row](_index, _sft) {
+
+    def this() = this(null, null) // no-arg constructor required for serialization
+
+    private var idSerializer: (Array[Byte], Int, Int, SimpleFeature) => String = _
+
+    override def apply(result: Row): SimpleFeature = {
+      val fid = {
+        val bytes = result.get(FeatureIdColumnName, classOf[String]).getBytes(StandardCharsets.UTF_8)
+        idSerializer.apply(bytes, 0, bytes.length, null)
+      }
+      val sf = result.getBytes(SimpleFeatureColumnName)
+      val bytes = Array.ofDim[Byte](sf.limit())
+      sf.get(bytes)
+      serializer.deserialize(fid, bytes)
+    }
+
+    override protected def createSerializer: KryoFeatureSerializer = {
+      idSerializer = GeoMesaFeatureIndex.idFromBytes(index.sft)
+      KryoFeatureSerializer(index.sft, SerializationOptions.builder.`lazy`.withoutId.build)
+    }
+  }
+
+  class CassandraIndexWriter(
+      ds: CassandraDataStore,
+      indices: Seq[GeoMesaFeatureIndex[_, _]],
+      wrapper: FeatureWrapper[WritableFeature],
+      partition: Option[String]
+    ) extends BaseIndexWriter(indices, wrapper) with StrictLogging {
 
     private val mappers = indices.toArray.map { index =>
       val mapper = CassandraColumnMapper(index)
@@ -155,7 +188,7 @@ object CassandraIndexAdapter {
 
     private var i = 0
 
-    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
+    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]], update: Boolean): Unit = {
       i = 0
       while (i < values.length) {
         val (mapper, statement, _) = mappers(i)

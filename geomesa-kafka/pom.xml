@@ -3,7 +3,7 @@
     <parent>
         <artifactId>geomesa_2.11</artifactId>
         <groupId>org.locationtech.geomesa</groupId>
-        <version>2.3.0-SNAPSHOT</version>
+        <version>2.5.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -12,6 +12,7 @@
     <name>GeoMesa Kafka Parent</name>
 
     <modules>
+        <module>geomesa-kafka-confluent</module>
         <module>geomesa-kafka-datastore</module>
         <module>geomesa-kafka-dist</module>
         <module>geomesa-kafka-gs-plugin</module>

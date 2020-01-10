@@ -21,7 +21,7 @@ import org.apache.arrow.memory.{BufferAllocator, RootAllocator}
 import org.apache.hadoop.io.Text
 import org.geotools.data.simple.SimpleFeatureSource
 import org.geotools.data.{DataStoreFinder, DataUtilities, Query, Transaction}
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
 import org.geotools.filter.identity.FeatureIdImpl
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
@@ -63,7 +63,8 @@ class BackCompatibilityTest extends Specification with LazyLogging {
     ("name = 'name5' AND bbox(geom, -130, 45, -120, 50) AND dtg DURING 2015-01-01T00:00:00.000Z/2015-01-01T07:59:59.999Z", Seq(5)),
     ("name = 'name5' AND dtg DURING 2015-01-01T00:00:00.000Z/2015-01-01T07:59:59.999Z", Seq(5)),
     ("name = 'name5' AND bbox(geom, -130, 40, -120, 50)", Seq(5)),
-    ("dtg DURING 2015-01-01T00:00:00.000Z/2015-01-01T07:59:59.999Z", Seq(0, 1, 2, 3, 4, 5, 6, 7))
+    ("dtg DURING 2015-01-01T00:00:00.000Z/2015-01-01T07:59:59.999Z", Seq(0, 1, 2, 3, 4, 5, 6, 7)),
+    ("dtg AFTER 2015-01-01T05:30:00.000Z", Seq(6, 7, 8, 9))
   )
 
   val addQueries = Seq(
@@ -281,6 +282,7 @@ class BackCompatibilityTest extends Specification with LazyLogging {
     // note: data on disk is the same from 1.3.3 through 2.0.0-m.1
     "support backward compatibility to 2.0.0-m.1" >> { testVersion("2.0.0-m.1") }
     "support backward compatibility to 2.1.0"     >> { testVersion("2.1.0") }
+    "support backward compatibility to 2.3.1"     >> { testVersion("2.3.1") }
 
     "delete invalid indexed data" >> { testBoundsDelete() }
   }

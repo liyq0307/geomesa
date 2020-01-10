@@ -50,7 +50,7 @@ object SftArgResolver extends ArgResolver[SimpleFeatureType, SftArgs] with LazyL
     }
   }
 
-  override val parseMethodList: Seq[(SftArgs) => ResEither] = Seq[SftArgs => ResEither](
+  override val parseMethodList: Seq[SftArgs => ResEither] = Seq[SftArgs => ResEither](
     getLoadedSft,
     parseSpecString,
     parseConfStr,
@@ -99,15 +99,24 @@ object SftArgResolver extends ArgResolver[SimpleFeatureType, SftArgs] with LazyL
 
   private [SftArgResolver] def parseConf(input: Reader, name: String): Either[Throwable, SimpleFeatureType] = {
     try {
-      val sfts = SimpleSftParser.parseConf(ConfigFactory.parseReader(input, parseOpts))
-      if (sfts.size > 1) {
-        logger.warn(s"Found more than one SFT conf in input arg")
+      val sfts = ConfigSftParsing.parseConf(ConfigFactory.parseReader(input, parseOpts).resolve())
+      if (sfts.isEmpty) {
+        throw new RuntimeException("No feature types parsed from config string")
       }
-      val sft = sfts.get(0)
-      if (name == null || name == sft.getTypeName) {
-        Right(sft)
+      if (name == null) {
+        if (sfts.lengthCompare(1) > 0) {
+          logger.warn(s"Found more than one SFT conf in input arg")
+        }
+        Right(sfts.head)
       } else {
-        Right(SimpleFeatureTypes.renameSft(sft, name))
+        sfts.find(_.getTypeName == name) match {
+          case Some(sft) => Right(sft)
+          case None =>
+            if (sfts.lengthCompare(1) > 0) {
+              logger.warn("Found more than one SFT conf in input arg")
+            }
+            Right(SimpleFeatureTypes.renameSft(sfts.head, name))
+        }
       }
     } catch {
       case NonFatal(e) => Left(e)
@@ -123,12 +132,17 @@ object SftArgResolver extends ArgResolver[SimpleFeatureType, SftArgs] with LazyL
   // parse spec conf file
   private [SftArgResolver] def parseConfFile(args: SftArgs): ResEither = {
     try {
-      val is = PathUtils.interpretPath(args.spec).headOption.map(_.open).getOrElse {
+      val handle = PathUtils.interpretPath(args.spec).headOption.getOrElse {
         throw new RuntimeException(s"Could not read file at ${args.spec}")
       }
-      WithClose(new InputStreamReader(is, StandardCharsets.UTF_8)) { reader =>
-        parseConf(reader, args.featureName).left.map { e =>
-          (s"Unable to parse sft spec from file '${args.spec}'.", e, PATH)
+      WithClose(handle.open) { streams =>
+        if (streams.hasNext) {
+          val reader = new InputStreamReader(streams.next._2, StandardCharsets.UTF_8)
+          parseConf(reader, args.featureName).left.map { e =>
+            (s"Unable to parse sft spec from file '${args.spec}'.", e, PATH)
+          }
+        } else {
+          throw new RuntimeException(s"Could not read file at ${args.spec}")
         }
       }
     } catch {

@@ -27,6 +27,10 @@ object ByteArrays {
   implicit val ByteOrdering: Ordering[Array[Byte]] =
     Ordering.comparatorToOrdering(UnsignedBytes.lexicographicalComparator)
 
+  implicit val UnsignedByteOrdering: Ordering[Byte] = new Ordering[Byte] {
+    override def compare(x: Byte, y: Byte): Int = UnsignedBytes.compare(x, y)
+  }
+
   /**
     * Writes the short as 2 bytes in the provided array, starting at offset
     *
@@ -198,6 +202,18 @@ object ByteArrays {
   }
 
   /**
+    * Allocates a new array of length four and writes the int to it
+    *
+    * @param int value to encode
+    * @return
+    */
+  def toBytes(int: Int): Array[Byte] = {
+    val result = Array.ofDim[Byte](4)
+    writeInt(int, result)
+    result
+  }
+
+  /**
     * Allocates a new array of length eight and writes the long to it
     *
     * @param long value to encode
@@ -239,6 +255,32 @@ object ByteArrays {
     writeLong(z, result, 2)
     result
   }
+
+  /**
+   * Creates a byte array with a short and a long and an int
+   *
+   * @param bin bin
+   * @param s s value
+   * @param time time offset
+   * @return
+   */
+  def toBytes(bin: Short, s: Long, time: Int): Array[Byte] = {
+    val result = Array.ofDim[Byte](14)
+    writeShort(bin, result)
+    writeLong(s, result, 2)
+    writeInt(time, result, 10)
+    result
+  }
+
+  /**
+   * Creates a byte array with a short and a long and an int
+   *
+   * @param bin bin
+   * @param s s value
+   * @param time time offset
+   * @return
+   */
+  def toBytesFollowingPrefix(bin: Short, s: Long, time: Int): Array[Byte] = incrementInPlace(toBytes(bin, s, time))
 
   /**
     * Creates a byte array with a short and a long, preserving the sort order of the short for negative values

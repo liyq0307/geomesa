@@ -12,20 +12,19 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 import java.util.{Collections, Date}
-import java.{io, util}
 
 import com.typesafe.scalalogging.LazyLogging
 import kafka.admin.AdminUtils
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.geotools.data._
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
 import org.geotools.filter.identity.FeatureIdImpl
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.geometry.jts.JTSFactoryFinder
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.index.metadata.CachedLazyMetadata
+import org.locationtech.geomesa.index.metadata.TableBasedMetadata
 import org.locationtech.geomesa.kafka.EmbeddedKafka
 import org.locationtech.geomesa.kafka.ExpirationMocking.{ScheduledExpiry, WrappedRunnable}
 import org.locationtech.geomesa.kafka.data.KafkaDataStoreFactory.KafkaDataStoreFactoryParams
@@ -94,6 +93,18 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
       factory.canProcess(Map(Brokers.key -> "test", Zookeepers.key -> "test")) must beTrue
     }
 
+    "handle old read-back params" >> {
+      val deprecated = Seq(
+        "autoOffsetReset" -> "earliest",
+        "autoOffsetReset" -> "latest",
+        "kafka.consumer.from-beginning" -> "true",
+        "kafka.consumer.from-beginning" -> "false"
+      )
+      foreach(deprecated) { case (k, v) =>
+        KafkaDataStoreFactoryParams.ConsumerReadBack.lookupOpt(Collections.singletonMap(k, v)) must not(throwAn[Exception])
+      }
+    }
+
     "create unique topics based on zkPath" >> {
       val path = s"geomesa/topics/test/${paths.getAndIncrement()}"
       val ds = getStore(path, 0)
@@ -127,7 +138,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
 
     "allow schemas to be created and deleted" >> {
       foreach(Seq(true, false)) { cqEngine =>
-        CachedLazyMetadata.Expiry.threadLocalValue.set("10ms")
+        TableBasedMetadata.Expiry.threadLocalValue.set("10ms")
         val (producer, consumer, _) = try {
           val params = if (cqEngine) {
             Map("kafka.index.cqengine" -> "geom:default,name:unique")
@@ -136,7 +147,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
           }
           createStorePair("createdelete", params)
         } finally {
-          CachedLazyMetadata.Expiry.threadLocalValue.remove()
+          TableBasedMetadata.Expiry.threadLocalValue.remove()
         }
         consumer must not(beNull)
         producer must not(beNull)
@@ -187,18 +198,14 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
 
           // initial write
           WithClose(producer.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-            Seq(f0, f1).foreach { f =>
-              FeatureUtils.copyToWriter(writer, f, useProvidedFid = true)
-              writer.write()
-            }
+            Seq(f0, f1).foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
           }
           eventually(40, 100.millis)(SelfClosingIterator(store.getFeatures.features).toSeq must containTheSameElementsAs(Seq(f0, f1)))
 
           // update
           val f2 = ScalaSimpleFeature.create(sft, "sm", "smith2", 32, "2017-01-01T00:00:02.000Z", "POINT (2 2)")
           WithClose(producer.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-            FeatureUtils.copyToWriter(writer, f2, useProvidedFid = true)
-            writer.write()
+            FeatureUtils.write(writer, f2, useProvidedFid = true)
           }
           eventually(40, 100.millis)(SelfClosingIterator(store.getFeatures.features).toSeq must containTheSameElementsAs(Seq(f1, f2)))
 
@@ -242,7 +249,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
         val provider = new AuthorizationsProvider() {
           import scala.collection.JavaConversions._
           override def getAuthorizations: java.util.List[String] = auths.toList
-          override def configure(params: util.Map[String, io.Serializable]): Unit = {}
+          override def configure(params: java.util.Map[String, java.io.Serializable]): Unit = {}
         }
         val params = if (cqEngine) {
           Map("kafka.index.cqengine" -> "geom:default,name:unique")
@@ -261,10 +268,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
 
           // initial write
           WithClose(producer.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-            Seq(f0, f1).foreach { f =>
-              FeatureUtils.copyToWriter(writer, f, useProvidedFid = true)
-              writer.write()
-            }
+            Seq(f0, f1).foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
           }
 
           // admin user
@@ -316,10 +320,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
 
           // initial write
           WithClose(producer.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-            Seq(f0, f1).foreach { f =>
-              FeatureUtils.copyToWriter(writer, f, useProvidedFid = true)
-              writer.write()
-            }
+            Seq(f0, f1).foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
           }
           // check the cache directly
           eventually(40, 100.millis)(SelfClosingIterator(store.getFeatures.features).toSeq must
@@ -355,10 +356,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
 
         // initial write
         WithClose(producer.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-          Seq(f0, f1).foreach { f =>
-            FeatureUtils.copyToWriter(writer, f, useProvidedFid = true)
-            writer.write()
-          }
+          Seq(f0, f1).foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
         }
         eventually(40, 100.millis)(SelfClosingIterator(store.getFeatures.features).toSeq must containTheSameElementsAs(Seq(f0, f1)))
 
@@ -367,8 +365,7 @@ class KafkaDataStoreTest extends Specification with Mockito with LazyLogging {
         try {
           // write the third feature
           WithClose(producer2.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
-            FeatureUtils.copyToWriter(writer, f2, useProvidedFid = true)
-            writer.write()
+            FeatureUtils.write(writer, f2, useProvidedFid = true)
           }
           eventually(40, 100.millis)(SelfClosingIterator(store.getFeatures.features).toSeq mustEqual Seq(f2))
         } finally {

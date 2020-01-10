@@ -8,21 +8,21 @@
 
 package org.locationtech.geomesa.accumulo.tools.export
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, StringWriter}
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
+import java.nio.charset.StandardCharsets
 import java.util.Date
 import java.util.zip.Deflater
 
 import org.apache.accumulo.core.client.mock.MockInstance
 import org.apache.accumulo.core.client.security.tokens.PasswordToken
 import org.geotools.data.{DataStoreFinder, Query}
-import org.geotools.factory.Hints
+import org.geotools.util.factory.Hints
 import org.geotools.feature.DefaultFeatureCollection
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloDataStoreParams}
 import org.locationtech.geomesa.features.ScalaSimpleFeatureFactory
 import org.locationtech.geomesa.features.avro.AvroDataFileReader
 import org.locationtech.geomesa.tools.export.formats.{AvroExporter, DelimitedExporter}
-import org.locationtech.geomesa.tools.utils.DataFormats
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.text.WKTUtils
@@ -66,13 +66,13 @@ class FeatureExporterTest extends Specification {
       val query = new Query(sftName, Filter.INCLUDE)
       val features = ds.getFeatureSource(sftName).getFeatures(query)
 
-      val writer = new StringWriter()
-      val export = new DelimitedExporter(writer, DataFormats.Csv, None, true)
+      val os = new ByteArrayOutputStream()
+      val export = DelimitedExporter.csv(os, null, withHeader = true, includeIds = true)
       export.start(features.getSchema)
       export.export(SelfClosingIterator(features.features()))
       export.close()
 
-      val result = writer.toString.split("\r\n")
+      val result = new String(os.toByteArray, StandardCharsets.UTF_8).split("\r\n")
       val (header, data) = (result(0), result(1))
 
       header mustEqual "id,name:String,*geom:Point:srid=4326,dtg:Date"
@@ -83,13 +83,13 @@ class FeatureExporterTest extends Specification {
       val query = new Query(sftName, Filter.INCLUDE, Array("geom", "dtg"))
       val features = ds.getFeatureSource(sftName).getFeatures(query)
 
-      val writer = new StringWriter()
-      val export = new DelimitedExporter(writer, DataFormats.Csv, None, true)
+      val os = new ByteArrayOutputStream()
+      val export = DelimitedExporter.csv(os, null, withHeader = true, includeIds = true)
       export.start(features.getSchema)
       export.export(SelfClosingIterator(features.features()))
       export.close()
 
-      val result = writer.toString.split("\r\n")
+      val result = new String(os.toByteArray, StandardCharsets.UTF_8).split("\r\n")
       val (header, data) = (result(0), result(1))
 
       header mustEqual "id,*geom:Point:srid=4326,dtg:Date"
@@ -100,13 +100,13 @@ class FeatureExporterTest extends Specification {
       val query = new Query(sftName, Filter.INCLUDE, Array("derived=strConcat(name, '-test')", "geom", "dtg"))
       val features = ds.getFeatureSource(sftName).getFeatures(query)
 
-      val writer = new StringWriter()
-      val export = new DelimitedExporter(writer, DataFormats.Csv, None, true)
+      val os = new ByteArrayOutputStream()
+      val export = DelimitedExporter.csv(os, null, withHeader = true, includeIds = true)
       export.start(features.getSchema)
       export.export(SelfClosingIterator(features.features()))
       export.close()
 
-      val result = writer.toString.split("\r\n")
+      val result = new String(os.toByteArray, StandardCharsets.UTF_8).split("\r\n")
       val (header, data) = (result(0), result(1))
 
       header mustEqual "id,derived:String,*geom:Point:srid=4326,dtg:Date"
@@ -117,13 +117,13 @@ class FeatureExporterTest extends Specification {
       val query = new Query(sftName, Filter.INCLUDE, Array("geom", "dtg", "derived=strConcat(name, ',test')"))
       val features = ds.getFeatureSource(sftName).getFeatures(query)
 
-      val writer = new StringWriter()
-      val export = new DelimitedExporter(writer, DataFormats.Csv, None, true)
+      val os = new ByteArrayOutputStream()
+      val export = DelimitedExporter.csv(os, null, withHeader = true, includeIds = true)
       export.start(features.getSchema)
       export.export(SelfClosingIterator(features.features()))
       export.close()
 
-      val result = writer.toString.split("\r\n")
+      val result = new String(os.toByteArray, StandardCharsets.UTF_8).split("\r\n")
       val (header, data) = (result(0), result(1))
 
       header mustEqual "id,*geom:Point:srid=4326,dtg:Date,derived:String"
@@ -140,7 +140,7 @@ class FeatureExporterTest extends Specification {
       val featureCollection = ds.getFeatureSource(sftName).getFeatures(query)
 
       val os = new ByteArrayOutputStream()
-      val export = new AvroExporter(os, Deflater.NO_COMPRESSION)
+      val export = new AvroExporter(os, null, Some(Deflater.NO_COMPRESSION))
       export.start(featureCollection.getSchema)
       export.export(SelfClosingIterator(featureCollection.features()))
       export.close()
