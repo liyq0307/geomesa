@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -315,7 +315,7 @@ class AttributeIndexTest extends Specification with LazyLogging {
 
       ds.getSchema(typeName).getDescriptor("name").getCardinality mustEqual Cardinality.HIGH
 
-      val notNull = ECQL.toFilter("name IS NOT NULL")
+      val notNull = FastFilterFactory.toFilter(sft, "name IS NOT NULL")
       val notNullPlans = ds.getQueryPlan(new Query(typeName, notNull))
       notNullPlans must haveLength(1)
       notNullPlans.head.filter.index must beAnInstanceOf[AttributeIndex]

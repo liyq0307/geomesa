@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -34,6 +34,9 @@ object CloseableIterator {
   def apply[A](iter: Iterator[A], close: => Unit = Unit): CloseableIterator[A] =
     new CloseableIteratorImpl[A](iter, close)
 
+  // for wrapping java iterators
+  def apply[A](iter: java.util.Iterator[A]): CloseableIterator[A] = new CloseableIteratorJavaWrapper[A](iter)
+
   // This apply method provides us with a simple interface for creating new CloseableIterators.
   def apply[A <: Feature, B <: FeatureType](iter: FeatureReader[B, A]): CloseableIterator[A] =
     new CloseableFeatureReaderIterator(iter)
@@ -58,6 +61,12 @@ object CloseableIterator {
     override def hasNext: Boolean = iter.hasNext
     override def next(): A = iter.next()
     override def close(): Unit = closeIter
+  }
+
+  class CloseableIteratorJavaWrapper[A](iter: java.util.Iterator[A]) extends CloseableIterator[A] {
+    override def hasNext: Boolean = iter.hasNext
+    override def next(): A = iter.next()
+    override def close(): Unit = {}
   }
 
   private final class CloseableFeatureReaderIterator[A <: Feature, B <: FeatureType](iter: FeatureReader[B, A])
@@ -150,9 +159,13 @@ trait CloseableIterator[+A] extends Iterator[A] with Closeable {
 
   override def filter(p: A => Boolean): CloseableIterator[A] = new CloseableIteratorImpl(super.filter(p), close())
 
-  override def filterNot(p: A => Boolean): CloseableIterator[A] = new CloseableIteratorImpl(super.filterNot(p), close())
+  override def filterNot(p: A => Boolean): CloseableIterator[A] =
+    new CloseableIteratorImpl(super.filterNot(p), close())
 
   override def take(n: Int): CloseableIterator[A] = new CloseableIteratorImpl(super.take(n), close())
+
+  override def takeWhile(p: A => Boolean): CloseableIterator[A] =
+    new CloseableIteratorImpl(super.takeWhile(p), close())
 
   override def collect[B](pf: PartialFunction[A, B]): CloseableIterator[B] =
     new CloseableIteratorImpl(super.collect(pf), close())

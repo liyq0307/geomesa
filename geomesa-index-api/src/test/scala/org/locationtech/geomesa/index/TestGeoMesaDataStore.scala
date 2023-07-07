@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,6 @@
 
 package org.locationtech.geomesa.index
 
-import com.google.common.primitives.UnsignedBytes
 import org.geotools.data.Query
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
@@ -20,7 +19,7 @@ import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFe
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api.{WritableFeature, _}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
-import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.GeoMesaDataStoreConfig
+import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.{DataStoreQueryConfig, GeoMesaDataStoreConfig}
 import org.locationtech.geomesa.index.metadata.GeoMesaMetadata
 import org.locationtech.geomesa.index.stats.MetadataBackedStats.WritableStat
 import org.locationtech.geomesa.index.stats._
@@ -28,6 +27,7 @@ import org.locationtech.geomesa.index.utils.Reprojection.QueryReferenceSystems
 import org.locationtech.geomesa.index.utils.{Explainer, LocalLocking}
 import org.locationtech.geomesa.utils.audit.{AuditProvider, AuditWriter}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.stats.Stat
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
@@ -128,9 +128,7 @@ object TestGeoMesaDataStore {
 
     override type Results = SimpleFeature
 
-    private val attributes = transform.map { case (tdefs, tsft) =>
-      (tsft, TransformSimpleFeature.attributes(sft, tsft, tdefs))
-    }
+    private val attributes = transform.map { case (tdefs, tsft) => (tsft, Transforms(sft, tdefs).toArray) }
 
     override val resultsToFeatures: ResultsToFeatures[SimpleFeature] =
       ResultsToFeatures.identity(transform.map(_._2).getOrElse(sft))
@@ -170,8 +168,8 @@ object TestGeoMesaDataStore {
 
     override def explain(explainer: Explainer, prefix: String): Unit = {
       explainer(s"ranges (${ranges.length}): ${ranges.take(5).map(r =>
-        s"[${r.start.map(UnsignedBytes.toString).mkString(";")}::" +
-            s"${r.end.map(UnsignedBytes.toString).mkString(";")})").mkString(",")}")
+        s"[${r.start.map(ByteArrays.toHex).mkString(";")}::" +
+            s"${r.end.map(ByteArrays.toHex).mkString(";")})").mkString(",")}")
       explainer(s"ecql: ${ecql.map(org.locationtech.geomesa.filter.filterToString).getOrElse("INCLUDE")}")
     }
   }
@@ -212,9 +210,12 @@ object TestGeoMesaDataStore {
     override val catalog: String = "test"
     override val audit: Option[(AuditWriter, AuditProvider, String)] = None
     override val generateStats: Boolean = true
-    override val queryThreads: Int = 1
-    override val queryTimeout: Option[Long] = None
-    override val caching: Boolean = false
+    override val queries: DataStoreQueryConfig = new DataStoreQueryConfig() {
+      override val threads: Int = 1
+      override val timeout: Option[Long] = None
+      override val caching: Boolean = false
+      override def looseBBox: Boolean = TestConfig.this.looseBBox
+    }
     override val namespace: Option[String] = None
   }
 

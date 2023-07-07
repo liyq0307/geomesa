@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,6 +8,8 @@
 
 package org.locationtech.geomesa.hbase.jobs
 
+import java.util.Base64
+
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.{Configurable, Configuration}
 import org.apache.hadoop.hbase.HBaseConfiguration
@@ -15,7 +17,6 @@ import org.apache.hadoop.hbase.client.{Result, Scan}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapreduce.{MultiTableInputFormat, TableInputFormat}
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil
-import org.apache.hadoop.hbase.util.Base64
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapreduce._
 import org.geotools.data.Query
@@ -99,15 +100,15 @@ object GeoMesaHBaseInputFormat {
     * @param plan query plan
     */
   def configure(conf: Configuration, plan: ScanPlan): Unit = {
-    if (plan.tables.lengthCompare(1) != 0) {
-      throw new IllegalArgumentException(s"Query requires multiple tables: ${plan.tables.mkString(", ")}")
+    if (plan.scans.lengthCompare(1) != 0) {
+      throw new IllegalArgumentException(s"Query requires multiple tables: ${plan.scans.map(_.table).mkString(", ")}")
     }
-    conf.set(TableInputFormat.INPUT_TABLE, plan.tables.head.getNameAsString)
+    conf.set(TableInputFormat.INPUT_TABLE, plan.scans.head.table.getNameAsString)
     // note: secondary filter is handled by scan push-down filter
-    val scans = plan.scans.map { scan =>
+    val scans = plan.scans.head.scans.map { scan =>
       // need to set the table name in each scan
-      scan.setAttribute(Scan.SCAN_ATTRIBUTES_TABLE_NAME, plan.tables.head.getName)
-      Base64.encodeBytes(ProtobufUtil.toScan(scan).toByteArray)
+      scan.setAttribute(Scan.SCAN_ATTRIBUTES_TABLE_NAME, plan.scans.head.table.getName)
+      Base64.getEncoder.encodeToString(ProtobufUtil.toScan(scan).toByteArray)
     }
     conf.setStrings(MultiTableInputFormat.SCANS, scans: _*)
 

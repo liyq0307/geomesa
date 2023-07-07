@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -44,6 +44,8 @@ class LambdaDataStore(val persistence: DataStore,
                      (implicit clock: Clock = Clock.systemUTC())
     extends DataStore with HasGeoMesaStats with LazyLogging {
 
+  import scala.collection.JavaConverters._
+
   private val authProvider: Option[AuthorizationsProvider] = persistence match {
     case ds: AccumuloDataStore => Some(ds.config.authProvider)
     case _ => None
@@ -61,7 +63,7 @@ class LambdaDataStore(val persistence: DataStore,
     case _ => NoopStats
   }
 
-  private val runner = new LambdaQueryRunner(persistence, transients, stats)
+  private val runner = new LambdaQueryRunner(this, persistence, transients)
 
   def persist(typeName: String): Unit = transients.get(typeName).persist()
 
@@ -104,11 +106,12 @@ class LambdaDataStore(val persistence: DataStore,
       // ensure that we've loaded the entire kafka topic
       logger.debug("Update schema: entering quiet period")
       Thread.sleep(SystemProperty("geomesa.lambda.update.quiet.period", "10 seconds").toDuration.get.toMillis)
-      val toPersist = transient.read()
-      if (toPersist.nonEmpty) {
-        logger.debug("Update schema: persisting transient features")
-        WithClose(persistence.getFeatureWriter(typeName, Transaction.AUTO_COMMIT)) { writer =>
-          toPersist.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
+      WithClose(transient.read()) { toPersist =>
+        if (toPersist.nonEmpty) {
+          logger.debug("Update schema: persisting transient features")
+          WithClose(persistence.getFeatureWriter(typeName, Transaction.AUTO_COMMIT)) { writer =>
+            toPersist.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
+          }
         }
       }
     }
@@ -151,8 +154,7 @@ class LambdaDataStore(val persistence: DataStore,
   }
 
   override def dispose(): Unit = {
-    import scala.collection.JavaConversions._
-    transients.asMap().values().foreach(CloseWithLogging.apply)
+    CloseWithLogging(transients.asMap.asScala.values)
     transients.invalidateAll()
     CloseWithLogging(offsetManager)
     CloseWithLogging(producer)
@@ -175,6 +177,5 @@ object LambdaDataStore {
                           partitions: Int,
                           consumers: Int,
                           expiry: Duration,
-                          visibility: Option[String],
                           persist: Boolean)
 }

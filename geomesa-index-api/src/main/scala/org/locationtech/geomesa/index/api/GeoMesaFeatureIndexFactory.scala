@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,9 @@
 
 package org.locationtech.geomesa.index.api
 
-import java.util.ServiceLoader
-
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.DefaultFeatureIndexFactory
+import org.locationtech.geomesa.utils.classpath.ServiceLoader
 import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.EnabledIndices
@@ -54,10 +53,7 @@ trait GeoMesaFeatureIndexFactory {
 
 object GeoMesaFeatureIndexFactory {
 
-  import scala.collection.JavaConverters._
-
-  private val factories =
-    ServiceLoader.load(classOf[GeoMesaFeatureIndexFactory]).asScala.toList :+ DefaultFeatureIndexFactory
+  private val factories = ServiceLoader.load[GeoMesaFeatureIndexFactory]() :+ DefaultFeatureIndexFactory
 
   /**
     * Indices for a feature type, based on user data hints and the schema attributes

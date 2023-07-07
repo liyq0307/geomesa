@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -12,13 +12,13 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.orc.storage.ql.io.sarg.SearchArgument
 import org.apache.orc.{OrcFile, Reader}
-import org.geotools.process.vector.TransformProcess
 import org.locationtech.geomesa.features.serialization.ObjectType
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, TransformSimpleFeature}
 import org.locationtech.geomesa.filter.FilterHelper
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
 import org.locationtech.geomesa.fs.storage.orc.utils.{OrcAttributeReader, OrcSearchArguments}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
@@ -101,7 +101,7 @@ class OrcFileSystemReader(sft: SimpleFeatureType,
 
 object OrcFileSystemReader {
 
-  import scala.collection.JavaConverters._
+  import org.locationtech.geomesa.filter.RichTransform.RichTransform
 
   /**
     * Create low-level reading options used by ORC
@@ -117,9 +117,7 @@ object OrcFileSystemReader {
       transform: Option[(String, SimpleFeatureType)]): OrcReadOptions = {
     val columns = transform.map { case (tdefs, _) =>
       val fromFilter = filter.map(FilterHelper.propertyNames(_, sft)).getOrElse(Seq.empty)
-      val fromTransform = TransformProcess.toDefinition(tdefs).asScala.flatMap { definition =>
-        FilterHelper.propertyNames(definition.expression, sft)
-      }
+      val fromTransform = Transforms(sft, tdefs).flatMap(_.properties)
       (fromFilter ++ fromTransform).toSet[String].map(sft.indexOf)
     }
     // push down will exclude whole record batches, but doesn't actually filter inside a batch
@@ -153,6 +151,7 @@ object OrcFileSystemReader {
             case ObjectType.LINESTRING | ObjectType.MULTIPOINT => 4 // list of x, list of y
             case ObjectType.POLYGON | ObjectType.MULTILINESTRING => 6 // list of list of x, list of list of y
             case ObjectType.MULTIPOLYGON => 8 // list of list of list of x, list of list of list of y
+            case ObjectType.GEOMETRY => 1 // wkb
           }
         case ObjectType.LIST => 2
         case ObjectType.MAP => 3

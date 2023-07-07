@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2019 IBM
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2020 IBM
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -15,11 +15,10 @@ import java.util
 
 import com.datastax.driver.core._
 import com.datastax.driver.core.policies.{DCAwareRoundRobinPolicy, DefaultRetryPolicy, TokenAwarePolicy}
-import com.google.common.collect.ImmutableMap
 import org.geotools.data.DataAccessFactory.Param
 import org.geotools.data.{DataStore, DataStoreFactorySpi, Parameter}
-import org.locationtech.geomesa.cassandra.data.CassandraDataStoreFactory.CassandraDataStoreConfig
-import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.{GeoMesaDataStoreConfig, GeoMesaDataStoreInfo, GeoMesaDataStoreParams}
+import org.locationtech.geomesa.cassandra.data.CassandraDataStoreFactory.{CassandraDataStoreConfig, CassandraQueryConfig}
+import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.{DataStoreQueryConfig, GeoMesaDataStoreConfig, GeoMesaDataStoreInfo, GeoMesaDataStoreParams}
 import org.locationtech.geomesa.utils.audit.{AuditLogger, AuditProvider, AuditWriter, NoOpAuditProvider}
 import org.locationtech.geomesa.utils.geotools.GeoMesaParam
 
@@ -41,7 +40,7 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
           s"expected '<host>:<port>' but got '${parts.mkString(":")}'")
     }
     val port = try { portString.toInt } catch {
-      case NonFatal(e) => throw new IllegalArgumentException(s"Invalid parameter '${ContactPointParam.key}', " +
+      case NonFatal(_) => throw new IllegalArgumentException(s"Invalid parameter '${ContactPointParam.key}', " +
           s"expected '<host>:<port>' but port is not a number: '$cp:$portString'")
     }
     val ks = KeySpaceParam.lookup(params)
@@ -51,7 +50,6 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
     } else {
       None
     }
-    val caching = CachingParam.lookup(params)
 
     val clusterBuilder =
       Cluster.builder()
@@ -85,15 +83,16 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
     val session = cluster.connect(ks)
     val catalog = CatalogParam.lookup(params)
 
-    val looseBBox = LooseBBoxParam.lookup(params)
-
-    // not used but required for config inheritance
-    val queryThreads = QueryThreadsParam.lookup(params)
-    val queryTimeout = QueryTimeoutParam.lookupOpt(params).map(_.toMillis)
+    val queries = CassandraQueryConfig(
+      threads = QueryThreadsParam.lookup(params),
+      timeout = QueryTimeoutParam.lookupOpt(params).map(_.toMillis),
+      looseBBox = LooseBBoxParam.lookup(params),
+      caching = CachingParam.lookup(params)
+    )
 
     val ns = Option(NamespaceParam.lookUp(params).asInstanceOf[String])
 
-    val cfg = CassandraDataStoreConfig(catalog, generateStats, audit, caching, queryThreads, queryTimeout, looseBBox, ns)
+    val cfg = CassandraDataStoreConfig(catalog, generateStats, audit, queries, ns)
 
     new CassandraDataStore(session, cfg)
   }
@@ -105,7 +104,8 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
   override def getDescription: String = CassandraDataStoreFactory.Description
 
   override def getParametersInfo: Array[Param] =
-    CassandraDataStoreFactory.ParameterInfo ++ Array(NamespaceParam, DeprecatedGeoServerPasswordParam)
+    CassandraDataStoreFactory.ParameterInfo ++
+        Array(NamespaceParam, CassandraDataStoreFactory.DeprecatedGeoServerPasswordParam)
 
   override def canProcess(params: java.util.Map[String,Serializable]): Boolean =
     CassandraDataStoreFactory.canProcess(params)
@@ -114,6 +114,18 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
 }
 
 object CassandraDataStoreFactory extends GeoMesaDataStoreInfo {
+
+  import scala.collection.JavaConverters._
+
+  // used to handle geoserver password encryption in persisted ds params
+  private val DeprecatedGeoServerPasswordParam =
+    new Param(
+      "password",
+      classOf[String],
+      "",
+      false,
+      null,
+      Map(Parameter.DEPRECATED -> true, Parameter.IS_PASSWORD -> true).asJava)
 
   override val DisplayName = "Cassandra (GeoMesa)"
   override val Description = "Apache Cassandra\u2122 distributed key/value store"
@@ -178,20 +190,20 @@ object CassandraDataStoreFactory extends GeoMesaDataStoreInfo {
         password = true,
         deprecatedKeys = Seq("geomesa.cassandra.password"),
         supportsNiFiExpressions = true)
-
-    // used to handle geoserver password encryption in persisted ds params
-    val DeprecatedGeoServerPasswordParam =
-      new Param("password", classOf[String], "", false, null, ImmutableMap.of(Parameter.DEPRECATED, true, Parameter.IS_PASSWORD, true))
   }
 
   case class CassandraDataStoreConfig(
       catalog: String,
       generateStats: Boolean,
       audit: Option[(AuditWriter, AuditProvider, String)],
-      caching: Boolean,
-      queryThreads: Int,
-      queryTimeout: Option[Long],
-      looseBBox: Boolean,
+      queries: CassandraQueryConfig,
       namespace: Option[String]
     ) extends GeoMesaDataStoreConfig
+
+  case class CassandraQueryConfig(
+      threads: Int,
+      timeout: Option[Long],
+      looseBBox: Boolean,
+      caching: Boolean
+    ) extends DataStoreQueryConfig
 }

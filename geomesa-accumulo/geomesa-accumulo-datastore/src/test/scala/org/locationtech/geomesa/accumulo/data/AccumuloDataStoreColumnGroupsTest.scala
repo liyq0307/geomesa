@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,36 +13,34 @@ import java.nio.charset.StandardCharsets
 import java.util.Date
 
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine}
-import org.apache.arrow.memory.RootAllocator
 import org.geotools.data._
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.filter.visitor.ExtractBoundsFilterVisitor
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.referencing.crs.DefaultGeographicCRS
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.TestWithDataStore
+import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.accumulo.data.AccumuloQueryPlan.{BatchScanPlan, JoinPlan}
 import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.index.conf.QueryHints.{BIN_BATCH_SIZE, BIN_TRACK}
 import org.locationtech.geomesa.index.conf.{ColumnGroups, QueryHints}
 import org.locationtech.geomesa.index.iterators.{DensityScan, StatsScan}
-import org.locationtech.geomesa.index.planning.{QueryPlanner, Transforms}
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.EncodedValues
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
+import org.locationtech.geomesa.utils.geotools.{SimpleFeatureTypes, Transform}
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.stats.{MinMax, Stat}
 import org.locationtech.jts.geom.{Envelope, Point}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
-import org.opengis.filter.expression.Expression
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
-class AccumuloDataStoreColumnGroupsTest extends Specification with TestWithDataStore {
+class AccumuloDataStoreColumnGroupsTest extends Specification with TestWithFeatureType {
 
   import scala.collection.JavaConverters._
 
@@ -57,10 +55,11 @@ class AccumuloDataStoreColumnGroupsTest extends Specification with TestWithDataS
   }
 
   val transformCache = Caffeine.newBuilder().build(
-    new CacheLoader[Array[String], (SimpleFeatureType, Seq[Expression])]() {
-      override def load(transform: Array[String]): (SimpleFeatureType, Seq[Expression]) = {
-        val (tdefs, tsft) = QueryPlanner.buildTransformSFT(sft, transform)
-        (tsft, Transforms.definitions(tdefs).map(_.expression))
+    new CacheLoader[Array[String], (SimpleFeatureType, Seq[Transform])]() {
+      override def load(transform: Array[String]): (SimpleFeatureType, Seq[Transform]) = {
+        val definitions = Transforms.apply(sft, transform)
+        val schema = Transforms.schema(sft, definitions)
+        (schema, definitions)
       }
     }
   )
@@ -254,18 +253,16 @@ class AccumuloDataStoreColumnGroupsTest extends Specification with TestWithDataS
       val out = new ByteArrayOutputStream
       arrows.foreach(sf => out.write(sf.getAttribute(0).asInstanceOf[Array[Byte]]))
       def in() = new ByteArrayInputStream(out.toByteArray)
-      WithClose(new RootAllocator(Long.MaxValue)) { allocator =>
-        WithClose(SimpleFeatureArrowFileReader.streaming(in)(allocator)) { reader =>
-          val results = SelfClosingIterator(reader.features()).map { f =>
-            // round the points, as precision is lost due to the arrow encoding
-            val attributes = f.getAttributes.asScala.collect {
-              case p: Point => s"POINT (${Math.round(p.getX * 10) / 10d} ${Math.round(p.getY * 10) / 10d})"
-              case a => a
-            }
-            ScalaSimpleFeature.create(f.getFeatureType, f.getID, attributes: _*)
-          }.toList
-          results must containTheSameElementsAs((4 to 8).toFeatures(query.getPropertyNames))
-        }
+      WithClose(SimpleFeatureArrowFileReader.streaming(in)) { reader =>
+        val results = SelfClosingIterator(reader.features()).map { f =>
+          // round the points, as precision is lost due to the arrow encoding
+          val attributes = f.getAttributes.asScala.collect {
+            case p: Point => s"POINT (${Math.round(p.getX * 10) / 10d} ${Math.round(p.getY * 10) / 10d})"
+            case a => a
+          }
+          ScalaSimpleFeature.create(f.getFeatureType, f.getID, attributes: _*)
+        }.toList
+        results must containTheSameElementsAs((4 to 8).toFeatures(query.getPropertyNames))
       }
     }
     "work with bin queries" in {

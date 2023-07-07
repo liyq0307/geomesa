@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -32,9 +32,6 @@ class TopK[T] private [stats] (
   def this(sft: SimpleFeatureType, property: String) = this(sft, property, StreamSummary[T](TopK.StreamCapacity))
 
   override type S = TopK[T]
-
-  @deprecated("property")
-  lazy val attribute: Int = i
 
   private val i = sft.indexOf(property)
 

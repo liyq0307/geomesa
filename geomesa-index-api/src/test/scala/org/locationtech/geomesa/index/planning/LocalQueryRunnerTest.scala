@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -85,16 +85,15 @@ class LocalQueryRunnerTest extends Specification {
     }
 
     "query for arrow" in {
-      import org.locationtech.geomesa.arrow.allocator
-
       val q = new Query("memory", Filter.INCLUDE, Array("name", "dtg", "geom"))
       val expected = runner.runQuery(sft, q).map(ScalaSimpleFeature.copy).toSeq.sortBy(_.getAttribute("dtg").asInstanceOf[Date])
       q.getHints.put(QueryHints.ARROW_ENCODE, java.lang.Boolean.TRUE)
       q.getHints.put(QueryHints.ARROW_SORT_FIELD, "dtg")
       q.getHints.put(QueryHints.ARROW_DICTIONARY_FIELDS, "name")
       // note: need to copy the features as the same object is re-used in the iterator
-      val iter = runner.runQuery(sft, q)
-      val bytes = iter.map(_.getAttribute(0).asInstanceOf[Array[Byte]]).reduceLeftOption(_ ++ _).getOrElse(Array.empty[Byte])
+      val bytes = WithClose(runner.runQuery(sft, q)) { iter =>
+        iter.map(_.getAttribute(0).asInstanceOf[Array[Byte]]).reduceLeftOption(_ ++ _).getOrElse(Array.empty[Byte])
+      }
       WithClose(SimpleFeatureArrowFileReader.streaming(() => new ByteArrayInputStream(bytes))) { reader =>
         SelfClosingIterator(reader.features()).map(ScalaSimpleFeature.copy).toSeq mustEqual expected
       }

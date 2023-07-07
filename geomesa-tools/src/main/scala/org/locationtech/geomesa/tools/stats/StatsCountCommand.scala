@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -32,12 +32,18 @@ trait StatsCountCommand[DS <: DataStore with HasGeoMesaStats] extends DataStoreC
 
     if (params.exact) {
       Command.user.info("Running stat query...")
+      val count = ds.stats.getCount(sft, filter, params.exact).map(_.toString).getOrElse("Unknown")
+      Command.output.info(s"Count: $count")
+    } else {
+      ds.stats.getCount(sft, filter, params.exact).map(_.toString) match {
+        case None =>
+          Command.output.info("Estimated count: Unknown")
+          Command.output.info("Re-run with --no-cache to get an exact count")
+
+        case Some(count) =>
+          Command.output.info(s"Estimated count: $count")
+      }
     }
-
-    val count = ds.stats.getCount(sft, filter, params.exact).map(_.toString).getOrElse("Unknown")
-
-    val label = if (params.exact) "Count" else "Estimated count"
-    Command.output.info(s"$label: $count")
   }
 }
 

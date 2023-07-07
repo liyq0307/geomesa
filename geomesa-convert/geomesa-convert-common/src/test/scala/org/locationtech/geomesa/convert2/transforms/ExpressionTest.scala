@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,6 @@
 
 package org.locationtech.geomesa.convert2.transforms
 
-import java.lang.ClassCastException
 import java.time.format.DateTimeFormatter
 import java.time.{LocalDateTime, ZoneOffset}
 import java.util.Date
@@ -18,6 +17,7 @@ import org.apache.commons.codec.binary.Base64
 import org.geotools.util.Converters
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.convert.EvaluationContext
+import org.locationtech.geomesa.convert2.transforms.Expression.{FunctionExpression, Literal}
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom._
 import org.specs2.mutable.Specification
@@ -170,6 +170,7 @@ class ExpressionTest extends Specification {
         exp.eval(Array("", 1D)) mustEqual 1
         exp.eval(Array("", 1F)) mustEqual 1
         exp.eval(Array("", 1L)) mustEqual 1
+        exp.eval(Array("", null)) must throwA[NullPointerException]
       }
     }
     "cast to long" >> {
@@ -180,6 +181,7 @@ class ExpressionTest extends Specification {
       exp.eval(Array("", 1D)) mustEqual 1L
       exp.eval(Array("", 1F)) mustEqual 1L
       exp.eval(Array("", 1L)) mustEqual 1L
+      exp.eval(Array("", null)) must throwA[NullPointerException]
     }
     "cast to float" >> {
       val exp = Expression("$1::float")
@@ -189,6 +191,7 @@ class ExpressionTest extends Specification {
       exp.eval(Array("", 1D)) mustEqual 1F
       exp.eval(Array("", 1F)) mustEqual 1F
       exp.eval(Array("", 1L)) mustEqual 1F
+      exp.eval(Array("", null)) must throwA[NullPointerException]
     }
     "cast to double" >> {
       val exp = Expression("$1::double")
@@ -198,18 +201,21 @@ class ExpressionTest extends Specification {
       exp.eval(Array("", 1D)) mustEqual 1D
       exp.eval(Array("", 1F)) mustEqual 1D
       exp.eval(Array("", 1L)) mustEqual 1D
+      exp.eval(Array("", null)) must throwA[NullPointerException]
     }
     "cast to boolean" >> {
       foreach(Seq("bool", "boolean")) { cast =>
         val exp = Expression(s"$$1::$cast")
         exp.eval(Array("", "true")) mustEqual true
         exp.eval(Array("", "false")) mustEqual false
+        exp.eval(Array("", null)) must throwA[NullPointerException]
       }
     }
     "cast to string" >> {
       val exp = Expression("$1::string")
       exp.eval(Array("", "1")) mustEqual "1"
       exp.eval(Array("", 1)) mustEqual "1"
+      exp.eval(Array("", null)) must throwA[NullPointerException]
     }
     "parse dates with custom format" >> {
       val exp = Expression("date('yyyyMMdd', $1)")
@@ -225,17 +231,17 @@ class ExpressionTest extends Specification {
         exp.eval(Array("", "2015-01-01T00:00:00.000Z")).asInstanceOf[Date] must be equalTo testDate
       }
     }
-    "parse isodate" >> {
-      val exp = Expression("isodate($1)")
-      exp.eval(Array("", "20150101")).asInstanceOf[Date] must be equalTo testDate
+    "parse isoDate" >> {
+      val exp = Expression("isoDate($1)")
+      exp.eval(Array("", "2015-01-01")).asInstanceOf[Date] must be equalTo testDate
     }
     "parse basicDate" >> {
       val exp = Expression("basicDate($1)")
       exp.eval(Array("", "20150101")).asInstanceOf[Date] must be equalTo testDate
     }
-    "parse isodatetime" >> {
-      val exp = Expression("isodatetime($1)")
-      exp.eval(Array("", "20150101T000000.000Z")).asInstanceOf[Date] must be equalTo testDate
+    "parse isoDateTime" >> {
+      val exp = Expression("isoDateTime($1)")
+      exp.eval(Array("", "2015-01-01T00:00:00")).asInstanceOf[Date] must be equalTo testDate
     }
     "parse basicDateTime" >> {
       val exp = Expression("basicDateTime($1)")
@@ -263,9 +269,9 @@ class ExpressionTest extends Specification {
       val input = Array[Any]("", null)
       val expressions = Seq(
         "date('yyyy-MM-dd\\'T\\'HH:mm:ss.SSSSSS', $1)",
-        "isodate($1)",
+        "isoDate($1)",
         "basicDate($1)",
-        "isodatetime($1)",
+        "isoDateTime($1)",
         "basicDateTime($1)",
         "dateTime($1)",
         "basicDateTimeNoMillis($1)",
@@ -467,6 +473,13 @@ class ExpressionTest extends Specification {
       val exp = Expression("capitalize($foo)")
       exp.eval(Array(null))(ctx) must be equalTo "Bar"
     }
+    "handle named values with spaces and dots" >> {
+      val ctx = EvaluationContext(Seq(null, "foo.bar", "foo bar"))
+      ctx.set(1, "baz")
+      ctx.set(2, "blu")
+      Expression("${foo.bar}").eval(Array(null))(ctx) must be equalTo "baz"
+      Expression("${foo bar}").eval(Array(null))(ctx) must be equalTo "blu"
+    }
     "handle exceptions to casting" >> {
       val exp = Expression("try($1::int, 0)")
       exp.eval(Array("", "1")).asInstanceOf[Int] mustEqual 1
@@ -574,6 +587,13 @@ class ExpressionTest extends Specification {
       buf.asInstanceOf[Polygon].getCentroid.getY must beCloseTo(1, 0.0001)
       // note: area is not particularly close as there aren't very many points in the polygon
       buf.asInstanceOf[Polygon].getArea must beCloseTo(math.Pi * 4.0, 0.2)
+    }
+    "pass literals through to cql functions" >> {
+      val exp = Expression("cql:intersects(geometry('POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))'), $1)")
+      exp must beAnInstanceOf[FunctionExpression]
+      exp.asInstanceOf[FunctionExpression].arguments.headOption must beSome(beAnInstanceOf[Literal[_]])
+      exp.eval(Array(null, "POINT(27.8 31.1)")) mustEqual true
+      exp.eval(Array(null, "POINT(1 1)")) mustEqual false
     }
     "convert stringToDouble zero default" >> {
       val exp = Expression("stringToDouble($1, 0.0)")

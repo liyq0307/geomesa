@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -29,7 +29,7 @@ class IndexPackageObjectTest extends Specification {
       origSFT.setDtgField("dtg")
 
       val query = new Query(sftName, Filter.INCLUDE, Array("name", "helloName=strConcat('hello', name)", "geom"))
-      QueryPlanner.setQueryTransforms(query, origSFT)
+      QueryPlanner.setQueryTransforms(origSFT, query)
 
       val transform = query.getHints.getTransformSchema
       transform must beSome

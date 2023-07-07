@@ -28,6 +28,12 @@ Common Properties
 These properties apply to all GeoMesa implementations. Additional properties for different back-end
 databases can be found in the chapters for each one.
 
+geomesa.arrow.format.version
+++++++++++++++++++++++++++++
+
+Sets the IPC format version for Arrow-encoded responses. This is expected to be a valid Arrow version,
+i.e. ``0.16`` or ``0.10``. The Arrow IPC format changed slightly starting with version ``0.15``.
+
 geomesa.audit.provider.impl
 +++++++++++++++++++++++++++
 
@@ -93,6 +99,16 @@ comparison. This property controls the threshold for switching to a hash lookup.
 
 Note that for datastores with distributed filtering (e.g. HBase and Accumulo), this property needs to be set
 on the distributed processing nodes.
+
+geomesa.filter.remote.cache.expiry
+++++++++++++++++++++++++++++++++++
+
+This property controls how long query filters will be cached in memory in remote processes (i.e. HBase region servers
+and Accumulo tablet servers). For repeated queries, caching the filter can improve query times. However, complex
+filters can require a substantial amount of memory overhead. The expiry is specified as a duration, e.g.
+``10 minutes`` or ``1 hour``. The default is ``10 minutes``.
+
+Note that to take effect, the property must be set on each region or tablet server.
 
 geomesa.force.count
 +++++++++++++++++++
@@ -222,6 +238,26 @@ This property provides a rough upper-limit for the number of row ranges that wil
 query. It is specified as a number. In general, more ranges will result in fewer false-positive rows being
 scanned, which will speed up most queries. However, too many ranges can take a long time to generate, and
 overwhelm clients, causing slowdowns. The optimal value depends on the environment.
+
+geomesa.serializer.cache.expiry
++++++++++++++++++++++++++++++++
+
+This property controls how long simple feature serializers will be cached in memory. Lowering this value may
+reduce the memory footprint of your application, at the cost of increased processing time. The expiry is specified
+as a duration, e.g. ``10 minutes`` or ``1 hour``. The default is ``1 hour``.
+
+geomesa.sort.memory.threshold
++++++++++++++++++++++++++++++
+
+This property can be used to constrain the memory used to sort result sets. GeoMesa sorts results in the client
+process memory, since the supported back-end databases don't offer native ordering. To avoid having large
+result sets exceed the client memory capacity, a memory threshold can be set. Once the size of a result set
+exceeds this threshold, additional results will be written to disk and sorted there. Note that the actual memory
+used may exceed the threshold, as the memory footprint calculation is an estimation. The threshold is specified
+as a number of bytes, e.g. ``10MB`` or ``1GB``. The default is to always sort in memory.
+
+Note that distributed Arrow queries will never use disk to sort, due to the nature of Arrow result batches. For
+supported back-ends, sorting on disk for Arrow queries can be achieved by disabling remote Arrow processing.
 
 geomesa.sft.config.urls
 +++++++++++++++++++++++

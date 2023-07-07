@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -14,6 +14,7 @@ import java.util.{Date, Locale}
 
 import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.transforms.DateFunctionFactory.{CustomFormatDateParser, DateToString, StandardDateParser}
+import org.locationtech.geomesa.convert2.transforms.Expression.LiteralString
 import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
 import org.locationtech.geomesa.utils.text.DateParsing
 
@@ -24,8 +25,9 @@ class DateFunctionFactory extends TransformerFunctionFactory {
   import java.time.{ZoneOffset, ZonedDateTime}
 
   override def functions: Seq[TransformerFunction] =
-    Seq(now, customFormatDateParser, datetime, basicDateTimeNoMillis, basicIsoDate, basicIsoDateTime, isoLocalDate,
-      isoLocalDateTime, isoOffsetDateTime, dateHourMinuteSecondMillis, millisToDate, secsToDate, dateToString)
+    Seq(now, customFormatDateParser, datetime, basicDateTimeNoMillis, basicIsoDate, basicDateTime, isoDate,
+      isoLocalDate, isoLocalDateTime, isoOffsetDateTime, isoDateTime, dateHourMinuteSecondMillis,
+      millisToDate, secsToDate, dateToString)
 
   private val now = TransformerFunction("now") { _ =>
     Date.from(ZonedDateTime.now(ZoneOffset.UTC).toInstant)
@@ -69,13 +71,14 @@ class DateFunctionFactory extends TransformerFunctionFactory {
           .withZone(ZoneOffset.UTC)
   }
 
-  // TODO https://geomesa.atlassian.net/browse/GEOMESA-2326 update 'isodate' alias
-  // even though this parser is aliased to 'isodate', it doesn't correspond with 'DateTimeFormatter.ISO_DATE',
-  // which is '2011-12-03' or '2011-12-03+01:00'
-
   // yyyyMMdd
-  private val basicIsoDate = new StandardDateParser(Seq("basicIsoDate", "basicDate", "isodate")) {
+  private val basicIsoDate = new StandardDateParser(Seq("basicIsoDate", "basicDate")) {
     override val format: DateTimeFormatter = DateTimeFormatter.BASIC_ISO_DATE.withZone(ZoneOffset.UTC)
+  }
+
+  // yyyy-MM-dd
+  private val isoDate = new StandardDateParser(Seq("isoDate")) {
+    override val format: DateTimeFormatter = DateTimeFormatter.ISO_DATE.withZone(ZoneOffset.UTC)
   }
 
   // yyyy-MM-dd
@@ -93,11 +96,13 @@ class DateFunctionFactory extends TransformerFunctionFactory {
     override val format: DateTimeFormatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneOffset.UTC)
   }
 
-  // TODO even though it is aliased to 'isodatetime', it doesn't correspond with 'DateTimeFormatter.ISO_DATE_TIME',
-  // which is '2011-12-03T10:15:30', '2011-12-03T10:15:30+01:00' or '2011-12-03T10:15:30+01:00[Europe/Paris]'
+  // yyyy-MM-dd'T'HH:mm:ss
+  private val isoDateTime = new StandardDateParser(Seq("isoDateTime")) {
+    override val format: DateTimeFormatter = DateTimeFormatter.ISO_DATE_TIME.withZone(ZoneOffset.UTC)
+  }
 
   // yyyyMMdd'T'HHmmss.SSSZ
-  private val basicIsoDateTime = new StandardDateParser(Seq("basicDateTime", "isodatetime")) {
+  private val basicDateTime = new StandardDateParser(Seq("basicDateTime")) {
     override val format: DateTimeFormatter =
       new DateTimeFormatterBuilder()
           .parseCaseInsensitive()
@@ -152,9 +157,9 @@ class DateFunctionFactory extends TransformerFunctionFactory {
             .withZone(ZoneOffset.UTC)
     }
 
-  private val customFormatDateParser = new CustomFormatDateParser()
+  private val customFormatDateParser = new CustomFormatDateParser(null)
 
-  private val dateToString = new DateToString()
+  private val dateToString = new DateToString(null)
 }
 
 object DateFunctionFactory {
@@ -170,16 +175,17 @@ object DateFunctionFactory {
     }
   }
 
-  class CustomFormatDateParser extends NamedTransformerFunction(Seq("date"), pure = true) {
+  class CustomFormatDateParser(format: DateTimeFormatter) extends NamedTransformerFunction(Seq("date"), pure = true) {
 
-    private var format: DateTimeFormatter = _
-
-    override def getInstance: CustomFormatDateParser = new CustomFormatDateParser()
+    override def getInstance(args: List[Expression]): CustomFormatDateParser = {
+      val format = args match {
+        case LiteralString(s) :: _ => DateTimeFormatter.ofPattern(s).withZone(ZoneOffset.UTC)
+        case _ => throw new IllegalArgumentException(s"Expected date pattern but got: ${args.headOption.orNull}")
+      }
+      new CustomFormatDateParser(format)
+    }
 
     override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
-      if (format == null) {
-        format = DateTimeFormatter.ofPattern(args(0).asInstanceOf[String]).withZone(ZoneOffset.UTC)
-      }
       args(1) match {
         case null => null
         case d: String => DateParsing.parseDate(d, format)
@@ -188,17 +194,17 @@ object DateFunctionFactory {
     }
   }
 
-  class DateToString extends NamedTransformerFunction(Seq("dateToString"), pure = true) {
+  class DateToString(format: DateTimeFormatter) extends NamedTransformerFunction(Seq("dateToString"), pure = true) {
 
-    private var format: DateTimeFormatter = _
-
-    override def getInstance: DateToString = new DateToString()
-
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
-      if (format == null) {
-        format = DateTimeFormatter.ofPattern(args(0).asInstanceOf[String]).withZone(ZoneOffset.UTC)
+    override def getInstance(args: List[Expression]): DateToString = {
+      val format = args match {
+        case LiteralString(s) :: _ => DateTimeFormatter.ofPattern(s).withZone(ZoneOffset.UTC)
+        case _ => throw new IllegalArgumentException(s"Expected date pattern but got: ${args.headOption.orNull}")
       }
-      DateParsing.formatDate(args(1).asInstanceOf[java.util.Date], format)
+      new DateToString(format)
     }
+
+    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any =
+      DateParsing.formatDate(args(1).asInstanceOf[java.util.Date], format)
   }
 }

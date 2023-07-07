@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,6 +16,7 @@ import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFeatures}
+import org.locationtech.geomesa.index.iterators.StatsScan.StatResult
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.geotools.{GeometryUtils, SimpleFeatureTypes}
@@ -24,43 +25,25 @@ import org.locationtech.geomesa.utils.stats.{Stat, StatSerializer}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
-import scala.util.control.NonFatal
-
-trait StatsScan extends AggregatingScan[Stat] with LazyLogging {
+trait StatsScan extends AggregatingScan[StatResult] with LazyLogging {
 
   import org.locationtech.geomesa.index.iterators.StatsScan.Configuration._
 
-  private var serializer: StatSerializer = _
-  private var batchSize: Int = -1
-  private var count: Int = -1
-
-  override protected def initResult(
+  override protected def createResult(
       sft: SimpleFeatureType,
       transform: Option[SimpleFeatureType],
-      options: Map[String, String]): Stat = {
-    val finalSft = transform.getOrElse(sft)
-    serializer = StatSerializer(finalSft)
-    count = 0
-    batchSize = StatsScan.BatchSize.toInt.get // has a valid default so should be safe to .get
-    Stat(finalSft, options(STATS_STRING_KEY))
+      batchSize: Int,
+      options: Map[String, String]): StatResult = {
+    new StatResult(transform.getOrElse(sft), options(STATS_STRING_KEY))
   }
 
-  override protected def aggregateResult(sf: SimpleFeature, result: Stat): Unit = {
-    try { result.observe(sf) } catch {
-      case NonFatal(e) => logger.warn(s"Error observing feature $sf", e)
-    }
-    count += 1
-  }
-
-  override protected def notFull(result: Stat): Boolean = if (count < batchSize) { true } else { count = 0; false }
-
-  // encode the result as a byte array
-  override protected def encodeResult(result: Stat): Array[Byte] = serializer.serialize(result)
+  override protected def defaultBatchSize: Int =
+    StatsScan.BatchSize.toInt.get // has a valid default so should be safe to .get
 }
 
 object StatsScan {
 
-  val BatchSize = SystemProperty("geomesa.stats.batch.size", "100000")
+  val BatchSize: SystemProperty = SystemProperty("geomesa.stats.batch.size", "10000")
 
   val StatsSft: SimpleFeatureType = SimpleFeatureTypes.createType("stats:stats", "stats:String,geom:Geometry")
 
@@ -75,7 +58,8 @@ object StatsScan {
                 hints: Hints): Map[String, String] = {
     import Configuration.STATS_STRING_KEY
     import org.locationtech.geomesa.index.conf.QueryHints.{RichHints, STATS_STRING}
-    AggregatingScan.configure(sft, index, filter, hints.getTransform, hints.getSampling) ++
+    val batchSize = StatsScan.BatchSize.toInt.get // has a valid default so should be safe to .get
+    AggregatingScan.configure(sft, index, filter, hints.getTransform, hints.getSampling, batchSize) ++
       Map(STATS_STRING_KEY -> hints.get(STATS_STRING).asInstanceOf[String])
   }
 
@@ -99,6 +83,29 @@ object StatsScan {
   def decodeStat(sft: SimpleFeatureType): String => Stat = {
     val serializer = StatSerializer(sft)
     encoded => serializer.deserialize(Base64.decodeBase64(encoded))
+  }
+
+  /**
+   * Result wrapper for stats
+   *
+   * @param sft simple feature type
+   * @param definition stat string
+   */
+  class StatResult(sft: SimpleFeatureType, definition: String) extends AggregatingScan.Result {
+
+    private val stat = Stat(sft, definition)
+    private val serializer = StatSerializer(sft)
+
+    override def init(): Unit = {}
+
+    override def aggregate(sf: SimpleFeature): Int = {
+      stat.observe(sf)
+      1
+    }
+
+    override def encode(): Array[Byte] = try { serializer.serialize(stat) } finally { stat.clear() }
+
+    override def cleanup(): Unit = {}
   }
 
   /**

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -73,7 +73,7 @@ trait LocalLocking extends DistributedLocking {
     Releasable(lock)
   }
 
-  protected def acquireDistributedLock(key: String, timeOut: Long): Option[Releasable] = {
+  override protected def acquireDistributedLock(key: String, timeOut: Long): Option[Releasable] = {
     val lock = locks.synchronized(locks.getOrElseUpdate(key, new ReentrantLock()))
     if (lock.tryLock(timeOut, TimeUnit.MILLISECONDS)) { Some(Releasable(lock)) } else { None }
   }

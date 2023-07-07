@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -39,14 +39,6 @@ abstract class AbstractCompositeConverter[T](
   override def createEvaluationContext(globalParams: Map[String, Any]): EvaluationContext =
     new CompositeEvaluationContext(converters.map(_.createEvaluationContext(globalParams)))
 
-  // noinspection ScalaDeprecation
-  override def createEvaluationContext(
-      globalParams: Map[String, Any],
-      caches: Map[String, EnrichmentCache],
-      counter: org.locationtech.geomesa.convert.Counter): EvaluationContext = {
-    new CompositeEvaluationContext(converters.map(_.createEvaluationContext(globalParams, caches, counter)))
-  }
-
   override def process(is: InputStream, ec: EvaluationContext): CloseableIterator[SimpleFeature] = {
     val cec = ec match {
       case c: CompositeEvaluationContext => c
@@ -81,7 +73,7 @@ abstract class AbstractCompositeConverter[T](
     new ErrorHandlingIterator(parse(is, ec), errorMode, ec.failure, hist).flatMap(eval)
   }
 
-  override def close(): Unit = converters.foreach(CloseWithLogging.apply)
+  override def close(): Unit = CloseWithLogging(converters)
 }
 
 object AbstractCompositeConverter {
@@ -100,7 +92,5 @@ object AbstractCompositeConverter {
     override def metrics: ConverterMetrics = current.metrics
     override def success: Counter = current.success
     override def failure: Counter = current.failure
-    // noinspection ScalaDeprecation
-    override def counter: org.locationtech.geomesa.convert.Counter = current.counter
   }
 }

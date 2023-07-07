@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -45,9 +45,6 @@ object KryoFeatureSerializer {
 
   val Version3: Byte = 3
   val Version2: Byte = 2
-
-  @deprecated("Version2/3")
-  lazy val VERSION: Int = Version3
 
   val NullByte: Byte    = 0.asInstanceOf[Byte]
   val NonNullByte: Byte = 1.asInstanceOf[Byte]

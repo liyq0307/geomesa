@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -40,7 +40,7 @@ trait TransformerFunction {
     *
     * @return
     */
-  def getInstance: TransformerFunction = this
+  def getInstance(args: List[Expression]): TransformerFunction = this
 
   /**
     * Is the a 'pure' function? Pure functions a) given the same inputs, always return the same result, and
@@ -60,10 +60,6 @@ object TransformerFunction {
 
   lazy val functions: Map[String, TransformerFunction] = {
     val map = Map.newBuilder[String, TransformerFunction]
-    // noinspection ScalaDeprecation
-    ServiceLoader.load(classOf[org.locationtech.geomesa.convert.TransformerFunctionFactory]).asScala.foreach { factory =>
-      factory.functions.foreach(f => f.names.foreach(n => map += n -> f))
-    }
     ServiceLoader.load(classOf[TransformerFunctionFactory]).asScala.foreach { factory =>
       factory.functions.foreach(f => f.names.foreach(n => map += n -> f))
     }

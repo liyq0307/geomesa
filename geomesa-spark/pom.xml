@@ -3,7 +3,7 @@
     <parent>
         <artifactId>geomesa_2.11</artifactId>
         <groupId>org.locationtech.geomesa</groupId>
-        <version>2.5.0-SNAPSHOT</version>
+        <version>3.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -14,7 +14,6 @@
     <modules>
         <module>geomesa-spark-converter</module>
         <module>geomesa-spark-core</module>
-        <module>geomesa-spark-geotools</module>
         <module>geomesa-spark-jts</module>
         <module>geomesa-spark-sql</module>
         <module>geomesa_pyspark</module>

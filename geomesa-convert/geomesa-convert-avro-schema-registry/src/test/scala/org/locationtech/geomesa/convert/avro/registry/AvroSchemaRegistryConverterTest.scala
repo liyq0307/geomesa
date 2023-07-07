@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -103,9 +103,9 @@ class AvroSchemaRegistryConverterTest extends Specification with AvroSchemaRegis
           sf.getAttribute("extra") must beNull
           sf1.getAttribute("extra") must be equalTo "TEST"
 
-          ec.counter.getFailure mustEqual 0L
-          ec.counter.getSuccess mustEqual 3L
-          ec.counter.getLineCount mustEqual 3L
+          ec.failure.getCount mustEqual 0L
+          ec.success.getCount mustEqual 3L
+          ec.line mustEqual 3L
         }
       } finally {
         jetty.stop()

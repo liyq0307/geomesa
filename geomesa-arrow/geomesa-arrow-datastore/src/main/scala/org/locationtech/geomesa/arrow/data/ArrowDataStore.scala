@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,12 +16,13 @@ import org.geotools.data.simple.SimpleFeatureSource
 import org.geotools.data.store.{ContentDataStore, ContentEntry, ContentFeatureSource}
 import org.geotools.feature.NameImpl
 import org.geotools.util.URLs
-import org.locationtech.geomesa.arrow.io.{SimpleFeatureArrowFileReader, SimpleFeatureArrowFileWriter}
+import org.locationtech.geomesa.arrow.io.{FormatVersion, SimpleFeatureArrowFileReader, SimpleFeatureArrowFileWriter}
 import org.locationtech.geomesa.arrow.vector.ArrowDictionary
+import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, HasGeoMesaMetadata}
 import org.locationtech.geomesa.index.stats.RunnableStats.UnoptimizedRunnableStats
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, HasGeoMesaStats}
-import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.geomesa.utils.io.{CloseWithLogging, WithClose}
 import org.opengis.feature.`type`.Name
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
@@ -32,12 +33,12 @@ import scala.util.control.NonFatal
 class ArrowDataStore(val url: URL, caching: Boolean) extends ContentDataStore with FileDataStore
     with HasGeoMesaMetadata[String] with HasGeoMesaStats {
 
-  import org.locationtech.geomesa.arrow.allocator
-
   private var initialized = false
 
   // note: to avoid cache issues, don't allow writing if caching is enabled
   private lazy val writable = !caching && Try(createOutputStream()).map(_.close()).isSuccess
+
+  private lazy val ipcOpts = FormatVersion.options(FormatVersion.ArrowFormatVersion.get)
 
   private lazy val reader: SimpleFeatureArrowFileReader = {
     initialized = true
@@ -71,9 +72,9 @@ class ArrowDataStore(val url: URL, caching: Boolean) extends ContentDataStore wi
       throw new IllegalArgumentException("Can't write to the provided URL, or caching is enabled")
     }
     WithClose(createOutputStream(false)) { os =>
-      WithClose(SimpleFeatureArrowFileWriter(sft, os)) { writer =>
-        // just write the schema/metadata
-        writer.start()
+      WithClose(SimpleFeatureArrowFileWriter(os, sft, Map.empty, SimpleFeatureEncoding.Max, ipcOpts, None)) { writer =>
+        // write an empty batch to write out the schema/metadata
+        writer.flush()
       }
     }
   }
@@ -81,7 +82,7 @@ class ArrowDataStore(val url: URL, caching: Boolean) extends ContentDataStore wi
   override def dispose(): Unit = {
     // avoid instantiating the lazy reader if it hasn't actually been used
     if (initialized) {
-      reader.close()
+      CloseWithLogging(reader)
     }
   }
 

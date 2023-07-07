@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -61,12 +61,7 @@ trait KerberosParams {
   var keytab: String = _
 }
 
-trait RequiredCredentialsParams extends PasswordParams {
-  @Parameter(names = Array("-u", "--user"), description = "Connection user name", required = true)
-  var user: String = _
-}
-
-trait OptionalCredentialsParams extends PasswordParams {
+trait CredentialsParams extends PasswordParams {
   @Parameter(names = Array("-u", "--user"), description = "Connection user name")
   var user: String = _
 }
@@ -167,7 +162,11 @@ object IndexParam {
     val sft = ds.getSchema(typeName)
     val indices = ds.manager.indices(sft, mode)
 
-    lazy val available = indices.flatMap(i => Seq(i.name, i.identifier)).distinct.mkString(", ")
+    lazy val available = {
+      val names = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+      indices.foreach(i => names.put(i.name, names(i.name) + 1))
+      (indices.map(_.identifier) ++ names.collect { case (n, 1) => n }).distinct.sorted.mkString(", ")
+    }
 
     def single(indices: Seq[GeoMesaFeatureIndex[_, _]]): Option[GeoMesaFeatureIndex[_, _]] = indices match {
       case Nil => None

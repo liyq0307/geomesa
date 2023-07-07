@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -11,6 +11,7 @@ package org.locationtech.geomesa.index.view
 import com.typesafe.scalalogging.LazyLogging
 import org.geotools.data.{DataStore, FeatureReader, Query, Transaction}
 import org.geotools.util.factory.Hints
+import org.locationtech.geomesa.arrow.io.FormatVersion
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
 import org.locationtech.geomesa.index.conf.QueryHints
@@ -19,7 +20,9 @@ import org.locationtech.geomesa.index.geoserver.ViewParams
 import org.locationtech.geomesa.index.iterators.{ArrowScan, DensityScan, StatsScan}
 import org.locationtech.geomesa.index.planning.QueryInterceptor.QueryInterceptorFactory
 import org.locationtech.geomesa.index.planning.{LocalQueryRunner, QueryPlanner, QueryRunner}
+import org.locationtech.geomesa.index.stats.HasGeoMesaStats
 import org.locationtech.geomesa.index.utils.Explainer
+import org.locationtech.geomesa.index.view.MergedQueryRunner.Queryable
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.collection.{CloseableIterator, SelfClosingIterator}
 import org.locationtech.geomesa.utils.geotools.{SimpleFeatureOrdering, SimpleFeatureTypes}
@@ -34,7 +37,7 @@ import org.opengis.filter.Filter
   * @param ds merged data store
   * @param stores delegate stores
   */
-class MergedQueryRunner(ds: MergedDataStoreView, stores: Seq[(DataStore, Option[Filter])])
+class MergedQueryRunner(ds: HasGeoMesaStats, stores: Seq[(Queryable, Option[Filter])])
     extends QueryRunner with LazyLogging {
 
   import org.locationtech.geomesa.index.conf.QueryHints.RichHints
@@ -42,7 +45,10 @@ class MergedQueryRunner(ds: MergedDataStoreView, stores: Seq[(DataStore, Option[
   // query interceptors are handled by the individual data stores
   override protected val interceptors: QueryInterceptorFactory = QueryInterceptorFactory.empty()
 
-  override def runQuery(sft: SimpleFeatureType, original: Query, explain: Explainer): CloseableIterator[SimpleFeature] = {
+  override def runQuery(
+      sft: SimpleFeatureType,
+      original: Query,
+      explain: Explainer): CloseableIterator[SimpleFeature] = {
 
     val query = configureQuery(sft, original)
     val hints = query.getHints
@@ -76,12 +82,7 @@ class MergedQueryRunner(ds: MergedDataStoreView, stores: Seq[(DataStore, Option[
         Option(query.getSortBy).filterNot(_.isEmpty) match {
           case None => SelfClosingIterator(readers.iterator).flatMap(SelfClosingIterator(_))
           case Some(sort) =>
-            val sortSft = {
-              val copy = new Query(query)
-              copy.setHints(new Hints(hints))
-              QueryPlanner.setQueryTransforms(copy, sft)
-              copy.getHints.getTransformSchema.getOrElse(sft)
-            }
+            val sortSft = QueryPlanner.extractQueryTransforms(sft, query).map(_._1).getOrElse(sft)
             // the delegate stores should sort their results, so we can sort merge them
             new SortedMergeIterator(readers.map(SelfClosingIterator(_)))(SimpleFeatureOrdering(sortSft, sort))
         }
@@ -119,16 +120,11 @@ class MergedQueryRunner(ds: MergedDataStoreView, stores: Seq[(DataStore, Option[
     // handle any sorting here
     QueryPlanner.setQuerySort(sft, query)
 
-    val arrowSft = {
-      // determine transforms but don't modify the original query and hints
-      val copy = new Query(query)
-      copy.setHints(new Hints(hints))
-      QueryPlanner.setQueryTransforms(copy, sft)
-      copy.getHints.getTransformSchema.getOrElse(sft)
-    }
+    val arrowSft = QueryPlanner.extractQueryTransforms(sft, query).map(_._1).getOrElse(sft)
     val sort = hints.getArrowSort
     val batchSize = ArrowScan.getBatchSize(hints)
     val encoding = SimpleFeatureEncoding.min(hints.isArrowIncludeFid, hints.isArrowProxyFid)
+    val ipcOpts = FormatVersion.options(hints.getArrowFormatVersion.getOrElse(FormatVersion.ArrowFormatVersion.get))
 
     val dictionaryFields = hints.getArrowDictionaryFields
     val providedDictionaries = hints.getArrowDictionaryEncodedValues(sft)
@@ -148,11 +144,11 @@ class MergedQueryRunner(ds: MergedDataStoreView, stores: Seq[(DataStore, Option[
         providedDictionaries, cachedDictionaries)
       // set the merged dictionaries in the query where they'll be picked up by our delegates
       hints.setArrowDictionaryEncodedValues(dictionaries.map { case (k, v) => (k, v.iterator.toSeq) })
-      new ArrowScan.BatchReducer(arrowSft, dictionaries, encoding, batchSize, sort)
+      new ArrowScan.BatchReducer(arrowSft, dictionaries, encoding, ipcOpts, batchSize, sort, sorted = false)
     } else if (hints.isArrowMultiFile) {
-      new ArrowScan.FileReducer(arrowSft, dictionaryFields, encoding, sort)
+      new ArrowScan.FileReducer(arrowSft, dictionaryFields, encoding, ipcOpts, sort)
     } else {
-      new ArrowScan.DeltaReducer(arrowSft, dictionaryFields, encoding, batchSize, sort)
+      new ArrowScan.DeltaReducer(arrowSft, dictionaryFields, encoding, ipcOpts, batchSize, sort, sorted = false)
     }
 
     // now that we have standardized dictionaries, we can query the delegate stores
@@ -241,5 +237,17 @@ class MergedQueryRunner(ds: MergedDataStoreView, stores: Seq[(DataStore, Option[
     } else {
       super.getReturnSft(sft, hints)
     }
+  }
+}
+
+object MergedQueryRunner {
+
+  trait Queryable {
+    def getFeatureReader(q: Query, t: Transaction): FeatureReader[SimpleFeatureType, SimpleFeature]
+  }
+
+  case class DataStoreQueryable(ds: DataStore) extends Queryable {
+    override def getFeatureReader(q: Query, t: Transaction): FeatureReader[SimpleFeatureType, SimpleFeature] =
+      ds.getFeatureReader(q, t)
   }
 }

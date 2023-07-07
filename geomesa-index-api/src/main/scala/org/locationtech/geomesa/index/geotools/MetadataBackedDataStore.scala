@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -45,7 +45,7 @@ abstract class MetadataBackedDataStore(config: NamespaceConfig) extends DataStor
   // TODO: GEOMESA-2360 - Remove global axis order hint from MetadataBackedDataStore
   Hints.putSystemDefault(Hints.FORCE_LONGITUDE_FIRST_AXIS_ORDER, true)
 
-  protected [geomesa] val interceptors = QueryInterceptorFactory(this)
+  protected [geomesa] val interceptors: QueryInterceptorFactory = QueryInterceptorFactory(this)
 
   // hooks to allow extended functionality
 

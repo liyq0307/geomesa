@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,7 +13,6 @@ import java.util.Locale
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.accumulo.core.client._
-import org.apache.accumulo.core.client.admin.TableOperations
 import org.apache.accumulo.core.iterators.SortedKeyValueIterator
 import org.apache.accumulo.core.security.Authorizations
 import org.apache.hadoop.security.UserGroupInformation
@@ -21,22 +20,19 @@ import org.geotools.data.Query
 import org.locationtech.geomesa.accumulo._
 import org.locationtech.geomesa.accumulo.audit.AccumuloAuditService
 import org.locationtech.geomesa.accumulo.data.AccumuloBackedMetadata.SingleRowAccumuloMetadata
-import org.locationtech.geomesa.accumulo.data.AccumuloDataStore.AccumuloDataStoreConfig
+import org.locationtech.geomesa.accumulo.data.AccumuloDataStoreFactory.AccumuloDataStoreConfig
 import org.locationtech.geomesa.accumulo.data.stats._
 import org.locationtech.geomesa.accumulo.index._
 import org.locationtech.geomesa.accumulo.iterators.{AgeOffIterator, DtgAgeOffIterator, ProjectVersionIterator}
-import org.locationtech.geomesa.accumulo.util.ZookeeperLocking
+import org.locationtech.geomesa.accumulo.util.TableUtils
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
-import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.GeoMesaDataStoreConfig
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index}
 import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, MetadataStringSerializer}
 import org.locationtech.geomesa.index.utils.Explainer
-import org.locationtech.geomesa.security.AuthorizationsProvider
-import org.locationtech.geomesa.utils.audit.{AuditProvider, AuditReader, AuditWriter}
 import org.locationtech.geomesa.utils.conf.FeatureExpiration.{FeatureTimeExpiration, IngestTimeExpiration}
 import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
@@ -44,9 +40,9 @@ import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.AttributeOptions
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.OverrideDtgJoin
 import org.locationtech.geomesa.utils.index.{GeoMesaSchemaValidator, IndexMode, VisibilityLevel}
-import org.locationtech.geomesa.utils.io.HadoopUtils.logger
 import org.locationtech.geomesa.utils.io.{CloseQuietly, HadoopUtils, WithClose}
 import org.locationtech.geomesa.utils.stats.{IndexCoverage, Stat}
+import org.locationtech.geomesa.utils.zk.ZookeeperLocking
 import org.opengis.feature.simple.SimpleFeatureType
 
 import scala.util.control.NonFatal
@@ -69,7 +65,9 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
 
   override val adapter: AccumuloIndexAdapter = new AccumuloIndexAdapter(this)
 
-  override val stats = AccumuloGeoMesaStats(this)
+  override val stats: AccumuloGeoMesaStats = AccumuloGeoMesaStats(this)
+
+  override protected def zookeepers: String = connector.getInstance.getZooKeepers
 
   // If on a secured cluster, create a thread to periodically renew Kerberos tgt
   private val kerberosTgtRenewer = {
@@ -87,9 +85,6 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
     * @return
     */
   def auths: Authorizations = new Authorizations(config.authProvider.getAuthorizations.asScala: _*)
-
-  @deprecated("Use connector.tableOperations()")
-  lazy val tableOps: TableOperations = connector.tableOperations()
 
   override def delete(): Unit = {
     // note: don't delete the query audit table
@@ -167,7 +162,7 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
       case -1 => ""
       case i  => config.catalog.substring(0, i)
     }
-    AccumuloVersion.createNamespaceIfNeeded(connector, namespace)
+    TableUtils.createNamespaceIfNeeded(connector, namespace)
     val canLoad = connector.namespaceOperations().testClassLoad(namespace,
       classOf[ProjectVersionIterator].getName, classOf[SortedKeyValueIterator[_, _]].getName)
 
@@ -303,15 +298,12 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
           sft.getUserData.put(AccumuloDataStore.DeprecatedSchemaVersionKey,
             metadata.readRequired(typeName, GeoMesaMetadata.VersionKey))
 
-          // If no data is written, we default to 'false' in order to support old tables.
+          // if no data is written, we default to 'false' in order to support old tables
           if (metadata.read(typeName, "tables.sharing").exists(_.toBoolean)) {
-            sft.setTableSharing(true)
+            sft.getUserData.put(SimpleFeatureTypes.Configs.TableSharing, "true")
             // use schema id if available or fall back to old type name for backwards compatibility
             val prefix = metadata.read(typeName, "id").getOrElse(s"${sft.getTypeName}~")
-            sft.setTableSharingPrefix(prefix)
-          } else {
-            sft.setTableSharing(false)
-            sft.setTableSharingPrefix("")
+            sft.getUserData.put(SimpleFeatureTypes.InternalConfigs.TableSharingPrefix, prefix)
           }
           SimpleFeatureTypes.Configs.ENABLED_INDEX_OPTS.foreach { i =>
             metadata.read(typeName, i).foreach(e => sft.getUserData.put(SimpleFeatureTypes.Configs.EnabledIndices, e))
@@ -356,6 +348,9 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
   override def dispose(): Unit = {
     super.dispose()
     CloseQuietly(kerberosTgtRenewer)
+    try { AccumuloVersion.close(connector) } catch {
+      case NonFatal(e) => logger.warn("Error closing Accumulo client:", e)
+    }
   }
 }
 
@@ -363,37 +358,7 @@ object AccumuloDataStore extends LazyLogging {
 
   import scala.collection.JavaConverters._
 
-  @deprecated
-  val DeprecatedSchemaVersionKey = "geomesa.version"
-
-  /**
-    * Configuration options for AccumuloDataStore
-    *
-    * @param catalog table in Accumulo used to store feature type metadata
-    * @param defaultVisibilities default visibilities applied to any data written
-    * @param generateStats write stats on data during ingest
-    * @param authProvider provides the authorizations used to access data
-    * @param audit optional implementations to audit queries
-    * @param queryTimeout optional timeout (in millis) before a long-running query will be terminated
-    * @param looseBBox sacrifice some precision for speed
-    * @param caching cache feature results - WARNING can use large amounts of memory
-    * @param writeThreads numer of threads used for writing
-    * @param queryThreads number of threads used per-query
-    * @param recordThreads number of threads used to join against the record table. Because record scans
-    *                      are single-row ranges, increasing this too much can cause performance to decrease
-    */
-  case class AccumuloDataStoreConfig(catalog: String,
-                                     defaultVisibilities: String,
-                                     generateStats: Boolean,
-                                     authProvider: AuthorizationsProvider,
-                                     audit: Option[(AuditWriter with AuditReader, AuditProvider, String)],
-                                     queryTimeout: Option[Long],
-                                     looseBBox: Boolean,
-                                     caching: Boolean,
-                                     writeThreads: Int,
-                                     queryThreads: Int,
-                                     recordThreads: Int,
-                                     namespace: Option[String]) extends GeoMesaDataStoreConfig
+  private val DeprecatedSchemaVersionKey = "geomesa.version"
 
   /**
     * Converts the old 'index schema' into the appropriate index identifiers
@@ -430,6 +395,7 @@ object AccumuloDataStore extends LazyLogging {
     // note: 10 was the last valid value for CURRENT_SCHEMA_VERSION, which is no longer used except
     // to transition old schemas from the 1.2.5 era
     val version = {
+      // noinspection ScalaDeprecation
       val string = sft.getUserData.remove(DeprecatedSchemaVersionKey).asInstanceOf[String]
       if (string != null) { string.toInt } else { 10 }
     }
@@ -450,6 +416,7 @@ object AccumuloDataStore extends LazyLogging {
           s"GeoMesa 1.2.6 to update you data to a newer format. For more information, see $docs")
     }
 
+    // noinspection ScalaDeprecation
     SimpleFeatureTypes.Configs.ENABLED_INDEX_OPTS.map(sft.getUserData.get).find(_ != null) match {
       case None => indices
       case Some(enabled) =>

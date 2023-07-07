@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -142,7 +142,7 @@ class ConverterRecordReader extends FileStreamRecordReader with LazyLogging {
       new DelegateSimpleFeatureReader(sft, new DelegateSimpleFeatureIterator(iter.asJava))
     }
 
-    logger.info(s"Initialized record reader on split ${filePath.toString} with " +
+    logger.debug(s"Initialized record reader on split ${filePath.toString} with " +
       s"type name ${sft.getTypeName} and convert conf $confStr")
 
     new Iterator[SimpleFeature] with Closeable {

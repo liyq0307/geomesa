@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,7 @@
 
 package org.locationtech.geomesa.index.geotools
 
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
 import org.geotools.data.Query
 import org.geotools.data.simple.SimpleFeatureReader
@@ -17,8 +17,6 @@ import org.locationtech.geomesa.index.audit.QueryEvent
 import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 import org.locationtech.geomesa.index.geoserver.ViewParams
 import org.locationtech.geomesa.index.planning.QueryRunner
-import org.locationtech.geomesa.index.utils.ThreadManagement
-import org.locationtech.geomesa.index.utils.ThreadManagement.ManagedQuery
 import org.locationtech.geomesa.utils.audit.{AuditProvider, AuditWriter}
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.collection.CloseableIterator
@@ -26,11 +24,10 @@ import org.locationtech.geomesa.utils.stats.{MethodProfiling, Timings, TimingsIm
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 class GeoMesaFeatureReader private (sft: SimpleFeatureType, qp: QueryRunner, query: Query, timeout: Option[Long])
-    extends SimpleFeatureReader with ManagedQuery {
+    extends SimpleFeatureReader {
 
   private val closed = new AtomicBoolean(false)
   private val iter = runQuery()
-  private val cancel = timeout.map(_ => ThreadManagement.register(this))
 
   override def hasNext: Boolean = iter.hasNext
 
@@ -38,24 +35,15 @@ class GeoMesaFeatureReader private (sft: SimpleFeatureType, qp: QueryRunner, que
 
   override def getFeatureType: SimpleFeatureType = query.getHints.getReturnSft
 
-  override def getTimeout: Long = timeout.getOrElse(-1L)
-
-  override def isClosed: Boolean = closed.get()
-
   override def close(): Unit = {
     if (closed.compareAndSet(false, true)) {
-      try { closeOnce() } finally {
-        cancel.foreach(_.cancel(false))
-      }
+      closeOnce()
     }
   }
 
   protected def runQuery(): CloseableIterator[SimpleFeature] = qp.runQuery(sft, query)
 
   protected def closeOnce(): Unit = iter.close()
-
-  override def debug: String =
-    s"query on schema '${query.getTypeName}' with filter '${filterToString(query.getFilter)}'"
 }
 
 object GeoMesaFeatureReader {
@@ -86,7 +74,7 @@ object GeoMesaFeatureReader {
       timings: Timings = new TimingsImpl
     ) extends GeoMesaFeatureReader(sft, qp, query, timeout) with MethodProfiling {
 
-    private var count = 0L
+    private val count = new AtomicLong(0L)
 
     override def hasNext: Boolean = profile(time => timings.occurrence("hasNext", time))(super.hasNext)
     override def next(): SimpleFeature = profile(time => timings.occurrence("next", time))(super.next())
@@ -99,9 +87,9 @@ object GeoMesaFeatureReader {
           // bin queries pack multiple records into each feature
           // to count the records, we have to count the total bytes coming back, instead of the number of features
           val bytesPerHit = if (query.getHints.getBinLabelField.isDefined) { 24 } else { 16 }
-          base.map { sf => count += sf.getAttribute(0).asInstanceOf[Array[Byte]].length / bytesPerHit; sf }
+          base.map { sf => count.addAndGet(sf.getAttribute(0).asInstanceOf[Array[Byte]].length / bytesPerHit); sf }
         } else {
-          base.map { sf => count += 1; sf }
+          base.map { sf => count.incrementAndGet(); sf }
         }
       }
     }
@@ -117,7 +105,7 @@ object GeoMesaFeatureReader {
           ViewParams.getReadableHints(query),
           timings.time("planning"),
           timings.time("next") + timings.time("hasNext"),
-          count
+          count.get
         )
         auditWriter.writeEvent(stat) // note: implementations should be asynchronous
       }

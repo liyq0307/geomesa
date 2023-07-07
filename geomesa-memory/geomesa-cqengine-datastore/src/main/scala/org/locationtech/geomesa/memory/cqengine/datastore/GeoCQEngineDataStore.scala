@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -23,7 +23,7 @@ import scala.collection.JavaConversions._
 
 class GeoCQEngineDataStore(useGeoIndex: Boolean) extends ContentDataStore with LazyLogging {
 
-  logger.info(s"useGeoIndex=$useGeoIndex")
+  logger.debug(s"useGeoIndex=$useGeoIndex")
 
   val namesToEngine = new java.util.concurrent.ConcurrentHashMap[String, GeoCQEngine]()
 

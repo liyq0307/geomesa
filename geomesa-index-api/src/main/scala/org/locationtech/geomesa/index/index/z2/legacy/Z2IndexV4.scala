@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -65,7 +65,7 @@ object Z2IndexV4 {
       if (geom == null) {
         throw new IllegalArgumentException(s"Null geometry in feature ${writable.feature.getID}")
       }
-      val z = try { sfc.index(geom.getX, geom.getY, lenient).z } catch {
+      val z = try { sfc.index(geom.getX, geom.getY, lenient) } catch {
         case NonFatal(e) => throw new IllegalArgumentException(s"Invalid z value from geometry: $geom", e)
       }
       val shard = sharding(writable)

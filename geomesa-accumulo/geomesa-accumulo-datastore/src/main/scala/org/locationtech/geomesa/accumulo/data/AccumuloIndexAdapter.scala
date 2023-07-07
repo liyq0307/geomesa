@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -17,7 +17,6 @@ import org.apache.accumulo.core.data.{Key, Mutation, Range, Value}
 import org.apache.accumulo.core.file.keyfunctor.RowFunctor
 import org.apache.accumulo.core.security.ColumnVisibility
 import org.apache.hadoop.io.Text
-import org.locationtech.geomesa.accumulo.AccumuloVersion
 import org.locationtech.geomesa.accumulo.data.AccumuloIndexAdapter.{AccumuloIndexWriter, AccumuloResultsToFeatures, ZIterPriority}
 import org.locationtech.geomesa.accumulo.data.AccumuloQueryPlan.{BatchScanPlan, EmptyPlan}
 import org.locationtech.geomesa.accumulo.index.{AccumuloJoinIndex, JoinIndex}
@@ -26,12 +25,12 @@ import org.locationtech.geomesa.accumulo.iterators.BinAggregatingIterator.Accumu
 import org.locationtech.geomesa.accumulo.iterators.DensityIterator.AccumuloDensityResultsToFeatures
 import org.locationtech.geomesa.accumulo.iterators.StatsIterator.AccumuloStatsResultsToFeatures
 import org.locationtech.geomesa.accumulo.iterators._
-import org.locationtech.geomesa.accumulo.util.GeoMesaBatchWriterConfig
+import org.locationtech.geomesa.accumulo.util.{GeoMesaBatchWriterConfig, TableUtils}
 import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
 import org.locationtech.geomesa.index.api.QueryPlan.IndexResultsToFeatures
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api._
-import org.locationtech.geomesa.index.conf.ColumnGroups
+import org.locationtech.geomesa.index.conf.{ColumnGroups, QueryHints}
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.index.s2.{S2Index, S2IndexValues}
@@ -39,6 +38,7 @@ import org.locationtech.geomesa.index.index.s3.{S3Index, S3IndexValues}
 import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index, Z2IndexValues}
 import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index, Z3IndexValues}
 import org.locationtech.geomesa.index.iterators.StatsScan
+import org.locationtech.geomesa.index.planning.LocalQueryRunner.{ArrowDictionaryHook, LocalTransformReducer}
 import org.locationtech.geomesa.security.SecurityUtils
 import org.locationtech.geomesa.utils.index.VisibilityLevel
 import org.locationtech.geomesa.utils.io.WithClose
@@ -64,12 +64,7 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
       splits: => Seq[Array[Byte]]): Unit = {
     val table = index.configureTableName(partition) // writes table name to metadata
     // create table if it doesn't exist
-    val created = if (ds.connector.isInstanceOf[org.apache.accumulo.core.client.mock.MockConnector]) {
-      // we need to synchronize creation of tables in mock accumulo as it's not thread safe
-      ds.connector.synchronized(AccumuloVersion.createTableIfNeeded(ds.connector, table, index.sft.isLogicalTime))
-    } else {
-      AccumuloVersion.createTableIfNeeded(ds.connector, table, index.sft.isLogicalTime)
-    }
+    val created = TableUtils.createTableIfNeeded(ds.connector, table, index.sft.isLogicalTime)
 
     // even if the table existed, we still need to check the splits and locality groups if its shared
     if (created || index.keySpace.sharing.nonEmpty) {
@@ -113,26 +108,14 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
 
   override def renameTable(from: String, to: String): Unit = {
     if (tableOps.exists(from)) {
-      // noinspection ScalaDeprecation
-      if (ds.connector.isInstanceOf[org.apache.accumulo.core.client.mock.MockConnector]) {
-        // we need to synchronize renaming tables in mock accumulo as it's not thread safe
-        ds.connector.synchronized(tableOps.rename(from, to))
-      } else {
-        tableOps.rename(from, to)
-      }
+      tableOps.rename(from, to)
     }
   }
 
   override def deleteTables(tables: Seq[String]): Unit = {
     tables.par.foreach { table =>
       if (tableOps.exists(table)) {
-        // noinspection ScalaDeprecation
-        if (ds.connector.isInstanceOf[org.apache.accumulo.core.client.mock.MockConnector]) {
-          // we need to synchronize deleting of tables in mock accumulo as it's not thread safe
-          ds.connector.synchronized(tableOps.delete(table))
-        } else {
-          tableOps.delete(table)
-        }
+        tableOps.delete(table)
       }
     }
   }
@@ -142,7 +125,7 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
     tables.par.foreach { table =>
       if (tableOps.exists(table)) {
         val config = GeoMesaBatchWriterConfig().setMaxWriteThreads(ds.config.writeThreads)
-        WithClose(ds.connector.createBatchDeleter(table, auths, ds.config.queryThreads, config)) { deleter =>
+        WithClose(ds.connector.createBatchDeleter(table, auths, ds.config.queries.threads, config)) { deleter =>
           val range = prefix.map(p => Range.prefix(new Text(p))).getOrElse(new Range())
           deleter.setRanges(Collections.singletonList(range))
           deleter.delete()
@@ -167,11 +150,19 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
       case SingleRowByteRange(row) =>
         new Range(new Text(row))
     }
-    val numThreads = if (index.name == IdIndex.name) { ds.config.recordThreads } else { ds.config.queryThreads }
+    val numThreads = if (index.name == IdIndex.name) { ds.config.queries.recordThreads } else { ds.config.queries.threads }
     val tables = index.getTablesForQuery(filter.filter)
     val (colFamily, schema) = {
       val (cf, s) = groups.group(index.sft, hints.getTransformDefinition, ecql)
       (Some(new Text(AccumuloIndexAdapter.mapColumnFamily(index)(cf))), s)
+    }
+    // used when remote processing is disabled
+    lazy val returnSchema = hints.getTransformSchema.getOrElse(schema)
+    lazy val fti = FilterTransformIterator.configure(schema, index, ecql, hints).toSeq
+    lazy val resultsToFeatures = AccumuloResultsToFeatures(index, returnSchema)
+    lazy val localReducer = {
+      val arrowHook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
+      Some(new LocalTransformReducer(returnSchema, None, None, None, hints, arrowHook))
     }
 
     index match {
@@ -180,22 +171,56 @@ class AccumuloIndexAdapter(ds: AccumuloDataStore) extends IndexAdapter[AccumuloD
 
       case _ =>
         val (iter, eToF, reduce) = if (strategy.hints.isBinQuery) {
-          val iter = BinAggregatingIterator.configure(schema, index, ecql, hints)
-          (Seq(iter), new AccumuloBinResultsToFeatures(), None)
+          if (ds.config.remote.bin) {
+            val iter = BinAggregatingIterator.configure(schema, index, ecql, hints)
+            (Seq(iter), new AccumuloBinResultsToFeatures(), None)
+          } else {
+            if (hints.isSkipReduce) {
+              // override the return sft to reflect what we're actually returning,
+              // since the bin sft is only created in the local reduce step
+              hints.hints.put(QueryHints.Internal.RETURN_SFT, returnSchema)
+            }
+            (fti, resultsToFeatures, localReducer)
+          }
         } else if (strategy.hints.isArrowQuery) {
-          val (iter, reduce) = ArrowIterator.configure(schema, index, ds.stats, filter.filter, ecql, hints)
-          (Seq(iter), new AccumuloArrowResultsToFeatures(), Some(reduce))
+          if (ds.config.remote.arrow) {
+            val (iter, reduce) = ArrowIterator.configure(schema, index, ds.stats, filter.filter, ecql, hints)
+            (Seq(iter), new AccumuloArrowResultsToFeatures(), Some(reduce))
+          } else {
+            if (hints.isSkipReduce) {
+              // override the return sft to reflect what we're actually returning,
+              // since the arrow sft is only created in the local reduce step
+              hints.hints.put(QueryHints.Internal.RETURN_SFT, returnSchema)
+            }
+            (fti, resultsToFeatures, localReducer)
+          }
         } else if (strategy.hints.isDensityQuery) {
-          val iter = DensityIterator.configure(schema, index, ecql, hints)
-          (Seq(iter), new AccumuloDensityResultsToFeatures(), None)
+          if (ds.config.remote.density) {
+            val iter = DensityIterator.configure(schema, index, ecql, hints)
+            (Seq(iter), new AccumuloDensityResultsToFeatures(), None)
+          } else {
+            if (hints.isSkipReduce) {
+              // override the return sft to reflect what we're actually returning,
+              // since the density sft is only created in the local reduce step
+              hints.hints.put(QueryHints.Internal.RETURN_SFT, returnSchema)
+            }
+            (fti, resultsToFeatures, localReducer)
+          }
         } else if (strategy.hints.isStatsQuery) {
-          val iter = StatsIterator.configure(schema, index, ecql, hints)
-          val reduce = Some(StatsScan.StatsReducer(schema, hints))
-          (Seq(iter), new AccumuloStatsResultsToFeatures(), reduce)
+          if (ds.config.remote.stats) {
+            val iter = StatsIterator.configure(schema, index, ecql, hints)
+            val reduce = Some(StatsScan.StatsReducer(schema, hints))
+            (Seq(iter), new AccumuloStatsResultsToFeatures(), reduce)
+          } else {
+            if (hints.isSkipReduce) {
+              // override the return sft to reflect what we're actually returning,
+              // since the stats sft is only created in the local reduce step
+              hints.hints.put(QueryHints.Internal.RETURN_SFT, returnSchema)
+            }
+            (fti, resultsToFeatures, localReducer)
+          }
         } else {
-          val iter = FilterTransformIterator.configure(schema, index, ecql, hints).toSeq
-          val toFeatures = AccumuloResultsToFeatures(index, hints.getReturnSft)
-          (iter, toFeatures, None)
+          (fti, resultsToFeatures, None)
         }
 
         if (ranges.isEmpty) { EmptyPlan(strategy.filter, reduce) } else {
@@ -342,8 +367,7 @@ object AccumuloIndexAdapter {
     private val colFamilyMappings = indices.map(mapColumnFamily).toArray
     private val timestamps = indices.exists(i => !i.sft.isLogicalTime)
 
-    // cache our vis to avoid the re-parsing done in the ColumnVisibility constructor
-    private val defaultVisibility = new ColumnVisibility(ds.config.defaultVisibilities)
+    private val defaultVisibility = new ColumnVisibility()
     private val visibilities = new java.util.HashMap[VisHolder, ColumnVisibility]()
 
     private var i = 0

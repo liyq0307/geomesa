@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -21,8 +21,8 @@ object ByteArrays {
   val OneByte: Byte  = 0x01.toByte
   val MaxByte: Byte =  0xff.toByte
 
-  val ZeroByteArray = Array(ByteArrays.ZeroByte)
-  val OneByteArray = Array(ByteArrays.OneByte)
+  val ZeroByteArray: Array[Byte] = Array(ByteArrays.ZeroByte)
+  val OneByteArray : Array[Byte] = Array(ByteArrays.OneByte)
 
   implicit val ByteOrdering: Ordering[Array[Byte]] =
     Ordering.comparatorToOrdering(UnsignedBytes.lexicographicalComparator)
@@ -531,6 +531,30 @@ object ByteArrays {
       i += 1
     }
     sb.toString
+  }
+
+
+  /**
+   * Convert a byte to a printable string. Based on Accumulo's byte representation
+   *
+   * @param b byte
+   * @return
+   */
+  def printable(b: Byte): String = {
+    val c = 0xff & b
+    if (c >= 32 && c <= 126) { c.toChar.toString } else { f"%%$c%02x;" }
+  }
+
+  /**
+   * Convert each byte in the array to a printable string
+   *
+   * @param bytes bytes
+   * @return
+   */
+  def printable(bytes: Array[Byte]): String = {
+    if (bytes == null) { "null" } else {
+      bytes.map(printable).mkString("")
+    }
   }
 
   /**

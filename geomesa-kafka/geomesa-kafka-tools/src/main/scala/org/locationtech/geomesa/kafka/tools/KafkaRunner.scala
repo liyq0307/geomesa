@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -29,7 +29,6 @@ object KafkaRunner extends Runner {
     new ingest.KafkaIngestCommand,
     new status.KafkaDescribeSchemaCommand,
     new status.KafkaGetTypeNamesCommand,
-    new status.KafkaKeywordsCommand,
     // common commands, placeholders for script functions
     new HelpCommand(this, jc),
     new ConfigureCommand,

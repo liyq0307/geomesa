@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -37,7 +37,7 @@ class BucketVsLeafStorageTest extends Specification {
   var tempDir: Path = _
 
   def mkSft(name: String) =  SimpleFeatureTypes.createType(name, "attr:String,dtg:Date,*geom:Point:srid=4326")
-  def ds = DataStoreFinder.getDataStore(Map(
+  lazy val ds = DataStoreFinder.getDataStore(Map(
     "fs.path" -> tempDir.toFile.getPath,
     "fs.encoding" -> "parquet",
     "fs.config.xml" -> "<configuration><property><name>parquet.compression</name><value>gzip</value></property></configuration>"

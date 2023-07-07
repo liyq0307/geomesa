@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,111 +8,79 @@
 
 package org.locationtech.geomesa.features.avro.serialization
 
-import org.apache.avro.io.{Decoder, Encoder}
-import org.locationtech.geomesa.features.serialization.GenericMapSerialization
+import java.nio.ByteBuffer
 
-object AvroUserDataSerialization extends GenericMapSerialization[Encoder, Decoder] {
+import com.typesafe.scalalogging.LazyLogging
+import org.apache.avro.io.{Decoder, Encoder}
+import org.geotools.util.factory.Hints
+
+object AvroUserDataSerialization extends LazyLogging {
 
   import scala.collection.JavaConverters._
 
-  val NullMarkerString = "<null>"
-
-  override def serialize(out: Encoder, map: java.util.Map[_ <: AnyRef, _ <: AnyRef]): Unit = {
-    // may not be able to write all entries - must pre-filter to know correct count
-    val filtered = map.asScala.filter { case (key, value) =>
-      if (canSerialize(key)) {
-        true
-      } else {
-        logger.warn(s"Can't serialize Map entry ($key,$value) - it will be skipped.")
-        false
+  def serialize(out: Encoder, map: java.util.Map[_ <: AnyRef, _ <: AnyRef]): Unit = {
+    def write(value: Any): Option[() => Unit] = {
+      value match {
+        case null                 => Some(() => { out.writeIndex(0); out.writeNull() })
+        case v: String            => Some(() => { out.writeIndex(1); out.writeString(v) })
+        case v: java.lang.Integer => Some(() => { out.writeIndex(2); out.writeInt(v) })
+        case v: java.lang.Long    => Some(() => { out.writeIndex(3); out.writeLong(v) })
+        case v: java.lang.Float   => Some(() => { out.writeIndex(4); out.writeFloat(v) })
+        case v: java.lang.Double  => Some(() => { out.writeIndex(5); out.writeDouble(v) })
+        case v: java.lang.Boolean => Some(() => { out.writeIndex(6); out.writeBoolean(v) })
+        case v: Array[Byte]       => Some(() => { out.writeIndex(7); out.writeBytes(v) })
+        case v: Hints.Key if v == Hints.USE_PROVIDED_FID => logger.warn("Dropping USE_PROVIDED_FID hint"); None
+        case _ =>
+          throw new IllegalArgumentException(s"Serialization not implemented for '$value' of type ${value.getClass}")
       }
+    }
+
+    val writes = map.asScala.flatMap { case (key, value) =>
+      for (k <- write(key); v <- write(value)) yield { () => { out.startItem(); k(); v() }}
     }
 
     out.writeArrayStart()
-    out.setItemCount(filtered.size)
-
-    filtered.foreach { case (key, value) =>
-      out.startItem()
-      if (key == null) {
-        out.writeString(NullMarkerString)
-      } else {
-        out.writeString(key.getClass.getName)
-        write(out, key)
-      }
-      if (value == null) {
-        out.writeString(NullMarkerString)
-      } else {
-        out.writeString(value.getClass.getName)
-        write(out, value)
-      }
-    }
-
+    out.setItemCount(writes.size)
+    writes.foreach(_.apply())
     out.writeArrayEnd()
   }
 
-  override def deserialize(in: Decoder): java.util.Map[AnyRef, AnyRef] = {
+  def deserialize(in: Decoder): java.util.Map[AnyRef, AnyRef] = {
     val size = in.readArrayStart().toInt
     val map = new java.util.HashMap[AnyRef, AnyRef](size)
     deserializeWithSize(in, size, map)
     map
   }
 
-  override def deserialize(in: Decoder, map: java.util.Map[AnyRef, AnyRef]): Unit = {
+  def deserialize(in: Decoder, map: java.util.Map[AnyRef, AnyRef]): Unit =
     deserializeWithSize(in, in.readArrayStart().toInt, map)
-  }
 
   private def deserializeWithSize(in: Decoder, size: Int, map: java.util.Map[AnyRef, AnyRef]): Unit = {
+    var bb: ByteBuffer = null
+
+    def read(): AnyRef = {
+      in.readIndex() match {
+        case 0 => in.readNull(); null
+        case 1 => in.readString()
+        case 2 => Int.box(in.readInt())
+        case 3 => Long.box(in.readLong())
+        case 4 => Float.box(in.readFloat())
+        case 5 => Double.box(in.readDouble())
+        case 6 => Boolean.box(in.readBoolean())
+        case 7 => bb = in.readBytes(bb); val array = Array.ofDim[Byte](bb.remaining()); bb.get(array); array
+        case i => throw new IllegalArgumentException(s"Unexpected union type: $i")
+      }
+    }
+
     var remaining = size
     while (remaining > 0) {
-      val keyClass = in.readString()
-      val key = if (keyClass == NullMarkerString) { null } else { read(in, Class.forName(keyClass)) }
-      val valueClass = in.readString()
-      val value = if (valueClass == NullMarkerString) { null } else { read(in, Class.forName(valueClass))}
+      val key = read()
+      val value = read()
       map.put(key, value)
       remaining -= 1
       if (remaining == 0) {
         remaining = in.arrayNext().toInt
       }
     }
-  }
-
-  override protected def writeBytes(out: Encoder, bytes: Array[Byte]): Unit = out.writeBytes(bytes)
-
-  override protected def readBytes(in: Decoder): Array[Byte] = {
-    val buffer = in.readBytes(null)
-    val bytes = Array.ofDim[Byte](buffer.remaining())
-    buffer.get(bytes)
-    bytes
-  }
-
-  override protected def writeList(out: Encoder, list: java.util.List[AnyRef]): Unit = {
-    out.writeArrayStart()
-    out.setItemCount(list.size())
-    list.asScala.foreach { value =>
-      out.startItem()
-      if (value == null) {
-        out.writeString(NullMarkerString)
-      } else {
-        out.writeString(value.getClass.getName)
-        write(out, value)
-      }
-    }
-    out.writeArrayEnd()
-  }
-
-  override protected def readList(in: Decoder): java.util.List[AnyRef] = {
-    val size = in.readArrayStart().toInt
-    val list = new java.util.ArrayList[AnyRef](size)
-    var remaining = size
-    while (remaining > 0) {
-      val clas = in.readString()
-      val value = if (clas == NullMarkerString) { null } else { read(in, Class.forName(clas)) }
-      list.add(value)
-      remaining -= 1
-      if (remaining == 0) {
-        remaining = in.arrayNext().toInt
-      }
-    }
-    list
   }
 }

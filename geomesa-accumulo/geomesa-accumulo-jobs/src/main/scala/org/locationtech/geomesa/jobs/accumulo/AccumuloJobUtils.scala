@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -76,7 +76,7 @@ object AccumuloJobUtils extends LazyLogging {
       val queryPlans = ds.getQueryPlan(query)
 
       if (queryPlans.isEmpty) {
-        EmptyPlan(FilterStrategy(fallbackIndex, None, Some(Filter.EXCLUDE), 0L))
+        EmptyPlan(FilterStrategy(fallbackIndex, None, Some(Filter.EXCLUDE), temporal = false, 0L))
       } else if (queryPlans.lengthCompare(1) > 0) {
         // this query requires multiple scans, which we can't execute from some input formats
         // instead, fall back to a full table scan
@@ -122,7 +122,7 @@ object AccumuloJobUtils extends LazyLogging {
 
       val queryPlans = ds.getQueryPlan(query)
       if (queryPlans.isEmpty) {
-        Seq(EmptyPlan(FilterStrategy(fallbackIndex, None, Some(Filter.EXCLUDE), 0L)))
+        Seq(EmptyPlan(FilterStrategy(fallbackIndex, None, Some(Filter.EXCLUDE), temporal = false, 0L)))
       } else {
         queryPlans
       }

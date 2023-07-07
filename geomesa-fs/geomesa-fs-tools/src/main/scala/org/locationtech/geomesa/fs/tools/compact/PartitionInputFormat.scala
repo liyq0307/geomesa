@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -40,7 +40,6 @@ class PartitionInputFormat extends InputFormat[Void, SimpleFeature] {
       throw new IllegalArgumentException(s"No storage defined under path '$root'")
     }
     WithClose(metadata) { meta =>
-      meta.reload() // load existing partition data
       WithClose(FileSystemStorageFactory(fsc, metadata)) { storage =>
         val splits = StorageConfiguration.getPartitions(conf).map { partition =>
           val files = storage.metadata.getPartition(partition).map(_.files).getOrElse(Seq.empty)
@@ -164,7 +163,6 @@ object PartitionInputFormat {
     override def addPartition(partition: PartitionMetadata): Unit = throw new NotImplementedError()
     override def removePartition(partition: PartitionMetadata): Unit = throw new NotImplementedError()
     override def compact(partition: Option[String], threads: Int): Unit = throw new NotImplementedError()
-    override def reload(): Unit = {}
     override def close(): Unit = {}
   }
 }

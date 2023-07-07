@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -11,9 +11,8 @@ package org.locationtech.geomesa.lambda
 import java.time.{Clock, Instant, ZoneId, ZoneOffset}
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.accumulo.core.client.mock.MockInstance
-import org.apache.accumulo.core.client.security.tokens.PasswordToken
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.accumulo.MiniCluster
 import org.locationtech.geomesa.lambda.LambdaTestRunnerTest.LambdaTest
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
@@ -54,13 +53,9 @@ class LambdaTestRunnerTest extends Specification with BeforeAfterAll with LazyLo
 
 object LambdaTestRunnerTest {
 
-  val connector = new MockInstance("lambda").getConnector("root", new PasswordToken(""))
-
   trait LambdaTest extends Specification {
 
     val sftName = getClass.getSimpleName
-
-    val connector = LambdaTestRunnerTest.connector
 
     val clock = new TestClock()
     val offsetManager = new InMemoryOffsetManager
@@ -69,16 +64,18 @@ object LambdaTestRunnerTest {
     var zookeepers: String = _
 
     lazy val dsParams = Map(
-      "lambda.accumulo.connector"  -> connector,
+      "lambda.accumulo.instance.id" -> MiniCluster.cluster.getInstanceName,
+      "lambda.accumulo.zookeepers"  -> MiniCluster.cluster.getZooKeepers,
+      "lambda.accumulo.user"        -> MiniCluster.Users.root.name,
+      "lambda.accumulo.password"    -> MiniCluster.Users.root.password,
       // note the table needs to be different to prevent testing errors
-      "lambda.accumulo.catalog"    -> sftName,
-      "lambda.accumulo.zookeepers" -> zookeepers,
-      "lambda.kafka.brokers"       -> brokers,
-      "lambda.kafka.zookeepers"    -> zookeepers,
-      "lambda.kafka.partitions"    -> 2,
-      "lambda.expiry"              -> "100ms",
-      "lambda.clock"               -> clock,
-      "lambda.offset-manager"      -> offsetManager
+      "lambda.accumulo.catalog"     -> sftName,
+      "lambda.kafka.brokers"        -> brokers,
+      "lambda.kafka.zookeepers"     -> zookeepers,
+      "lambda.kafka.partitions"     -> 2,
+      "lambda.expiry"               -> "100ms",
+      "lambda.clock"                -> clock,
+      "lambda.offset-manager"       -> offsetManager
     )
   }
 

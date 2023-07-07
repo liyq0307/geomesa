@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -12,7 +12,7 @@ import java.io.IOException
 import java.util.concurrent.{ConcurrentHashMap, ScheduledExecutorService}
 import java.util.{Collections, Properties, UUID}
 
-import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine}
+import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, Ticker}
 import com.typesafe.scalalogging.LazyLogging
 import kafka.admin.AdminUtils
 import kafka.utils.ZkUtils
@@ -37,7 +37,6 @@ import org.locationtech.geomesa.kafka.{AdminUtilsVersions, KafkaConsumerVersions
 import org.locationtech.geomesa.memory.cqengine.utils.CQIndexType.CQIndexType
 import org.locationtech.geomesa.security.AuthorizationsProvider
 import org.locationtech.geomesa.utils.audit.{AuditProvider, AuditWriter}
-import org.locationtech.geomesa.utils.cache.Ticker
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.TableSharing
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.InternalConfigs.TableSharingPrefix
@@ -54,6 +53,8 @@ class KafkaDataStore(
     val metadata: GeoMesaMetadata[String],
     serialization: GeoMessageSerializerFactory
   ) extends MetadataBackedDataStore(config) with HasGeoMesaStats with ZookeeperLocking {
+
+  import scala.collection.JavaConverters._
 
   import KafkaDataStore.TopicKey
 
@@ -79,6 +80,7 @@ class KafkaDataStore(
         KafkaCacheLoader.NoOpLoader
       } else {
         val sft = getSchema(key)
+        // if the expiry is zero, this will return a NoOpFeatureCache
         val cache = KafkaFeatureCache(sft, config.indices)
         val topic = KafkaDataStore.topic(sft)
         val consumers = KafkaDataStore.consumers(config, topic)
@@ -215,18 +217,16 @@ class KafkaDataStore(
   }
 
   override def dispose(): Unit = {
-    import scala.collection.JavaConversions._
     if (producerInitialized) {
       CloseWithLogging(producer)
     }
-    caches.asMap.valuesIterator.foreach(CloseWithLogging.apply)
+    CloseWithLogging(caches.asMap.asScala.values)
     caches.invalidateAll()
     super.dispose()
   }
 
   // zookeeper locking methods
-  override def mock: Boolean = false
-  override def zookeepers: String = config.zookeepers
+  override protected def zookeepers: String = config.zookeepers
 }
 
 object KafkaDataStore extends LazyLogging {

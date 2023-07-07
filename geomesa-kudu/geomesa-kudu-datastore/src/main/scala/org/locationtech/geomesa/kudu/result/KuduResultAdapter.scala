@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
 import org.apache.kudu.client.RowResult
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.arrow.ArrowProperties
+import org.locationtech.geomesa.index.iterators.DensityScan
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.ByteBuffers.ExpandingByteBuffer
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
@@ -80,9 +81,10 @@ object KuduResultAdapter {
         hints.isArrowMultiFile)
       ArrowAdapter(sft, auths, ecql, hints.getTransform, config)
     } else if (hints.isDensityQuery) {
+      val geom = DensityScan.getDensityGeometry(sft, hints)
       val Some(envelope) = hints.getDensityEnvelope
       val Some((width, height)) = hints.getDensityBounds
-      DensityAdapter(sft, auths, ecql, envelope, width, height, hints.getDensityWeight)
+      DensityAdapter(sft, auths, ecql, geom, envelope, width, height, hints.getDensityWeight)
     } else if (hints.isStatsQuery) {
       val encode = hints.isStatsEncode || hints.isSkipReduce
       StatsAdapter(sft, auths, ecql, hints.getTransform, hints.getStatsQuery, encode)

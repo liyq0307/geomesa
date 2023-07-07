@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -67,7 +67,7 @@ private [transforms] class ExpressionParser extends BasicParser {
   }
 
   private def field: Rule1[Expression] = rule("$field") {
-    "$" ~ unquotedString ~~> { i => FieldLookup(i) }
+    "$" ~ (unquotedString | "{" ~ oneOrMore(char | "." | " ") ~> { c => c } ~ "}") ~~> { name => FieldLookup(name) }
   }
 
   private def tryFunction: Rule1[Expression] = rule("try") {
@@ -80,7 +80,7 @@ private [transforms] class ExpressionParser extends BasicParser {
         val name = ns.map(_ + ":" + fn).getOrElse(fn)
         val function = TransformerFunction.functions.getOrElse(name,
           throw new ParsingException(s"Invalid function name: $name"))
-        val expr = FunctionExpression(function.getInstance, args.toArray)
+        val expr = FunctionExpression(function.getInstance(args), args.toArray)
         if (function.pure && args.forall(a => a.isInstanceOf[Literal[_]])) {
           LiteralAny(expr.eval(Array.empty))
         } else {

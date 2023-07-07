@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,8 +13,6 @@ import java.util.Date
 
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine}
 import com.typesafe.scalalogging.LazyLogging
-import org.locationtech.jts.geom.{Envelope, Point}
-import org.apache.arrow.memory.RootAllocator
 import org.apache.hadoop.hbase.TableName
 import org.apache.hadoop.hbase.util.Bytes
 import org.geotools.data.{DataStoreFinder, Query, Transaction}
@@ -22,31 +20,50 @@ import org.geotools.filter.text.ecql.ECQL
 import org.geotools.filter.visitor.ExtractBoundsFilterVisitor
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.referencing.crs.DefaultGeographicCRS
+import org.junit.runner.RunWith
 import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.hbase.data.HBaseDataStoreParams.{ConnectionParam, HBaseCatalogParam}
-import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.CoprocessorPlan
+import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.{CoprocessorPlan, ScanPlan}
 import org.locationtech.geomesa.index.conf.QueryHints.{BIN_BATCH_SIZE, BIN_TRACK}
 import org.locationtech.geomesa.index.conf.{ColumnGroups, QueryHints}
 import org.locationtech.geomesa.index.iterators.{DensityScan, StatsScan}
-import org.locationtech.geomesa.index.planning.{QueryPlanner, Transforms}
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.EncodedValues
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
-import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
+import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes, Transform}
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.stats.{MinMax, Stat}
+import org.locationtech.jts.geom.{Envelope, Point}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
-import org.opengis.filter.expression.Expression
+import org.specs2.mutable.Specification
+import org.specs2.runner.JUnitRunner
 
-class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
+@RunWith(classOf[JUnitRunner])
+class HBaseColumnGroupsTest extends Specification with LazyLogging  {
 
   import scala.collection.JavaConverters._
 
   // note: using Seq.foreach, ok instead of foreach(Seq) shaves several seconds off the time to run this test
 
-  var ds: HBaseDataStore = _
+  lazy val params = Map(
+    HBaseDataStoreParams.ConnectionParam.getName     -> MiniCluster.connection,
+    HBaseDataStoreParams.HBaseCatalogParam.getName   -> getClass.getSimpleName
+  )
+
+  lazy val semiLocalParams = params ++ Map(
+    HBaseDataStoreParams.ArrowCoprocessorParam.key   -> false,
+    HBaseDataStoreParams.BinCoprocessorParam.key     -> false,
+    HBaseDataStoreParams.DensityCoprocessorParam.key -> false,
+    HBaseDataStoreParams.StatsCoprocessorParam.key   -> false
+  )
+
+  lazy val localParams = params ++ Map(HBaseDataStoreParams.RemoteFilteringParam.key -> false)
+
+  lazy val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[HBaseDataStore]
+  lazy val dsSemiLocal = DataStoreFinder.getDataStore(semiLocalParams.asJava).asInstanceOf[HBaseDataStore]
+  lazy val dsFullLocal = DataStoreFinder.getDataStore(localParams.asJava).asInstanceOf[HBaseDataStore]
 
   val spec: String = "name:String:index=true:column-groups=B,age:Int:index=true:column-groups=B," +
       "height:Double,track:String:column-groups=A,dtg:Date:column-groups=A,*geom:Point:srid=4326:column-groups='A,B'"
@@ -59,10 +76,11 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
   }
 
   val transformCache = Caffeine.newBuilder().build(
-    new CacheLoader[Array[String], (SimpleFeatureType, Seq[Expression])]() {
-      override def load(transform: Array[String]): (SimpleFeatureType, Seq[Expression]) = {
-        val (tdefs, tsft) = QueryPlanner.buildTransformSFT(sft, transform)
-        (tsft, Transforms.definitions(tdefs).map(_.expression))
+    new CacheLoader[Array[String], (SimpleFeatureType, Seq[Transform])]() {
+      override def load(transform: Array[String]): (SimpleFeatureType, Seq[Transform]) = {
+        val definitions = Transforms.apply(sft, transform)
+        val schema = Transforms.schema(sft, definitions)
+        (schema, definitions)
       }
     }
   )
@@ -121,12 +139,10 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
 
   step {
     logger.info("Starting HBase column groups test")
-    val params = Map(ConnectionParam.getName -> connection, HBaseCatalogParam.getName -> catalogTableName)
-    ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[HBaseDataStore]
     ds.createSchema(sft)
-    val writer = ds.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)
-    features.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
-    writer.close()
+    WithClose(ds.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
+      features.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
+    }
   }
 
   "HBaseDataStore column groups" should {
@@ -141,16 +157,24 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
     "use minimal column groups required by the filter and transform, group a" in {
       filtersA.foreach { case (filter, expected) =>
         (transformsA ++ transformsAB).foreach { transform =>
-          val query = new Query(sft.getTypeName, filter, transform)
-          query.getHints.put(QueryHints.LOOSE_BBOX, false)
-          foreach(ds.getQueryPlan(query).flatMap(_.scans))(_.getFamilies.map(Bytes.toString) mustEqual Array("A"))
-          query.toList mustEqual expected.toFeatures(transform)
+          foreach(Seq(ds, dsSemiLocal, dsFullLocal)) { ds =>
+            val query = new Query(sft.getTypeName, filter, transform)
+            query.getHints.put(QueryHints.LOOSE_BBOX, false)
+            foreach(ds.getQueryPlan(query).flatMap(_.scans.flatMap(_.scans))) { scan =>
+              scan.getFamilies.map(Bytes.toString) mustEqual Array("A")
+            }
+            query.toList mustEqual expected.toFeatures(transform)
+          }
         }
         (transformsB ++ transformsDefault).foreach { transform =>
-          val query = new Query(sft.getTypeName, filter, transform)
-          query.getHints.put(QueryHints.LOOSE_BBOX, false)
-          foreach(ds.getQueryPlan(query).flatMap(_.scans))(_.getFamilies mustEqual Array(ColumnGroups.Default))
-          query.toList mustEqual expected.toFeatures(transform)
+          foreach(Seq(ds, dsSemiLocal, dsFullLocal)) { ds =>
+            val query = new Query(sft.getTypeName, filter, transform)
+            query.getHints.put(QueryHints.LOOSE_BBOX, false)
+            foreach(ds.getQueryPlan(query).flatMap(_.scans.flatMap(_.scans))) { scan =>
+              scan.getFamilies mustEqual Array(ColumnGroups.Default)
+            }
+            query.toList mustEqual expected.toFeatures(transform)
+          }
         }
       }
       ok
@@ -158,22 +182,24 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
     "use minimal column groups required by the filter and transform, group b" in {
       filtersB.foreach { case (filter, expected) =>
         (transformsB ++ transformsAB).foreach { transform =>
-          val query = new Query(sft.getTypeName, filter, transform)
-          query.getHints.put(QueryHints.LOOSE_BBOX, false)
-          foreach(ds.getQueryPlan(query).flatMap(_.scans))(_.getFamilies.map(Bytes.toString) mustEqual Array("B"))
-//          foreach(ds.getQueryPlan(query).flatMap(_.ranges)) { r =>
-//              if (r.getFamilies.map(Bytes.toString).contains("A")) {
-//                println(ECQL.toCQL(filter) + " " + transform.mkString(","))
-//              }
-//            r.getFamilies.map(Bytes.toString) mustEqual Array("B")
-//          }
-          query.toList mustEqual expected.toFeatures(transform)
+          foreach(Seq(ds, dsSemiLocal, dsFullLocal)) { ds =>
+            val query = new Query(sft.getTypeName, filter, transform)
+            query.getHints.put(QueryHints.LOOSE_BBOX, false)
+            foreach(ds.getQueryPlan(query).flatMap(_.scans.flatMap(_.scans))) { scan =>
+              scan.getFamilies.map(Bytes.toString) mustEqual Array("B")
+            }
+            query.toList mustEqual expected.toFeatures(transform)
+          }
         }
         (transformsA ++ transformsDefault).foreach { transform =>
-          val query = new Query(sft.getTypeName, filter, transform)
-          query.getHints.put(QueryHints.LOOSE_BBOX, false)
-          foreach(ds.getQueryPlan(query).flatMap(_.scans))(_.getFamilies mustEqual Array(ColumnGroups.Default))
-          query.toList mustEqual expected.toFeatures(transform)
+          foreach(Seq(ds, dsSemiLocal, dsFullLocal)) { ds =>
+            val query = new Query(sft.getTypeName, filter, transform)
+            query.getHints.put(QueryHints.LOOSE_BBOX, false)
+            foreach(ds.getQueryPlan(query).flatMap(_.scans.flatMap(_.scans))) { scan =>
+              scan.getFamilies mustEqual Array(ColumnGroups.Default)
+            }
+            query.toList mustEqual expected.toFeatures(transform)
+          }
         }
       }
       ok
@@ -181,10 +207,14 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
     "use minimal column groups required by the filter and transform, default group" in {
       filtersDefault.foreach { case (filter, expected) =>
         (transformsA ++ transformsB ++ transformsAB ++ transformsDefault).foreach { transform =>
-          val query = new Query(sft.getTypeName, filter, transform)
-          query.getHints.put(QueryHints.LOOSE_BBOX, false)
-          foreach(ds.getQueryPlan(query).flatMap(_.scans))(_.getFamilies mustEqual Array(ColumnGroups.Default))
-          query.toList mustEqual expected.toFeatures(transform)
+          foreach(Seq(ds, dsSemiLocal, dsFullLocal)) { ds =>
+            val query = new Query(sft.getTypeName, filter, transform)
+            query.getHints.put(QueryHints.LOOSE_BBOX, false)
+            foreach(ds.getQueryPlan(query).flatMap(_.scans.flatMap(_.scans))) { scan =>
+              scan.getFamilies mustEqual Array(ColumnGroups.Default)
+            }
+            query.toList mustEqual expected.toFeatures(transform)
+          }
         }
       }
       ok
@@ -193,23 +223,34 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
       val filter = ECQL.toFilter("dtg DURING 2018-01-01T00:00:00.000Z/2018-01-01T08:30:00.000Z " +
           "and bbox(geom,45.4,54.9,45.8,55.1)")
 
-      val query = new Query(sft.getTypeName, filter, Array("track", "dtg", "geom"))
-      query.getHints.put(QueryHints.ARROW_ENCODE, true)
-      query.getHints.put(QueryHints.ARROW_SORT_FIELD, "dtg")
-      query.getHints.put(QueryHints.ARROW_DICTIONARY_FIELDS, "track")
-      query.getHints.put(QueryHints.ARROW_BATCH_SIZE, 10)
+      ds.config.remoteFilter must beTrue
+      ds.config.coprocessors.enabled.arrow must beTrue
+      dsSemiLocal.config.remoteFilter must beTrue
+      dsSemiLocal.config.coprocessors.enabled.arrow must beFalse
+      dsFullLocal.config.remoteFilter must beFalse
 
-      foreach(ds.getQueryPlan(query)) { qp =>
-        qp must beAnInstanceOf[CoprocessorPlan]
-        qp.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
-      }
+      // TODO GEOMESA-2816 column groups and coprocessors do not work together with remote filtering disabled
+      foreach(Seq(ds, dsSemiLocal/*, dsFullLocal*/)) { ds =>
+        val query = new Query(sft.getTypeName, filter, Array("track", "dtg", "geom"))
+        query.getHints.put(QueryHints.ARROW_ENCODE, true)
+        query.getHints.put(QueryHints.ARROW_SORT_FIELD, "dtg")
+        query.getHints.put(QueryHints.ARROW_DICTIONARY_FIELDS, "track")
+        query.getHints.put(QueryHints.ARROW_BATCH_SIZE, 10)
 
-      val arrows = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT))
-      val out = new ByteArrayOutputStream
-      arrows.foreach(sf => out.write(sf.getAttribute(0).asInstanceOf[Array[Byte]]))
-      def in() = new ByteArrayInputStream(out.toByteArray)
-      WithClose(new RootAllocator(Long.MaxValue)) { allocator =>
-        WithClose(SimpleFeatureArrowFileReader.streaming(in)(allocator)) { reader =>
+        foreach(ds.getQueryPlan(query)) { qp =>
+          if (ds.config.remoteFilter && ds.config.coprocessors.enabled.arrow) {
+            qp must beAnInstanceOf[CoprocessorPlan]
+          } else {
+            qp must beAnInstanceOf[ScanPlan]
+          }
+          qp.scans.head.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+        }
+
+        val arrows = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT))
+        val out = new ByteArrayOutputStream
+        arrows.foreach(sf => out.write(sf.getAttribute(0).asInstanceOf[Array[Byte]]))
+        def in() = new ByteArrayInputStream(out.toByteArray)
+        WithClose(SimpleFeatureArrowFileReader.streaming(in)) { reader =>
           val results = SelfClosingIterator(reader.features()).map { f =>
             // round the points, as precision is lost due to the arrow encoding
             val attributes = f.getAttributes.asScala.collect {
@@ -226,75 +267,116 @@ class HBaseColumnGroupsTest extends HBaseTest with LazyLogging  {
       val filter = ECQL.toFilter("dtg DURING 2018-01-01T00:00:00.000Z/2018-01-01T08:30:00.000Z " +
           "and bbox(geom,45.4,54.9,45.8,55.1)")
 
-      val query = new Query(sft.getTypeName, filter)
-      query.getHints.put(BIN_TRACK, "track")
-      query.getHints.put(BIN_BATCH_SIZE, 1000)
+      ds.config.remoteFilter must beTrue
+      ds.config.coprocessors.enabled.bin must beTrue
+      dsSemiLocal.config.remoteFilter must beTrue
+      dsSemiLocal.config.coprocessors.enabled.bin must beFalse
+      dsFullLocal.config.remoteFilter must beFalse
 
-      foreach(ds.getQueryPlan(query)) { qp =>
-        qp must beAnInstanceOf[CoprocessorPlan]
-        qp.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+      // TODO GEOMESA-2816 column groups and coprocessors do not work together with remote filtering disabled
+      foreach(Seq(ds, dsSemiLocal/*, dsFullLocal*/)) { ds =>
+        val query = new Query(sft.getTypeName, filter)
+        query.getHints.put(BIN_TRACK, "track")
+        query.getHints.put(BIN_BATCH_SIZE, 1000)
+
+        foreach(ds.getQueryPlan(query)) { qp =>
+          if (ds.config.remoteFilter && ds.config.coprocessors.enabled.bin) {
+            qp must beAnInstanceOf[CoprocessorPlan]
+          } else {
+            qp must beAnInstanceOf[ScanPlan]
+          }
+          qp.scans.head.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+        }
+
+        val bytes = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT))
+        val out = new ByteArrayOutputStream
+        bytes.foreach(sf => out.write(sf.getAttribute(0).asInstanceOf[Array[Byte]]))
+
+        val expected = (4 to 8).toFeatures(null).map { f =>
+          val track = f.getAttribute("track").hashCode
+          val lat = f.getAttribute("geom").asInstanceOf[Point].getY.toFloat
+          val lon = f.getAttribute("geom").asInstanceOf[Point].getX.toFloat
+          val dtg = f.getAttribute("dtg").asInstanceOf[Date].getTime
+          EncodedValues(track, lat, lon, dtg, -1L)
+        }
+
+        val bins = out.toByteArray.grouped(16).map(BinaryOutputEncoder.decode).toList
+        bins must containTheSameElementsAs(expected)
       }
-
-      val bytes = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT))
-      val out = new ByteArrayOutputStream
-      bytes.foreach(sf => out.write(sf.getAttribute(0).asInstanceOf[Array[Byte]]))
-
-      val expected = (4 to 8).toFeatures(null).map { f =>
-        val track = f.getAttribute("track").hashCode
-        val lat = f.getAttribute("geom").asInstanceOf[Point].getY.toFloat
-        val lon = f.getAttribute("geom").asInstanceOf[Point].getX.toFloat
-        val dtg = f.getAttribute("dtg").asInstanceOf[Date].getTime
-        EncodedValues(track, lat, lon, dtg, -1L)
-      }
-
-      val bins = out.toByteArray.grouped(16).map(BinaryOutputEncoder.decode).toList
-      bins must containTheSameElementsAs(expected)
     }
     "work with density queries" in {
       val filter = ECQL.toFilter("dtg DURING 2018-01-01T00:00:00.000Z/2018-01-01T08:30:00.000Z " +
           "and bbox(geom,45.4,54.9,45.8,55.1)")
       val envelope = filter.accept(ExtractBoundsFilterVisitor.BOUNDS_VISITOR, null).asInstanceOf[Envelope]
 
-      val query = new Query(sft.getTypeName, filter)
-      query.getHints.put(QueryHints.LOOSE_BBOX, false)
-      query.getHints.put(QueryHints.DENSITY_BBOX, new ReferencedEnvelope(envelope, DefaultGeographicCRS.WGS84))
-      query.getHints.put(QueryHints.DENSITY_WIDTH, 640)
-      query.getHints.put(QueryHints.DENSITY_HEIGHT, 480)
+      ds.config.remoteFilter must beTrue
+      ds.config.coprocessors.enabled.density must beTrue
+      dsSemiLocal.config.remoteFilter must beTrue
+      dsSemiLocal.config.coprocessors.enabled.density must beFalse
+      dsFullLocal.config.remoteFilter must beFalse
 
-      foreach(ds.getQueryPlan(query)) { qp =>
-        qp must beAnInstanceOf[CoprocessorPlan]
-        qp.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+      // TODO GEOMESA-2816 column groups and coprocessors do not work together with remote filtering disabled
+      foreach(Seq(ds, dsSemiLocal/*, dsFullLocal*/)) { ds =>
+        val query = new Query(sft.getTypeName, filter)
+        query.getHints.put(QueryHints.LOOSE_BBOX, false)
+        query.getHints.put(QueryHints.DENSITY_BBOX, new ReferencedEnvelope(envelope, DefaultGeographicCRS.WGS84))
+        query.getHints.put(QueryHints.DENSITY_WIDTH, 640)
+        query.getHints.put(QueryHints.DENSITY_HEIGHT, 480)
+
+        foreach(ds.getQueryPlan(query)) { qp =>
+          if (ds.config.remoteFilter && ds.config.coprocessors.enabled.density) {
+            qp must beAnInstanceOf[CoprocessorPlan]
+          } else {
+            qp must beAnInstanceOf[ScanPlan]
+          }
+          qp.scans.head.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+        }
+
+        val decode = DensityScan.decodeResult(envelope, 640, 480)
+        val grid = SelfClosingIterator(ds.getFeatureSource(sft.getTypeName).getFeatures(query).features).flatMap(decode).toList
+        grid.map(_._3).sum mustEqual 5 // 5 results
       }
-
-      val decode = DensityScan.decodeResult(envelope, 640, 480)
-      val grid = SelfClosingIterator(ds.getFeatureSource(sft.getTypeName).getFeatures(query).features).flatMap(decode).toList
-      grid.map(_._3).sum mustEqual 5 // 5 results
     }
     "work with stats queries" in {
       val filter = ECQL.toFilter("dtg DURING 2018-01-01T00:00:00.000Z/2018-01-01T08:30:00.000Z " +
           "and bbox(geom,45.4,54.9,45.8,55.1)")
 
-      val query = new Query(sft.getTypeName, filter)
-      query.getHints.put(QueryHints.STATS_STRING, "MinMax(track)")
-      query.getHints.put(QueryHints.ENCODE_STATS, true)
+      ds.config.remoteFilter must beTrue
+      ds.config.coprocessors.enabled.stats must beTrue
+      dsSemiLocal.config.remoteFilter must beTrue
+      dsSemiLocal.config.coprocessors.enabled.stats must beFalse
+      dsFullLocal.config.remoteFilter must beFalse
 
-      foreach(ds.getQueryPlan(query)) { qp =>
-        qp must beAnInstanceOf[CoprocessorPlan]
-        qp.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+      // TODO GEOMESA-2816 column groups and coprocessors do not work together with remote filtering disabled
+      foreach(Seq(ds, dsSemiLocal/*, dsFullLocal*/)) { ds =>
+        val query = new Query(sft.getTypeName, filter)
+        query.getHints.put(QueryHints.STATS_STRING, "MinMax(track)")
+        query.getHints.put(QueryHints.ENCODE_STATS, true)
+
+        foreach(ds.getQueryPlan(query)) { qp =>
+          if (ds.config.remoteFilter && ds.config.coprocessors.enabled.stats) {
+            qp must beAnInstanceOf[CoprocessorPlan]
+          } else {
+            qp must beAnInstanceOf[ScanPlan]
+          }
+          qp.scans.head.scans.head.getFamilies.map(Bytes.toString) mustEqual Array("A")
+        }
+
+        def decode(sf: SimpleFeature): Stat = StatsScan.decodeStat(sft)(sf.getAttribute(0).asInstanceOf[String])
+        val stats = SelfClosingIterator(ds.getFeatureSource(sft.getTypeName).getFeatures(query).features).map(decode).toList
+        stats must haveLength(1) // stats will always return a single feature
+        val stat = stats.head
+        stat must beAnInstanceOf[MinMax[String]]
+        stat.asInstanceOf[MinMax[String]].min mustEqual "track-0"
+        stat.asInstanceOf[MinMax[String]].max mustEqual "track-2"
       }
-
-      def decode(sf: SimpleFeature): Stat = StatsScan.decodeStat(sft)(sf.getAttribute(0).asInstanceOf[String])
-      val stats = SelfClosingIterator(ds.getFeatureSource(sft.getTypeName).getFeatures(query).features).map(decode).toList
-      stats must haveLength(1) // stats will always return a single feature
-      val stat = stats.head
-      stat must beAnInstanceOf[MinMax[String]]
-      stat.asInstanceOf[MinMax[String]].min mustEqual "track-0"
-      stat.asInstanceOf[MinMax[String]].max mustEqual "track-2"
     }
   }
 
   step {
     logger.info("Cleaning up HBase column groups test")
     ds.dispose()
+    dsSemiLocal.dispose()
+    dsFullLocal.dispose()
   }
 }

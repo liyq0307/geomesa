@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -85,16 +85,8 @@ trait StorageMetadata extends Compactable with Closeable {
     */
   def removePartition(partition: PartitionMetadata): Unit
 
-  /**
-    * Invalidate any cached state and reload the current 'truth' for partition metadata. This may be an
-    * expensive operation.
-    *
-    * To allow for lightweight access patterns, implementations may defer loading any partition data until
-    * this method is invoked. Consequently, if partition metadata is required by the caller, this method
-    * should be invoked at least once after instantiating a new metadata instance and before any calls to
-    * `getPartition` or `getPartitions`
-    */
-  def reload(): Unit
+  @deprecated("deprecated with no replacement")
+  def reload(): Unit = {}
 }
 
 object StorageMetadata {

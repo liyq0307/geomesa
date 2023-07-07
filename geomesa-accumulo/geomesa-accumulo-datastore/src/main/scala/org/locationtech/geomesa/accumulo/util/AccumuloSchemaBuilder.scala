@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -106,20 +106,6 @@ object AccumuloSchemaBuilder {
 
   class AccumuloUserDataBuilder(parent: AccumuloSchemaBuilder, userData: StringBuilder)
       extends AbstractUserDataBuilder[AccumuloUserDataBuilder](parent, userData) with LazyLogging {
-
-    /**
-      * Sets table sharing for this schema
-      *
-      * @param sharing table sharing
-      * @return user data builder for call chaining
-      */
-    @deprecated("table sharing is no longer supported")
-    def tableSharing(sharing: Boolean): AccumuloUserDataBuilder = {
-      if (sharing) {
-        logger.warn("Ignoring table sharing hint - table sharing is no longer supported")
-      }
-      this
-    }
 
     /**
       * Set logical timestamps for the Accumulo tables

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,7 +13,7 @@ import org.geotools.data.Query
 import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.TestWithDataStore
+import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.accumulo.index.JoinIndex
 import org.locationtech.geomesa.index.index.NamedIndex
 import org.locationtech.geomesa.index.index.z3.Z3Index
@@ -27,7 +27,7 @@ import org.specs2.runner.JUnitRunner
 import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
-class AttributeIndexFilteringIteratorTest extends Specification with TestWithDataStore {
+class AttributeIndexFilteringIteratorTest extends Specification with TestWithFeatureType {
 
   import org.locationtech.geomesa.filter.ff
 
@@ -103,7 +103,6 @@ class AttributeIndexFilteringIteratorTest extends Specification with TestWithDat
     }
 
     "handle corner case with attr idx, bbox, and no temporal filter" in {
-      ds.stats.generateStats(sft)
       val filter = ff.and(ECQL.toFilter("name = 'b'"), ECQL.toFilter("BBOX(geom, 30, 30, 50, 50)"))
       val query = new Query(sftName, filter, Array("geom"))
       ds.getQueryPlan(query).head.filter.index.name mustEqual JoinIndex.name

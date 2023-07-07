@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -60,11 +60,10 @@ public abstract class AbstractMultiPolygonVector<T extends FieldVector>
 
   @Override
   public void set(int index, MultiPolygon geom) {
-    if (index == 0) {
-      // need to do this to avoid issues with re-setting the value at index 0
-      vector.setLastSet(0);
-      innerVector.setLastSet(0);
-      innerInnerVector.setLastSet(0);
+    if (vector.getLastSet() >= index) {
+      vector.setLastSet(index - 1);
+      innerVector.setLastSet(index - 1);
+      innerInnerVector.setLastSet(index - 1);
     }
     int innerIndex = vector.startNewValue(index);
     if (geom == null) {

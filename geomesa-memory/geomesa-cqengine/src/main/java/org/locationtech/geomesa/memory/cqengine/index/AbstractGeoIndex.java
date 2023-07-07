@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -67,8 +67,8 @@ public abstract class AbstractGeoIndex<A extends Geometry, O extends SimpleFeatu
             boolean modified = false;
 
             for (O object : objectSet) {
-                Envelope env = ((Geometry) object.getDefaultGeometry()).getEnvelopeInternal();
-                index.insert(env, object.getID(), object);
+                Geometry geom = (Geometry) object.getDefaultGeometry();
+                index.insert(geom, object.getID(), object);
                 modified = true;
             }
 
@@ -84,8 +84,8 @@ public abstract class AbstractGeoIndex<A extends Geometry, O extends SimpleFeatu
             boolean modified = false;
 
             for (O object : objectSet) {
-                Envelope env = ((Geometry) object.getDefaultGeometry()).getEnvelopeInternal();
-                index.remove(env, object.getID());
+                Geometry geom = (Geometry) object.getDefaultGeometry();
+                index.remove(geom, object.getID());
                 modified = true;
             }
 

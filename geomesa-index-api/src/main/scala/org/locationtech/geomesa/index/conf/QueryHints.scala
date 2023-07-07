@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -26,7 +26,8 @@ object QueryHints {
   val COST_EVALUATION  = new ClassKey(classOf[CostEvaluation])
 
   val DENSITY_BBOX     = new ClassKey(classOf[ReferencedEnvelope])
-  val DENSITY_WEIGHT   = new ClassKey(classOf[java.lang.String])
+  val DENSITY_GEOM     = new ClassKey(classOf[String])
+  val DENSITY_WEIGHT   = new ClassKey(classOf[String])
   val DENSITY_WIDTH    = new IntegerKey(256)
   val DENSITY_HEIGHT   = new IntegerKey(256)
 
@@ -53,6 +54,7 @@ object QueryHints {
   val ARROW_BATCH_SIZE         = new ClassKey(classOf[java.lang.Integer])
   val ARROW_SORT_FIELD         = new ClassKey(classOf[java.lang.String])
   val ARROW_SORT_REVERSE       = new ClassKey(classOf[java.lang.Boolean])
+  val ARROW_FORMAT_VERSION     = new ClassKey(classOf[String])
 
   val ARROW_DICTIONARY_FIELDS  = new ClassKey(classOf[java.lang.String])
   val ARROW_DICTIONARY_VALUES  = new ClassKey(classOf[java.lang.String])
@@ -120,6 +122,7 @@ object QueryHints {
     def getSampling: Option[(Float, Option[String])] = getSamplePercent.map((_, getSampleByField))
     def isDensityQuery: Boolean = hints.containsKey(DENSITY_BBOX)
     def getDensityEnvelope: Option[Envelope] = Option(hints.get(DENSITY_BBOX).asInstanceOf[Envelope])
+    def getDensityGeometry: Option[String] = Option(hints.get(DENSITY_GEOM).asInstanceOf[String])
     def getDensityBounds: Option[(Int, Int)] =
       for { w <- Option(hints.get(DENSITY_WIDTH).asInstanceOf[Int])
             h <- Option(hints.get(DENSITY_HEIGHT).asInstanceOf[Int]) } yield (w, h)
@@ -143,6 +146,7 @@ object QueryHints {
       Option(hints.get(ARROW_SORT_FIELD).asInstanceOf[String]).map { field =>
         (field, Option(hints.get(ARROW_SORT_REVERSE)).exists(_.asInstanceOf[Boolean]))
       }
+    def getArrowFormatVersion: Option[String] = Option(hints.get(ARROW_FORMAT_VERSION).asInstanceOf[String])
 
     def isStatsQuery: Boolean = hints.containsKey(STATS_STRING)
     def getStatsQuery: String = hints.get(STATS_STRING).asInstanceOf[String]

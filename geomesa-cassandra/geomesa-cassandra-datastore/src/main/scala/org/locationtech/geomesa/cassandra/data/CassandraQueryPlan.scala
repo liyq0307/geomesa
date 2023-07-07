@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2019 IBM
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2020 IBM
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -15,6 +15,7 @@ import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFe
 import org.locationtech.geomesa.index.api.{FilterStrategy, QueryPlan}
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.index.utils.Reprojection.QueryReferenceSystems
+import org.locationtech.geomesa.index.utils.ThreadManagement.Timeout
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.opengis.filter.Filter
 
@@ -75,5 +76,5 @@ case class StatementPlan(
   ) extends CassandraQueryPlan {
 
   override def scan(ds: CassandraDataStore): CloseableIterator[Row] =
-    CassandraBatchScan(ds.session, ranges, numThreads)
+    CassandraBatchScan(this, ds.session, ranges, numThreads, ds.config.queries.timeout.map(Timeout.apply))
 }

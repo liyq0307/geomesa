@@ -21,40 +21,38 @@ __ https://github.com/locationtech/geomesa/releases
 
 Older versions can be downloaded from the `LocationTech Maven repository`__.
 
-__ https://repo.locationtech.org/content/repositories/geomesa-releases/org/locationtech/geomesa
+__ https://repo.eclipse.org/content/repositories/geomesa-releases/org/locationtech/geomesa
 
 Maven Integration
 -----------------
 
-GeoMesa is now hosted on Maven Central. However, it still depends on several third-party libraries only available
-in other repositories. To include GeoMesa in your project, add the following repositories to your pom:
+GeoMesa artifacts are hosted on Maven Central. However, there are several required third-party libraries
+that are only available in other repositories. To include GeoMesa in your project, add the following
+repositories to your pom:
 
 .. code-block:: xml
 
     <repositories>
-      <repository>
-        <id>boundlessgeo</id>
-        <url>https://repo.boundlessgeo.com/main</url>
-      </repository>
+      <!-- geotools -->
       <repository>
         <id>osgeo</id>
-        <url>http://download.osgeo.org/webdav/geotools</url>
+        <url>https://repo.osgeo.org/repository/release</url>
       </repository>
+      <!-- confluent -->
       <repository>
-        <id>conjars.org</id>
-        <url>http://conjars.org/repo</url>
+        <id>confluent</id>
+        <url>https://packages.confluent.io/maven/</url>
       </repository>
     </repositories>
 
 and then include the desired ``geomesa-*`` dependencies:
-
 
 .. code-block:: xml
 
     <dependency>
       <groupId>org.locationtech.geomesa</groupId>
       <artifactId>geomesa-utils_2.11</artifactId>
-      <version>2.0.0-m.1</version>
+      <version>3.0.0</version>
     </dependency>
 
 Snapshot artifacts are available in the LocationTech snapshots repository:
@@ -63,7 +61,7 @@ Snapshot artifacts are available in the LocationTech snapshots repository:
 
     <repository>
       <id>geomesa-snapshots</id>
-      <url>https://repo.locationtech.org/content/repositories/geomesa-snapshots</url>
+      <url>https://repo.eclipse.org/content/repositories/geomesa-snapshots</url>
       <releases>
         <enabled>false</enabled>
       </releases>
@@ -82,7 +80,7 @@ To build and install the source distribution requires:
 
 Source can be cloned using `Git <http://git-scm.com/>`__ or downloaded from `GitHub`__.
 
-__ https://github.com/locationtech/geomesa/archive/master.tar.gz
+__ https://github.com/locationtech/geomesa/archive/main.tar.gz
 
 To build, change to the source directory and use Maven:
 

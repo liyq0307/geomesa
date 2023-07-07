@@ -14,7 +14,7 @@ geospatial analytics.
   <img align="center" height="150px" src="http://www.geomesa.org/img/geomesa-overview-848x250.png"></img>
 </p>
 
-#### ![LocationTech](https://pbs.twimg.com/profile_images/2552421256/hv2oas84tv7n3maianiq_normal.png) GeoMesa is a member of the [LocationTech](http://www.locationtech.org) working group of the Eclipse Foundation.
+#### ![LocationTech](https://pbs.twimg.com/profile_images/2552421256/hv2oas84tv7n3maianiq_normal.png) GeoMesa is a member of the [LocationTech](https://projects.eclipse.org/projects/locationtech.geomesa) working group of the Eclipse Foundation.
 
 ## Join the Community
 
@@ -50,8 +50,10 @@ geospatial analytics.
   [**Source**](https://github.com/locationtech/geomesa/archive/geomesa_2.11-${geomesa.release.version}.tar.gz) |
   [**CheckSums**](https://github.com/locationtech/geomesa/releases/geomesa_2.11-${geomesa.release.version})
 
-**Development version: ${geomesa.devel.version}** &nbsp;
-  [![Build Status](https://api.travis-ci.org/locationtech/geomesa.svg?branch=master)](https://travis-ci.org/locationtech/geomesa)
+**Development version: ${geomesa.devel.version}**
+
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  [![Build Status](https://github.com/locationtech/geomesa/workflows/CI/badge.svg?branch=main)](https://github.com/locationtech/geomesa/actions?query=branch%3Amain+workflow%3ACI)
 
 ### Verifying Downloads
 
@@ -92,14 +94,12 @@ in other repositories. To include GeoMesa in your project, add the following rep
 
 ```xml
 <repositories>
-  <repository>
-    <id>boundlessgeo</id>
-    <url>https://repo.boundlessgeo.com/main</url>
-  </repository>
+  <!-- geotools -->
   <repository>
     <id>osgeo</id>
-    <url>https://download.osgeo.org/webdav/geotools</url>
+    <url>https://repo.osgeo.org/repository/release</url>
   </repository>
+  <!-- confluent -->
   <repository>
     <id>confluent</id>
     <url>https://packages.confluent.io/maven/</url>
@@ -107,7 +107,7 @@ in other repositories. To include GeoMesa in your project, add the following rep
 </repositories>
 ```
 
-and then include the desired `geomesa-*` dependencies:
+You may then include the desired `geomesa-*` dependencies, for example:
 
 ```xml
 <dependency>
@@ -115,27 +115,26 @@ and then include the desired `geomesa-*` dependencies:
   <artifactId>geomesa-utils_2.11</artifactId>
   <version>${geomesa.release.version}</version>
 </dependency>
-  ...
 ```
 
 To download from the LocationTech Maven repository (required for older versions), add:
 
 ```xml
 <repository>
-  <id>locationtech-releases</id>
-  <url>https://repo.locationtech.org/content/groups/releases</url>
+  <id>eclipse-releases</id>
+  <url>https://repo.eclipse.org/content/groups/releases</url>
   <snapshots>
     <enabled>false</enabled>
   </snapshots>
 </repository>
 ```
 
-For snapshot integration, add:
+For nightly snapshot integration, add:
 
 ```xml
 <repository>
   <id>geomesa-snapshots</id>
-  <url>https://repo.locationtech.org/content/repositories/geomesa-snapshots</url>
+  <url>https://repo.eclipse.org/content/repositories/geomesa-snapshots</url>
   <releases>
     <enabled>false</enabled>
   </releases>
@@ -152,16 +151,13 @@ Similarly, integration with `sbt` is straightforward:
 ```scala
 // Add necessary resolvers
 resolvers ++= Seq(
-  "locationtech-releases" at "https://repo.locationtech.org/content/groups/releases",
-  "boundlessgeo" at "https://repo.boundlessgeo.com/main",
-  "osgeo" at "https://download.osgeo.org/webdav/geotools",
+  "osgeo" at "https://repo.osgeo.org/repository/release",
   "confluent" at "https://packages.confluent.io/maven"
 )
 
 // Select desired modules
 libraryDependencies ++= Seq(
-  "org.locationtech.geomesa" %% "geomesa-utils" % "${geomesa.release.version}",
-  ...
+  "org.locationtech.geomesa" %% "geomesa-utils" % "${geomesa.release.version}"
 )
 ```
 
@@ -171,7 +167,7 @@ Requirements:
 
 * [Git](http://git-scm.com/)
 * [Java JDK 8](http://www.oracle.com/technetwork/java/javase/downloads/index.html)
-* [Apache Maven](http://maven.apache.org/) 3.3.9 or later
+* [Apache Maven](http://maven.apache.org/) 3.6.3 or later
 
 Use Git to download the source code. Navigate to the destination directory, then run:
 

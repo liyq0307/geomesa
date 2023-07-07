@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -72,7 +72,7 @@ class Z3IndexKeySpace(val sft: SimpleFeatureType,
     val dtg = writable.getAttribute[Date](dtgIndex)
     val time = if (dtg == null) { 0 } else { dtg.getTime }
     val BinnedTime(b, t) = timeToIndex(time)
-    val z = try { sfc.index(geom.getX, geom.getY, t, lenient).z } catch {
+    val z = try { sfc.index(geom.getX, geom.getY, t, lenient) } catch {
       case NonFatal(e) => throw new IllegalArgumentException(s"Invalid z value from geometry/time: $geom,$dtg", e)
     }
     val shard = sharding(writable)
@@ -242,7 +242,7 @@ class Z3IndexKeySpace(val sft: SimpleFeatureType,
     // if the spatial predicate is rectangular (e.g. a bbox), the index is fine enough that we
     // don't need to apply the filter on top of it. this may cause some minor errors at extremely
     // fine resolutions, but the performance is worth it
-    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.looseBBox))
+    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.queries.looseBBox))
     def unboundedDates: Boolean = values.exists(_.temporalUnbounded.nonEmpty)
     def complexGeoms: Boolean = values.exists(_.geometries.values.exists(g => !GeometryUtils.isRectangular(g)))
     !looseBBox || unboundedDates || complexGeoms

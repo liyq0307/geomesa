@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -792,8 +792,8 @@ class JsonConverterTest extends Specification {
         val ec = converter.createEvaluationContext()
         val features = WithClose(converter.process(new ByteArrayInputStream(jsonStr.getBytes(StandardCharsets.UTF_8)), ec))(_.toList)
         features must haveLength(0)
-        ec.counter.getSuccess mustEqual 0
-        ec.counter.getFailure mustEqual 1
+        ec.success.getCount mustEqual 0
+        ec.failure.getCount mustEqual 1
       }
     }
 
@@ -997,8 +997,8 @@ class JsonConverterTest extends Specification {
         val ec = converter.createEvaluationContext()
         val features = WithClose(converter.process(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), ec))(_.toList)
         features must haveLength(1)
-        ec.counter.getSuccess mustEqual 1
-        ec.counter.getFailure mustEqual 0
+        ec.success.getCount mustEqual 1
+        ec.failure.getCount mustEqual 0
 
 
         val f = features.head
@@ -1129,8 +1129,8 @@ class JsonConverterTest extends Specification {
         val ec = converter.createEvaluationContext()
         val features = WithClose(converter.process(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), ec))(_.toList)
         features must haveLength(1)
-        ec.counter.getSuccess mustEqual 1
-        ec.counter.getFailure mustEqual 0
+        ec.success.getCount mustEqual 1
+        ec.failure.getCount mustEqual 0
         val f = features.head
 
         import org.locationtech.geomesa.utils.geotools.Conversions.RichSimpleFeature
@@ -1196,8 +1196,8 @@ class JsonConverterTest extends Specification {
         val iter = converter.process(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)), ec)
         val features = iter.toList
         features must haveLength(0)
-        ec.counter.getSuccess mustEqual 0
-        ec.counter.getFailure mustEqual 1
+        ec.success.getCount mustEqual 0
+        ec.failure.getCount mustEqual 1
       }
     }
 
@@ -1331,6 +1331,38 @@ class JsonConverterTest extends Specification {
           Seq("foo", WKTUtils.read("POINT (164.2 -48.6732)")),
           Seq("",    WKTUtils.read("POINT (154.3 -38.6832)")),
           Seq("bar", WKTUtils.read("POINT (152.3 -38.7832)"))
+        )
+        features.map(_.getAttributes.asScala) must containTheSameElementsAs(expected)
+      }
+    }
+
+    "infer schemas with all empty attributes" in {
+      val json = Seq(
+        """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[164.2,-48.6732]},"properties":{"A":""}}]}""",
+        """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[154.3,-38.6832]},"properties":{"A":""}}]}""",
+        """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[152.3,-38.7832]},"properties":{"A":""}}]}"""
+      ).mkString("\n")
+
+      def bytes = new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8))
+
+      val inferred = new JsonConverterFactory().infer(bytes)
+
+      inferred must beSome
+
+      val sft = inferred.get._1
+      sft.getAttributeDescriptors.asScala.map(d => (d.getLocalName, d.getType.getBinding)) mustEqual
+          Seq(("A", classOf[String]), ("geom", classOf[Point]))
+
+      WithClose(SimpleFeatureConverter(sft, inferred.get._2)) { converter =>
+        converter must not(beNull)
+
+        val features = WithClose(converter.process(bytes))(_.toList)
+        features must haveLength(3)
+
+        val expected = Seq(
+          Seq("", WKTUtils.read("POINT (164.2 -48.6732)")),
+          Seq("",    WKTUtils.read("POINT (154.3 -38.6832)")),
+          Seq("", WKTUtils.read("POINT (152.3 -38.7832)"))
         )
         features.map(_.getAttributes.asScala) must containTheSameElementsAs(expected)
       }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,20 +10,21 @@ package org.locationtech.geomesa.accumulo.data
 
 import java.util.Date
 
-import org.locationtech.jts.geom.Point
 import org.geotools.data._
 import org.geotools.data.simple.SimpleFeatureCollection
-import org.geotools.util.factory.Hints
 import org.geotools.feature.DefaultFeatureCollection
 import org.geotools.filter.text.cql2.CQL
 import org.geotools.filter.text.ecql.ECQL
+import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.util.Converters
+import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithMultipleSfts
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.utils.collection.{CloseableIterator, SelfClosingIterator}
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.geotools.{CRS_EPSG_4326, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.text.WKTUtils
+import org.locationtech.jts.geom.Point
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
@@ -56,7 +57,7 @@ class AccumuloDataStoreTransformsTest extends Specification with TestWithMultipl
     "handle transformations" >> {
       val sft = createNewSchema(spec)
       val sftName = sft.getTypeName
-      addFeatures(sft, createFeature(sft))
+      addFeatures(createFeature(sft))
 
       "with derived values" >> {
         val query = new Query(sftName, Filter.INCLUDE,
@@ -88,7 +89,7 @@ class AccumuloDataStoreTransformsTest extends Specification with TestWithMultipl
       }
 
       "with setPropertyNames" in {
-        val filter = ff.bbox("geom", 44.0, 48.0, 46.0, 50.0, "EPSG:4326")
+        val filter = ff.bbox(ff.property("geom"), new ReferencedEnvelope(44.0, 46.0, 48.0, 50.0, CRS_EPSG_4326))
         val query = new Query(sftName, filter)
         query.setPropertyNames(Array("geom"))
 
@@ -123,7 +124,7 @@ class AccumuloDataStoreTransformsTest extends Specification with TestWithMultipl
     "handle transformations" >> {
       val sft = createNewSchema(spec2)
       val sftName = sft.getTypeName
-      addFeatures(sft, createFeature2(sft, "v1"))
+      addFeatures(createFeature2(sft, "v1"))
 
       "across multiple fields" >> {
         val query = new Query(sftName, Filter.INCLUDE,
@@ -181,7 +182,7 @@ class AccumuloDataStoreTransformsTest extends Specification with TestWithMultipl
       import scala.collection.JavaConverters._
 
       val sft = createNewSchema("name:String:index=join,age:Int:index=full,dtg:Date,*geom:Point:srid=4326")
-      addFeature(sft, ScalaSimpleFeature.create(sft, "fid-1", "name1", "20", "2010-05-07T12:30:00.000Z", "POINT(45 49)"))
+      addFeature(ScalaSimpleFeature.create(sft, "fid-1", "name1", "20", "2010-05-07T12:30:00.000Z", "POINT(45 49)"))
       val filters = Seq(
         "bbox(geom,40,40,60,60) AND dtg BETWEEN '2010-05-07T12:00:00.000Z' AND '2010-05-07T13:00:00.000Z'",
         "bbox(geom,40,40,60,60)",
@@ -206,7 +207,7 @@ class AccumuloDataStoreTransformsTest extends Specification with TestWithMultipl
 
       val baseDate = Converters.convert("2014-01-01T00:00:00.000Z", classOf[Date]).getTime
 
-      addFeatures(sft, {
+      addFeatures({
         (0 until 5).map { i =>
           val sf = new ScalaSimpleFeature(sft, s"f$i")
           sf.setAttribute(0, s"trk$i")

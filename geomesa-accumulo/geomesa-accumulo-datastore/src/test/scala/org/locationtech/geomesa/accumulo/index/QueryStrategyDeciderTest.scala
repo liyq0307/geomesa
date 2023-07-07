@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -11,7 +11,7 @@ package org.locationtech.geomesa.accumulo.index
 import org.geotools.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.TestWithDataStore
+import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.accumulo.filter.TestFilters._
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
@@ -33,13 +33,13 @@ import scala.util.Random
 
 //Expand the test - https://geomesa.atlassian.net/browse/GEOMESA-308
 @RunWith(classOf[JUnitRunner])
-class QueryStrategyDeciderTest extends Specification with TestWithDataStore {
+class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
 
   import org.locationtech.geomesa.filter.ff
 
   override val spec = "nameHighCardinality:String:index=join:cardinality=high,ageJoinIndex:Long:index=join," +
       "heightFullIndex:Float:index=full,dtgJoinIndex:Date:index=join,weightNoIndex:String," +
-      "dtgNoIndex:Date,dtg:Date,*geom:Point:srid=4326"
+      "dtgNoIndex:Date,dtg:Date,*geom:Point:srid=4326;geomesa.index.dtg=dtg"
 
   addFeatures {
     val r = new Random(-57L)
@@ -64,7 +64,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithDataStore {
   }
 
   // run stats so we have the latest
-  ds.stats.generateStats(sft)
+  ds.stats.writer.analyze(sft)
 
   "Cost-based strategy decisions" should {
 
@@ -330,7 +330,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithDataStore {
               "AND ageJoinIndex = 'dummy'",
           "weightNoIndex = 'dummy' AND INTERSECTS(geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
           "ageJoinIndex ILIKE '%1' AND INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))",
-          "dtgNonIdx DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND " +
+          "dtgNoIndex DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND " +
               "INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND ageJoinIndex = '100'",
           "ageJoinIndex = '100001' AND INTERSECTS(geom, POLYGON ((45 20, 48 20, 48 27, 45 27, 45 20)))",
           "ageJoinIndex = '100001' AND INTERSECTS(geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
@@ -350,7 +350,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithDataStore {
               "ns:ageJoinIndex = 'dummy'",
           "ns:weightNoIndex = 'dummy' AND INTERSECTS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
           "ns:ageJoinIndex ILIKE '%1' AND INTERSECTS(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))",
-          "ns:dtgNonIdx DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND " +
+          "ns:dtgNoIndex DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND " +
               "INTERSECTS(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND ns:ageJoinIndex = '100'",
           "ns:ageJoinIndex = '100001' AND INTERSECTS(ns:geom, POLYGON ((45 20, 48 20, 48 27, 45 27, 45 20)))",
           "ns:ageJoinIndex = '100001' AND INTERSECTS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,6 +16,7 @@ import com.esotericsoftware.kryo.io.{Input, Output}
 import org.locationtech.geomesa.curve.TimePeriod
 import org.locationtech.geomesa.utils.cache.{CacheKeyGenerator, SoftThreadLocal}
 import org.locationtech.geomesa.utils.clearspring.{HyperLogLog, StreamSummary}
+import org.locationtech.geomesa.utils.kryo.NonMutatingInput
 import org.locationtech.geomesa.utils.stats.MinMax.MinMaxDefaults
 import org.locationtech.geomesa.utils.stats.Stat.ImmutableStat
 import org.locationtech.geomesa.utils.text.WKBUtils
@@ -52,13 +53,13 @@ object StatSerializer {
 
     override def serialize(stat: Stat): Array[Byte] = {
       val output = KryoStatSerializer.outputs.getOrElseUpdate(new Output(1024, -1))
-      output.clear()
+      output.setOutputStream(null) // resets the buffer
       KryoStatSerializer.write(output, sft, stat)
       output.toBytes
     }
 
     override def deserialize(bytes: Array[Byte], offset: Int, length: Int, immutable: Boolean): Stat = {
-      val input = KryoStatSerializer.inputs.getOrElseUpdate(new Input)
+      val input = KryoStatSerializer.inputs.getOrElseUpdate(new NonMutatingInput())
       input.setBuffer(bytes, offset, length)
       KryoStatSerializer.read(input, sft, immutable)
     }

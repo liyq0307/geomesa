@@ -1,12 +1,13 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.features.kryo.impl
+package org.locationtech.geomesa.features.kryo
+package impl
 
 import java.io.InputStream
 import java.util.{Date, UUID}
@@ -14,13 +15,13 @@ import java.util.{Date, UUID}
 import com.esotericsoftware.kryo.io.Input
 import com.typesafe.scalalogging.LazyLogging
 import org.locationtech.geomesa.features.SimpleFeatureSerializer
-import org.locationtech.geomesa.features.kryo.KryoBufferSimpleFeature
 import org.locationtech.geomesa.features.kryo.impl.KryoFeatureDeserialization.KryoAttributeReader
 import org.locationtech.geomesa.features.kryo.json.KryoJsonSerialization
 import org.locationtech.geomesa.features.kryo.serialization.KryoGeometrySerialization
 import org.locationtech.geomesa.features.serialization.ObjectType
 import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
-import org.locationtech.geomesa.utils.cache.{CacheKeyGenerator, SoftThreadLocal, SoftThreadLocalCache}
+import org.locationtech.geomesa.utils.cache.{CacheKeyGenerator, SoftThreadLocal, ThreadLocalCache}
+import org.locationtech.geomesa.utils.kryo.NonMutatingInput
 import org.locationtech.jts.geom.Geometry
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.SimpleFeatureType
@@ -47,18 +48,18 @@ trait KryoFeatureDeserialization extends SimpleFeatureSerializer with LazyLoggin
 
 object KryoFeatureDeserialization extends LazyLogging {
 
-  private val inputs  = new SoftThreadLocal[Input]()
-  private val readers = new SoftThreadLocalCache[String, Array[KryoAttributeReader]]()
+  private val inputBytes   = new SoftThreadLocal[Input]()
+  private val inputStreams = new SoftThreadLocal[Input]()
+  private val readers      = new ThreadLocalCache[String, Array[KryoAttributeReader]](SerializerCacheExpiry)
 
   def getInput(bytes: Array[Byte], offset: Int, count: Int): Input = {
-    val in = inputs.getOrElseUpdate(new Input)
+    val in = inputBytes.getOrElseUpdate(new NonMutatingInput())
     in.setBuffer(bytes, offset, count)
     in
   }
 
   def getInput(stream: InputStream): Input = {
-    val in = inputs.getOrElseUpdate(new Input)
-    in.setBuffer(Array.ofDim(1024))
+    val in = inputStreams.getOrElseUpdate(new NonMutatingInput(Array.ofDim(1024)))
     in.setInputStream(stream)
     in
   }

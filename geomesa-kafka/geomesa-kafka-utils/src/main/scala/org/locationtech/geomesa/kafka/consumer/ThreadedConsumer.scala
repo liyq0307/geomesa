@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -31,7 +31,7 @@ abstract class ThreadedConsumer(
 
   protected def consume(record: ConsumerRecord[Array[Byte], Array[Byte]]): Unit
 
-  private lazy val topics = consumers.flatMap(_.subscription().asScala).distinct
+  private val topics = scala.collection.mutable.Set.empty[String]
 
   private val executor: ExecutorService = Executors.newFixedThreadPool(consumers.length)
 
@@ -53,6 +53,7 @@ abstract class ThreadedConsumer(
     val format = if (consumers.lengthCompare(10) > 0) { "%02d" } else { "%d" }
     var i = 0
     consumers.foreach { c =>
+      c.subscription().asScala.foreach(topics.add)
       executor.execute(new ConsumerRunnable(c, String.format(format, Int.box(i)), handler))
       i += 1
     }

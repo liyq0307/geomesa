@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -17,6 +17,7 @@ import org.locationtech.geomesa.features.TransformSimpleFeature
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
 import org.locationtech.geomesa.parquet.io.SimpleFeatureReadSupport
 import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.annotation.tailrec
@@ -35,8 +36,8 @@ class ParquetPathReader(
   private val transformFeature: SimpleFeature => SimpleFeature = transform match {
     case None => null
     case Some((tdefs, tsft)) =>
-      val attributes = TransformSimpleFeature.attributes(readSft, tsft, tdefs)
-      f => new TransformSimpleFeature(tsft, attributes, f)
+      val definitions = Transforms(readSft, tdefs).toArray
+      f => new TransformSimpleFeature(tsft, definitions, f)
   }
 
   override def read(path: Path): CloseableIterator[SimpleFeature] = {

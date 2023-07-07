@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -259,10 +259,9 @@ abstract class AbstractFileSystemStorage(
       feature
     }
 
-    override def flush(): Unit = FlushQuietly(modifiers.values.toSeq ++ deleters.values).foreach(e => throw e)
+    override def flush(): Unit = FlushQuietly.raise(modifiers.values.toSeq ++ deleters.values)
 
-    override def close(): Unit =
-      CloseQuietly(Seq(reader) ++ modifiers.values ++ deleters.values ++ observers).foreach(e => throw e)
+    override def close(): Unit = CloseQuietly.raise(Seq(reader) ++ modifiers.values ++ deleters.values ++ observers)
   }
 
   /**

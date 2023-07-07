@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -14,9 +14,10 @@ import org.geotools.data.store.{ContentEntry, ContentFeatureSource, ContentFeatu
 import org.geotools.data.{FeatureReader, FeatureWriter, Query}
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.locationtech.geomesa.arrow.ArrowProperties
-import org.locationtech.geomesa.arrow.io.{SimpleFeatureArrowFileReader, SimpleFeatureArrowFileWriter}
+import org.locationtech.geomesa.arrow.io.{FormatVersion, SimpleFeatureArrowFileReader, SimpleFeatureArrowFileWriter}
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.utils.io.CloseWithLogging
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 class ArrowFeatureSource(entry: ContentEntry, reader: SimpleFeatureArrowFileReader)
@@ -51,8 +52,6 @@ class ArrowFeatureSource(entry: ContentEntry, reader: SimpleFeatureArrowFileRead
 class ArrowFeatureStore(entry: ContentEntry, reader: SimpleFeatureArrowFileReader)
     extends ContentFeatureStore(entry, Query.ALL) {
 
-  import org.locationtech.geomesa.arrow.allocator
-
   private val delegate = new ArrowFeatureSource(entry, reader)
 
   private val featureIds = new AtomicLong(0)
@@ -62,9 +61,10 @@ class ArrowFeatureStore(entry: ContentEntry, reader: SimpleFeatureArrowFileReade
     require((flags | WRITER_ADD) == WRITER_ADD, "Only append supported")
 
     val sft = delegate.getSchema
-    val os = entry.getDataStore.asInstanceOf[ArrowDataStore].createOutputStream(true)
+    val os = entry.getDataStore.asInstanceOf[ArrowDataStore].createOutputStream() // append = true
 
-    val writer = SimpleFeatureArrowFileWriter(sft, os, encoding = SimpleFeatureEncoding.Max)
+    val ipcOpts = FormatVersion.options(FormatVersion.ArrowFormatVersion.get)
+    val writer = SimpleFeatureArrowFileWriter(os, sft, Map.empty, SimpleFeatureEncoding.Max, ipcOpts, None)
     val flushCount = ArrowProperties.BatchSize.get.toLong
 
     new FeatureWriter[SimpleFeatureType, SimpleFeature] {
@@ -91,7 +91,7 @@ class ArrowFeatureStore(entry: ContentEntry, reader: SimpleFeatureArrowFileReade
 
       override def remove(): Unit = throw new NotImplementedError()
 
-      override def close(): Unit = writer.close()
+      override def close(): Unit = CloseWithLogging(writer)
     }
   }
 

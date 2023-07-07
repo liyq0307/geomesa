@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -27,10 +27,10 @@ object SimpleFeatureDeserializers {
    * @param options any options that were used to encode
    * @return a new [[SimpleFeatureSerializer]]
    */
-  def apply(sft: SimpleFeatureType, typ: SerializationType, options: Set[SerializationOption] = Set.empty) =
+  def apply(sft: SimpleFeatureType, typ: SerializationType, options: Set[SerializationOption] = Set.empty): SimpleFeatureSerializer =
     typ match {
       case SerializationType.KRYO => KryoFeatureSerializer(sft, options)
-      case SerializationType.AVRO => new AvroFeatureDeserializer(sft, options)
+      case SerializationType.AVRO => new AvroFeatureSerializer(sft, options)
     }
 }
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -98,12 +98,6 @@ class GeoCQEngine(val sft: SimpleFeatureType,
 
   def size(): Int = cqcache.size()
   def clear(): Unit = cqcache.clear()
-
-  @deprecated def add(sf: SimpleFeature): Boolean = cqcache.add(sf)
-  @deprecated def addAll(sfs: util.Collection[SimpleFeature]): Boolean = cqcache.addAll(sfs)
-  @deprecated def remove(sf: SimpleFeature): Boolean = cqcache.remove(sf)
-  @deprecated def getById(id: String): Option[SimpleFeature] = Option(get(id))
-  @deprecated def getReaderForFilter(filter: Filter): Iterator[SimpleFeature] = query(filter)
 
   private def addIndices(): Unit = {
 

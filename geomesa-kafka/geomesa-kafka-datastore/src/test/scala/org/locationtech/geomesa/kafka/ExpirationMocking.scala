@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,6 +9,8 @@
 package org.locationtech.geomesa.kafka
 
 import java.util.concurrent.{Delayed, ScheduledFuture, TimeUnit}
+
+import com.github.benmanes.caffeine.cache.Ticker
 
 object ExpirationMocking {
 
@@ -26,5 +28,10 @@ object ExpirationMocking {
     override def isDone: Boolean = runnable.done
     override def get(): T = runnable.runnable.run().asInstanceOf[T]
     override def get(timeout: Long, unit: TimeUnit): T = runnable.runnable.run().asInstanceOf[T]
+  }
+
+  class MockTicker extends Ticker {
+    var millis = System.currentTimeMillis()
+    override def read(): Long = millis * 1000000L
   }
 }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -11,23 +11,24 @@ package org.locationtech.geomesa.hbase.data
 import java.util.Date
 
 import com.typesafe.scalalogging.LazyLogging
-import org.locationtech.jts.geom.Point
 import org.geotools.data._
-import org.geotools.data.simple.SimpleFeatureStore
 import org.geotools.util.factory.Hints
-import org.geotools.feature.DefaultFeatureCollection
+import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.process.transform.BinConversionProcess
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.EncodedValues
-import org.locationtech.geomesa.hbase.data.HBaseDataStoreParams._
-import org.locationtech.geomesa.process.transform.BinConversionProcess
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
+import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.jts.geom.Point
 import org.opengis.filter.Filter
+import org.specs2.mutable.Specification
+import org.specs2.runner.JUnitRunner
 
 import scala.collection.JavaConversions._
 
-
-class HBaseBinAggregatorTest extends HBaseTest with LazyLogging {
+@RunWith(classOf[JUnitRunner])
+class HBaseBinAggregatorTest extends Specification with LazyLogging {
   sequential
 
   lazy val process = new BinConversionProcess
@@ -38,11 +39,17 @@ class HBaseBinAggregatorTest extends HBaseTest with LazyLogging {
   var sft = SimpleFeatureTypes.createType(sftName, spec)
 
   lazy val params = Map(
-    ConnectionParam.getName -> connection,
-    HBaseCatalogParam.getName -> catalogTableName)
+    HBaseDataStoreParams.ConnectionParam.getName   -> MiniCluster.connection,
+    HBaseDataStoreParams.HBaseCatalogParam.getName -> getClass.getSimpleName,
+    HBaseDataStoreParams.BinCoprocessorParam.key   -> true
+  )
 
   lazy val ds = DataStoreFinder.getDataStore(params).asInstanceOf[HBaseDataStore]
-  var fs: SimpleFeatureStore = _
+  lazy val dsSemiLocal = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.BinCoprocessorParam.key -> false)).asInstanceOf[HBaseDataStore]
+  lazy val dsFullLocal = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.RemoteFilteringParam.key -> false)).asInstanceOf[HBaseDataStore]
+  lazy val dsThreads1 = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.CoprocessorThreadsParam.key -> "1")).asInstanceOf[HBaseDataStore]
+  lazy val dsYieldPartials = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.YieldPartialResultsParam.key -> true)).asInstanceOf[HBaseDataStore]
+  lazy val dataStores = Seq(ds, dsSemiLocal, dsFullLocal, dsThreads1, dsYieldPartials)
 
   lazy val features = (0 until 10).map { i =>
     val sf = new ScalaSimpleFeature(sft, s"0$i")
@@ -70,15 +77,9 @@ class HBaseBinAggregatorTest extends HBaseTest with LazyLogging {
     ds.getSchema(sftName) must beNull
     ds.createSchema(SimpleFeatureTypes.createType(sftName, spec))
     sft = ds.getSchema(sftName)
-    fs = ds.getFeatureSource(sftName).asInstanceOf[SimpleFeatureStore]
-
-    val featureCollection = new DefaultFeatureCollection(sftName, sft)
-    features.foreach { f =>
-      f.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
-      featureCollection.add(f)
+    WithClose(ds.getFeatureWriterAppend(sftName, Transaction.AUTO_COMMIT)) { writer =>
+      features.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
     }
-    // write the feature to the store
-    fs.addFeatures(featureCollection)
   }
 
   def toTuples(value: EncodedValues): Any = value match {
@@ -86,32 +87,51 @@ class HBaseBinAggregatorTest extends HBaseTest with LazyLogging {
     case EncodedValues(trackId, lat, lon, dtg, label) => (((trackId, dtg), (lat, lon)), label)
   }
 
+  "HBaseDataStoreFactory" should {
+    "enable coprocessors" in {
+      ds.config.remoteFilter must beTrue
+      ds.config.coprocessors.enabled.bin must beTrue
+      dsSemiLocal.config.remoteFilter must beTrue
+      dsSemiLocal.config.coprocessors.enabled.bin must beFalse
+      dsFullLocal.config.remoteFilter must beFalse
+    }
+  }
+
   "BinConversionProcess" should {
-    "encode an accumulo feature collection in distributed fashion" in {
-      val bytes = process.execute(fs.getFeatures(Filter.INCLUDE), "name", null, null, null, "lonlat").toList
-      bytes.length must beLessThan(10)
-      val decoded = bytes.reduceLeft(_ ++ _).grouped(16).toSeq.map(BinaryOutputEncoder.decode).map(toTuples)
-      decoded must containTheSameElementsAs(names.zip(dates).zip(lonlat))
+    "encode a feature collection in distributed fashion" in {
+      foreach(dataStores) { ds =>
+        val fc = ds.getFeatureSource(sftName).getFeatures(Filter.INCLUDE)
+        val bytes = process.execute(fc, "name", null, null, null, "lonlat").toList
+        bytes.length must beLessThan(10)
+        val decoded = bytes.reduceLeft(_ ++ _).grouped(16).toSeq.map(BinaryOutputEncoder.decode).map(toTuples)
+        decoded must containTheSameElementsAs(names.zip(dates).zip(lonlat))
+      }
     }
 
-    "encode an HBase feature collection in distributed fashion with alternate values" in {
-      val bytes = process.execute(fs.getFeatures(Filter.INCLUDE), "name", "geom2", "dtg2", null, "lonlat").toList
-      bytes.length must beLessThan(10)
-      val decoded = bytes.reduceLeft(_ ++ _).grouped(16).toSeq.map(BinaryOutputEncoder.decode).map(toTuples)
-      decoded must containTheSameElementsAs(names.zip(dates2).zip(lonlat2))
+    "encode a feature collection in distributed fashion with alternate values" in {
+      foreach(dataStores) { ds =>
+        val fc = ds.getFeatureSource(sftName).getFeatures(Filter.INCLUDE)
+        val bytes = process.execute(fc, "name", "geom2", "dtg2", null, "lonlat").toList
+        bytes.length must beLessThan(10)
+        val decoded = bytes.reduceLeft(_ ++ _).grouped(16).toSeq.map(BinaryOutputEncoder.decode).map(toTuples)
+        decoded must containTheSameElementsAs(names.zip(dates2).zip(lonlat2))
+      }
     }
 
-    "encode an HBase feature collection in distributed fashion with labels" in {
-      val bytes = process.execute(fs.getFeatures(Filter.INCLUDE), "name", null, null, "track", "lonlat").toList
-      bytes.length must beLessThan(10)
-      val decoded = bytes.reduceLeft(_ ++ _).grouped(24).toSeq.map(BinaryOutputEncoder.decode).map(toTuples)
-      decoded must containTheSameElementsAs(names.zip(dates).zip(lonlat).zip(tracks))
+    "encode a feature collection in distributed fashion with labels" in {
+      foreach(dataStores) { ds =>
+        val fc = ds.getFeatureSource(sftName).getFeatures(Filter.INCLUDE)
+        val bytes = process.execute(fc, "name", null, null, "track", "lonlat").toList
+        bytes.length must beLessThan(10)
+        val decoded = bytes.reduceLeft(_ ++ _).grouped(24).toSeq.map(BinaryOutputEncoder.decode).map(toTuples)
+        decoded must containTheSameElementsAs(names.zip(dates).zip(lonlat).zip(tracks))
+      }
     }
   }
 
   step {
     logger.info("Cleaning up HBase Bin Test")
-    ds.dispose()
+    dataStores.foreach { _.dispose() }
   }
 }
 

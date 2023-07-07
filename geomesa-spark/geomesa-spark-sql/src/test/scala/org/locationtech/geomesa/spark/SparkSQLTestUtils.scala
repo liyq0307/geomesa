@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -28,6 +28,7 @@ object SparkSQLTestUtils {
       .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       .config("spark.kryo.registrator", classOf[GeoMesaSparkKryoRegistrator].getName)
       .config("spark.sql.crossJoin.enabled", "true")
+      .config("spark.ui.enabled", value = false)
       .master("local[*]")
       .getOrCreate()
   }
@@ -67,8 +68,7 @@ object SparkSQLTestUtils {
     ds.createSchema(sft)
 
     val features = DataUtilities.collection(points.map(x => {
-      new ScalaSimpleFeature(sft, x._1,
-        initialValues=Array(x._1, WKTUtils.read(x._2).asInstanceOf[Point]))
+      new ScalaSimpleFeature(sft, x._1, Array(x._1, WKTUtils.read(x._2).asInstanceOf[Point]))
     }).toList)
 
     val fs = ds.getFeatureSource(name).asInstanceOf[SimpleFeatureStore]
@@ -83,8 +83,7 @@ object SparkSQLTestUtils {
     ds.createSchema(sft)
 
     val features = DataUtilities.collection(geoms.map(x => {
-      new ScalaSimpleFeature(sft, x._1,
-        initialValues=Array(x._1, WKTUtils.read(x._2)))
+      new ScalaSimpleFeature(sft, x._1, Array(x._1, WKTUtils.read(x._2)))
     }).toList)
 
     val fs = ds.getFeatureSource(name).asInstanceOf[SimpleFeatureStore]

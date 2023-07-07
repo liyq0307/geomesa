@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -27,7 +27,7 @@ import org.locationtech.geomesa.index.planning.QueryPlanner
 import org.locationtech.geomesa.index.stats.HasGeoMesaStats
 import org.locationtech.geomesa.index.utils.{ExplainLogging, Explainer}
 import org.locationtech.geomesa.utils.conf.SemanticVersion.MinorOrdering
-import org.locationtech.geomesa.utils.conf.{FeatureExpiration, GeoMesaProperties, IndexId, SemanticVersion}
+import org.locationtech.geomesa.utils.conf.{GeoMesaProperties, IndexId, SemanticVersion}
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.{AttributeOptions, Configs, InternalConfigs}
@@ -56,9 +56,6 @@ abstract class GeoMesaDataStore[DS <: GeoMesaDataStore[DS]](val config: GeoMesaD
   val queryPlanner: QueryPlanner[DS] = new QueryPlanner(this)
 
   val manager: IndexManager = new IndexManager(this)
-
-  @deprecated
-  protected def catalog: String = config.catalog
 
   // abstract methods to be implemented by subclasses
 
@@ -374,7 +371,7 @@ abstract class GeoMesaDataStore[DS <: GeoMesaDataStore[DS]](val config: GeoMesaD
     if (sft == null) {
       throw new IOException(s"Schema '$typeName' has not been initialized. Please call 'createSchema' first.")
     }
-    if (config.caching) {
+    if (config.queries.caching) {
       new GeoMesaFeatureStore(this, sft, queryPlanner) with GeoMesaFeatureSource.CachingFeatureSource
     } else {
       new GeoMesaFeatureStore(this, sft, queryPlanner)
@@ -408,7 +405,7 @@ abstract class GeoMesaDataStore[DS <: GeoMesaDataStore[DS]](val config: GeoMesaD
     * @return
     */
   private [geotools] def getFeatureReader(sft: SimpleFeatureType, query: Query): GeoMesaFeatureReader =
-    GeoMesaFeatureReader(sft, query, queryPlanner, config.queryTimeout, config.audit)
+    GeoMesaFeatureReader(sft, query, queryPlanner, config.queries.timeout, config.audit)
 
   /**
    * Create a general purpose writer that is capable of updates and deletes.
@@ -531,17 +528,6 @@ abstract class GeoMesaDataStore[DS <: GeoMesaDataStore[DS]](val config: GeoMesaD
     }
   }
 
-  @deprecated("use getDistributedVersion")
-  def getDistributeVersion: Option[SemanticVersion] = getDistributedVersion
-
-  /**
-    * Gets the geomesa version
-    *
-    * @return (client version, iterator version)
-    */
-  @deprecated("use getClientVersion and getDistributedVersion")
-  def getVersion: (String, Set[String]) = (GeoMesaProperties.ProjectVersion, loadIteratorVersions)
-
   // end public methods
 }
 
@@ -584,7 +570,8 @@ object GeoMesaDataStore extends LazyLogging {
     }
   }
 
-  private val versions = Caffeine.newBuilder().refreshAfterWrite(1, TimeUnit.DAYS)
+  private val versions =
+    Caffeine.newBuilder().refreshAfterWrite(1, TimeUnit.DAYS)
       .buildAsync[VersionKey, Either[Exception, Option[SemanticVersion]]](loader)
 
   /**

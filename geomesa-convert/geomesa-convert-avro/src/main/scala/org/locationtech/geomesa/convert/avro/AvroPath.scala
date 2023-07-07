@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -121,15 +121,19 @@ object AvroPath extends BasicParser {
     }
 
     private def pathExpression: Rule1[PathExpr] = rule("PathExpression") {
-      "/" ~ unquotedString ~ optional("$type=" ~ unquotedString) ~~> {
+      "/" ~ identifier ~ optional("$type=" ~ identifier) ~~> {
         (field, typed) => PathExpr(field, typed.map(UnionTypeFilter.apply).getOrElse(_ => true))
       }
     }
 
     private def arrayRecord: Rule1[ArrayRecordExpr] = rule("ArrayRecord") {
-      ("[$" ~ unquotedString ~ "=" ~ unquotedString ~ "]") ~~> {
+      ("[$" ~ identifier ~ "=" ~ identifier ~ "]") ~~> {
         (field, matched) => ArrayRecordExpr(field, matched)
       }
+    }
+
+    private def identifier: Rule1[String] = rule("Identifier") {
+      oneOrMore(char | anyOf(".-")) ~> { s => s }
     }
   }
 }

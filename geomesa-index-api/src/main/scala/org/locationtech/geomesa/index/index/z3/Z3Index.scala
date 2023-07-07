@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,14 +16,15 @@ import org.locationtech.geomesa.index.strategies.SpatioTemporalFilterStrategy
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
 import org.opengis.feature.simple.SimpleFeatureType
 
-class Z3Index protected (ds: GeoMesaDataStore[_],
-                         sft: SimpleFeatureType,
-                         version: Int,
-                         val geom: String,
-                         val dtg: String,
-                         mode: IndexMode)
-    extends GeoMesaFeatureIndex[Z3IndexValues, Z3IndexKey](ds, sft, Z3Index.name, version, Seq(geom, dtg), mode)
-        with SpatioTemporalFilterStrategy[Z3IndexValues, Z3IndexKey] {
+class Z3Index protected (
+    ds: GeoMesaDataStore[_],
+    sft: SimpleFeatureType,
+    version: Int,
+    geom: String,
+    dtg: String,
+    mode: IndexMode
+  ) extends GeoMesaFeatureIndex[Z3IndexValues, Z3IndexKey](ds, sft, Z3Index.name, version, Seq(geom, dtg), mode)
+      with SpatioTemporalFilterStrategy[Z3IndexValues, Z3IndexKey] {
 
   def this(ds: GeoMesaDataStore[_], sft: SimpleFeatureType, geomField: String, dtgField: String, mode: IndexMode) =
     this(ds, sft, Z3Index.version, geomField, dtgField, mode)

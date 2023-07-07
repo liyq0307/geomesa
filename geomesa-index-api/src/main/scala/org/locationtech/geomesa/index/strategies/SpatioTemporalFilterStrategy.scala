@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -20,15 +20,15 @@ trait SpatioTemporalFilterStrategy[T, U] extends GeoMesaFeatureIndex[T, U] {
 
   import SpatioTemporalFilterStrategy.StaticCost
 
-  def geom: String
-  def dtg: String
+  // attributes are assumed to be a geometry field and a date field
+  lazy private val Seq(geom, dtg) = attributes
 
   override def getFilterStrategy(filter: Filter,
                                  transform: Option[SimpleFeatureType],
                                  stats: Option[GeoMesaStats]): Option[FilterStrategy] = {
 
     if (filter == Filter.INCLUDE) {
-      Some(FilterStrategy(this, None, None, Long.MaxValue))
+      Some(FilterStrategy(this, None, None, temporal = false, Long.MaxValue))
     } else if (filter == Filter.EXCLUDE) {
       None
     } else {
@@ -37,7 +37,7 @@ trait SpatioTemporalFilterStrategy[T, U] extends GeoMesaFeatureIndex[T, U] {
 
       if (!intervals.disjoint && !intervals.exists(_.isBounded)) {
         // if there aren't any intervals then we would have to do a full table scan
-        Some(FilterStrategy(this, None, Some(filter), Long.MaxValue))
+        Some(FilterStrategy(this, None, Some(filter), temporal = false, Long.MaxValue))
       } else {
         val (spatial, others) = nonTemporal match {
           case Some(f) => FilterExtractingVisitor(f, geom, sft, SpatialFilterStrategy.spatialCheck)
@@ -60,22 +60,12 @@ trait SpatioTemporalFilterStrategy[T, U] extends GeoMesaFeatureIndex[T, U] {
           }
         }
 
-        Some(FilterStrategy(this, Some(primary), others, cost))
+        Some(FilterStrategy(this, Some(primary), others, temporal = true, cost))
       }
     }
   }
 }
 
 object SpatioTemporalFilterStrategy {
-
   val StaticCost = 200L
-
-  /**
-    * Returns true if the temporal filters create a range with an upper and lower bound
-    */
-  @deprecated("deprecated with no replacement")
-  def isBounded(temporalFilter: Filter, sft: SimpleFeatureType, dtg: String): Boolean = {
-    val intervals = FilterHelper.extractIntervals(temporalFilter, dtg)
-    intervals.nonEmpty && intervals.values.forall(_.isBoundedBothSides)
-  }
 }

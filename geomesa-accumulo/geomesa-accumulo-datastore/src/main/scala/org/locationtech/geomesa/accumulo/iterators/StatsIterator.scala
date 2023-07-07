@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,8 +16,7 @@ import org.apache.accumulo.core.data.{Key, Value}
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.iterators.StatsScan
-import org.locationtech.geomesa.index.iterators.StatsScan.StatsResultsToFeatures
-import org.locationtech.geomesa.utils.stats._
+import org.locationtech.geomesa.index.iterators.StatsScan.{StatResult, StatsResultsToFeatures}
 import org.opengis.feature.simple.SimpleFeatureType
 import org.opengis.filter.Filter
 
@@ -26,7 +25,7 @@ import org.opengis.filter.Filter
  *
  * Only works with z3IdxStrategy for now (queries that date filters)
  */
-class StatsIterator extends BaseAggregatingIterator[Stat] with StatsScan
+class StatsIterator extends BaseAggregatingIterator[StatResult] with StatsScan
 
 object StatsIterator extends LazyLogging {
 

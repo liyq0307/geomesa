@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,12 +10,14 @@ package org.locationtech.geomesa.accumulo.iterators
 
 import org.apache.accumulo.core.data.{Range => aRange, _}
 import org.apache.accumulo.core.iterators.{IteratorEnvironment, SortedKeyValueIterator}
+import org.locationtech.geomesa.accumulo.iterators.BaseAggregatingIterator.BatchScanCallback
 import org.locationtech.geomesa.index.iterators.AggregatingScan
+import org.locationtech.geomesa.index.iterators.AggregatingScan.{AggregateCallback, RowValue}
 
 /**
  * Aggregating iterator - only works on kryo-encoded features
  */
-abstract class BaseAggregatingIterator[T <: AnyRef { def isEmpty: Boolean; def clear(): Unit }]
+abstract class BaseAggregatingIterator[T <: AggregatingScan.Result]
     extends SortedKeyValueIterator[Key, Value] with AggregatingScan[T] {
 
   import scala.collection.JavaConverters._
@@ -25,6 +27,7 @@ abstract class BaseAggregatingIterator[T <: AnyRef { def isEmpty: Boolean; def c
   protected var topKey: Key = _
   private var topValue: Value = new Value()
   private var currentRange: aRange = _
+  private var needToAdvance = false
 
   override def init(src: SortedKeyValueIterator[Key, Value],
                     options: java.util.Map[String, String],
@@ -40,21 +43,14 @@ abstract class BaseAggregatingIterator[T <: AnyRef { def isEmpty: Boolean; def c
   override def seek(range: aRange, columnFamilies: java.util.Collection[ByteSequence], inclusive: Boolean): Unit = {
     currentRange = range
     source.seek(range, columnFamilies, inclusive)
+    needToAdvance = false
     findTop()
   }
 
-  override def next(): Unit = {
-    if (!source.hasTop) {
-      topKey = null
-      topValue = null
-    } else {
-      findTop()
-    }
-  }
+  override def next(): Unit = findTop()
 
-  // noinspection LanguageFeature
-  def findTop(): Unit = {
-    val result = aggregate()
+  private def findTop(): Unit = {
+    val result = aggregate(new BatchScanCallback()).result
     if (result == null) {
       topKey = null // hasTop will be false
       topValue = null
@@ -67,15 +63,39 @@ abstract class BaseAggregatingIterator[T <: AnyRef { def isEmpty: Boolean; def c
     }
   }
 
-  override def hasNextData: Boolean = source.hasTop && !currentRange.afterEndKey(source.getTopKey)
+  override protected def hasNextData: Boolean = {
+    if (needToAdvance) {
+      source.next() // advance the source iterator, this may invalidate the top key/value we've already read
+      needToAdvance = false
+    }
+    source.hasTop && !currentRange.afterEndKey(source.getTopKey)
+  }
 
-  override def nextData(setValues: (Array[Byte], Int, Int, Array[Byte], Int, Int) => Unit): Unit = {
+  override protected def nextData(): RowValue = {
+    needToAdvance = true
     topKey = source.getTopKey
     val value = source.getTopValue.get()
-    setValues(topKey.getRow.getBytes, 0, topKey.getRow.getLength, value, 0, value.length)
-    source.next() // Advance the source iterator
+    RowValue(topKey.getRow.getBytes, 0, topKey.getRow.getLength, value, 0, value.length)
   }
 
   override def deepCopy(env: IteratorEnvironment): SortedKeyValueIterator[Key, Value] =
     throw new NotImplementedError()
+}
+
+object BaseAggregatingIterator {
+
+  private class BatchScanCallback extends AggregateCallback {
+
+    private var bytes: Array[Byte] = _
+
+    override def batch(bytes: Array[Byte]): Boolean = {
+      this.bytes = bytes
+      false // we want to stop scanning and return the batch
+    }
+
+    // we always keep scanning and rely on client connections to stop the scan
+    override def partial(bytes: => Array[Byte]): Boolean = true
+
+    def result: Array[Byte] = bytes
+  }
 }

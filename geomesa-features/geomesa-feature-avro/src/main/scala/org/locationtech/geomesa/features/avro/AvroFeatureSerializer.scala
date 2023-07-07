@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -120,12 +120,3 @@ class ProjectingAvroFeatureDeserializer(original: SimpleFeatureType, projected: 
     reader.read(null, reuse)
   }
 }
-
-/**
- * @param sft the simple feature type to decode
- * @param options the options what were applied when encoding
- */
-@deprecated("Replaced with AvroFeatureSerializer")
-class AvroFeatureDeserializer(sft: SimpleFeatureType, options: Set[SerializationOption] = Set.empty)
-    extends AvroFeatureSerializer(sft, options)
-

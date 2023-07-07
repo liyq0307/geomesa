@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -15,7 +15,7 @@ import org.apache.hadoop.io.serializer.{Deserializer, Serialization, Serializer}
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.jobs.GeoMesaConfigurator
 import org.locationtech.geomesa.jobs.mapreduce.SimpleFeatureSerialization._
-import org.locationtech.geomesa.utils.cache.SoftThreadLocalCache
+import org.locationtech.geomesa.utils.cache.ThreadLocalCache
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
@@ -38,8 +38,10 @@ class SimpleFeatureSerialization extends Configured with Serialization[SimpleFea
 
 object SimpleFeatureSerialization {
 
+  import org.locationtech.geomesa.features.kryo.SerializerCacheExpiry
+
   // re-usable serializers since they are not thread safe
-  private val serializers = new SoftThreadLocalCache[String, KryoFeatureSerializer]()
+  private val serializers = new ThreadLocalCache[String, KryoFeatureSerializer](SerializerCacheExpiry)
 
   private def serializer(key: String, sft: SimpleFeatureType): KryoFeatureSerializer =
     serializers.getOrElseUpdate(key, KryoFeatureSerializer.builder(sft).withId.withUserData.build())

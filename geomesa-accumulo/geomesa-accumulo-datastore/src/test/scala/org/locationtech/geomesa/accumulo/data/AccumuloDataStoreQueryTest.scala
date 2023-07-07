@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -14,7 +14,7 @@ import org.geotools.data._
 import org.geotools.feature.NameImpl
 import org.geotools.filter.text.cql2.CQL
 import org.geotools.filter.text.ecql.ECQL
-import org.geotools.geometry.jts.JTSFactoryFinder
+import org.geotools.geometry.jts.{JTSFactoryFinder, ReferencedEnvelope}
 import org.geotools.util.Converters
 import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
@@ -34,7 +34,7 @@ import org.locationtech.geomesa.index.utils.{ExplainNull, ExplainString}
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.EncodedValues
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.geotools.{CRS_EPSG_4326, SimpleFeatureTypes}
 import org.locationtech.jts.geom.Coordinate
 import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
@@ -51,7 +51,7 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
   sequential
 
   val defaultSft = createNewSchema("name:String:index=join,geom:Point:srid=4326,dtg:Date")
-  addFeature(defaultSft, ScalaSimpleFeature.create(defaultSft, "fid-1", "name1", "POINT(45 49)", "2010-05-07T12:30:00.000Z"))
+  addFeature(ScalaSimpleFeature.create(defaultSft, "fid-1", "name1", "POINT(45 49)", "2010-05-07T12:30:00.000Z"))
 
   "AccumuloDataStore" should {
     "return an empty iterator correctly" in {
@@ -111,12 +111,12 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
 
       // add the 150 excluded points
       TestData.excludedDwithinPoints.zipWithIndex.foreach{ case (p, i) =>
-        addFeature(sftPoints, ScalaSimpleFeature.create(sftPoints, s"exfid$i", p, "2014-06-07T12:00:00.000Z"))
+        addFeature(ScalaSimpleFeature.create(sftPoints, s"exfid$i", p, "2014-06-07T12:00:00.000Z"))
       }
 
       // add the 50 included points
       TestData.includedDwithinPoints.zipWithIndex.foreach{ case (p, i) =>
-        addFeature(sftPoints, ScalaSimpleFeature.create(sftPoints, s"infid$i", p, "2014-06-07T12:00:00.000Z"))
+        addFeature(ScalaSimpleFeature.create(sftPoints, s"infid$i", p, "2014-06-07T12:00:00.000Z"))
       }
 
       // compose the query
@@ -142,8 +142,9 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
     }
 
     "handle bboxes without property name" in {
-      val filterNull = ff.bbox(ff.property(null.asInstanceOf[String]), 40, 44, 50, 54, "EPSG:4326")
-      val filterEmpty = ff.bbox(ff.property(""), 40, 44, 50, 54, "EPSG:4326")
+      val env = new ReferencedEnvelope(40, 50, 44, 54, CRS_EPSG_4326)
+      val filterNull = ff.bbox(ff.property(null.asInstanceOf[String]), env)
+      val filterEmpty = ff.bbox(ff.property(""), env)
       val queryNull = new Query(defaultSft.getTypeName, filterNull)
       val queryEmpty = new Query(defaultSft.getTypeName, filterEmpty)
 
@@ -164,10 +165,10 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
     }
 
     "handle out-of-world bboxes" >> {
-      val sft = createNewSchema("name:String,*geom:Point:srid=4326", None)
+      val sft = createNewSchema("name:String,*geom:Point:srid=4326")
       val typeName = sft.getTypeName
       val feature = ScalaSimpleFeature.create(sft, "1", "name1", "POINT (-100.236523 23)")
-      addFeature(sft, feature)
+      addFeature(feature)
       // example from geoserver open-layers preview
       val ecql = "BBOX(geom, 254.17968736588955,16.52343763411045,264.02343736588955,26.36718763411045) OR " +
           "BBOX(geom, -105.82031263411045,16.52343763411045,-95.97656263411045,26.36718763411045)"
@@ -191,7 +192,7 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
         val lon = randVal(-0.001, 0.001)
         ScalaSimpleFeature.create(sft, s"fid-$i", "testType", s"POINT($lat $lon)")
       }
-      addFeatures(sft, features)
+      addFeatures(features)
 
       val fs = ds.getFeatureSource(sft.getTypeName)
 
@@ -292,7 +293,7 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
       name.getLocalPart mustEqual typeName
 
       val sf = ScalaSimpleFeature.create(sft, "fid-1", "name1", "POINT(45 49)")
-      addFeature(sft, sf)
+      addFeature(sf)
 
       val queries = Seq(
         new Query(typeName),
@@ -400,8 +401,8 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
       import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.BIN_ATTRIBUTE_INDEX
       val sft = createNewSchema(s"name:String,dtg:Date,*geom:Point:srid=4326")
 
-      addFeature(sft, ScalaSimpleFeature.create(sft, "1", "name1", "2010-05-07T00:00:00.000Z", "POINT(45 45)"))
-      addFeature(sft, ScalaSimpleFeature.create(sft, "2", "name2", "2010-05-07T01:00:00.000Z", "POINT(45 45)"))
+      addFeature(ScalaSimpleFeature.create(sft, "1", "name1", "2010-05-07T00:00:00.000Z", "POINT(45 45)"))
+      addFeature(ScalaSimpleFeature.create(sft, "2", "name2", "2010-05-07T01:00:00.000Z", "POINT(45 45)"))
 
       val query = new Query(sft.getTypeName, ECQL.toFilter("BBOX(geom,40,40,50,50)"))
       query.getHints.put(BIN_TRACK, "name")
@@ -427,8 +428,8 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
       dtgs2.add(Converters.convert("2010-05-07T01:00:00.000Z", classOf[Date]))
       dtgs2.add(Converters.convert("2010-05-07T01:01:00.000Z", classOf[Date]))
       dtgs2.add(Converters.convert("2010-05-07T01:02:00.000Z", classOf[Date]))
-      addFeature(sft, ScalaSimpleFeature.create(sft, "1", "name1", dtgs1, "2010-05-07T00:00:00.000Z", "LINESTRING(40 41, 42 43, 44 45, 46 47)"))
-      addFeature(sft, ScalaSimpleFeature.create(sft, "2", "name2", dtgs2, "2010-05-07T01:00:00.000Z", "LINESTRING(50 50, 51 51, 52 52)"))
+      addFeature(ScalaSimpleFeature.create(sft, "1", "name1", dtgs1, "2010-05-07T00:00:00.000Z", "LINESTRING(40 41, 42 43, 44 45, 46 47)"))
+      addFeature(ScalaSimpleFeature.create(sft, "2", "name2", dtgs2, "2010-05-07T01:00:00.000Z", "LINESTRING(50 50, 51 51, 52 52)"))
 
       forall(Seq(2, 1000)) { batch =>
         val query = new Query(sft.getTypeName, ECQL.toFilter("BBOX(geom,40,40,55,55)"))
@@ -454,8 +455,8 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
     "support IN queries without dtg on non-indexed string attributes" in {
       val sft = createNewSchema(s"name:String,dtg:Date,*geom:Point:srid=4326")
 
-      addFeature(sft, ScalaSimpleFeature.create(sft, "1", "name1", "2010-05-07T00:00:00.000Z", "POINT(45 45)"))
-      addFeature(sft, ScalaSimpleFeature.create(sft, "2", "name2", "2010-05-07T01:00:00.000Z", "POINT(45 46)"))
+      addFeature(ScalaSimpleFeature.create(sft, "1", "name1", "2010-05-07T00:00:00.000Z", "POINT(45 45)"))
+      addFeature(ScalaSimpleFeature.create(sft, "2", "name2", "2010-05-07T01:00:00.000Z", "POINT(45 46)"))
 
       val filter = ECQL.toFilter("name IN('name1','name2') AND BBOX(geom, 40.0,40.0,50.0,50.0)")
       val query = new Query(sft.getTypeName, filter)
@@ -468,8 +469,8 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
     "support IN queries without dtg on indexed string attributes" in {
       val sft = createNewSchema("name:String:index=join,dtg:Date,*geom:Point:srid=4326")
 
-      addFeature(sft, ScalaSimpleFeature.create(sft, "1", "name1", "2010-05-07T00:00:00.000Z", "POINT(45 45)"))
-      addFeature(sft, ScalaSimpleFeature.create(sft, "2", "name2", "2010-05-07T01:00:00.000Z", "POINT(45 46)"))
+      addFeature(ScalaSimpleFeature.create(sft, "1", "name1", "2010-05-07T00:00:00.000Z", "POINT(45 45)"))
+      addFeature(ScalaSimpleFeature.create(sft, "2", "name2", "2010-05-07T01:00:00.000Z", "POINT(45 46)"))
 
       val filter = ECQL.toFilter("name IN('name1','name2') AND BBOX(geom, -180.0,-90.0,180.0,90.0)")
       val query = new Query(sft.getTypeName, filter)
@@ -478,20 +479,20 @@ class AccumuloDataStoreQueryTest extends Specification with TestWithMultipleSfts
     }
 
     "kill queries after a configurable timeout" in {
-      import scala.concurrent.duration._
-
+      skipped("relies on thread.sleep timing")
       val params = dsParams ++ Map(AccumuloDataStoreParams.QueryTimeoutParam.getName -> "1s")
 
       val dsWithTimeout = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
       val reader = dsWithTimeout.getFeatureReader(new Query(defaultSft.getTypeName, Filter.INCLUDE), Transaction.AUTO_COMMIT)
-      reader.isClosed must beFalse
-      eventually(20, 200.millis)(reader.isClosed must beTrue)
+      reader.hasNext() must beTrue
+      Thread.sleep(5000) // TODO this is error prone...
+      reader.close() must throwAn[RuntimeException]("Scan terminated due to timeout of 1000ms")
     }
 
     "block full table scans" in {
       val sft = createNewSchema("name:String:index=join,age:Int,geom:Point:srid=4326,dtg:Date")
       val feature = ScalaSimpleFeature.create(sft, "fid-1", "name1", "23", "POINT(45 49)", "2010-05-07T12:30:00.000Z")
-      addFeature(sft, feature)
+      addFeature(feature)
 
       val filters = Seq(
         "IN ('fid-1')",

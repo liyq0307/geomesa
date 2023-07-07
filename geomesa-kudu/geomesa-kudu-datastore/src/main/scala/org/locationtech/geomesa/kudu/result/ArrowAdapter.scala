@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -12,9 +12,8 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
 import org.apache.kudu.client.RowResult
-import org.geotools.data.DataUtilities
 import org.geotools.filter.text.ecql.ECQL
-import org.geotools.process.vector.TransformProcess
+import org.locationtech.geomesa.arrow.io.FormatVersion
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.features.TransformSimpleFeature
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
@@ -28,11 +27,11 @@ import org.locationtech.geomesa.kudu.schema.{KuduSimpleFeatureSchema, RowResultS
 import org.locationtech.geomesa.security.{SecurityUtils, VisibilityEvaluator}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
 import org.locationtech.geomesa.utils.io.ByteBuffers.ExpandingByteBuffer
 import org.locationtech.geomesa.utils.text.StringSerialization
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
-import org.opengis.filter.expression.{Expression, PropertyName}
 
 /**
   * Converts rows into arrow vectors
@@ -49,7 +48,7 @@ case class ArrowAdapter(sft: SimpleFeatureType,
                         transform: Option[(String, SimpleFeatureType)],
                         config: ArrowConfig) extends KuduResultAdapter {
 
-  import scala.collection.JavaConverters._
+  import org.locationtech.geomesa.filter.RichTransform.RichTransform
 
   require(!config.doublePass, "Double pass Arrow dictionary scans are not supported")
 
@@ -59,10 +58,7 @@ case class ArrowAdapter(sft: SimpleFeatureType,
 
   // determine all the attributes that we need to be able to evaluate the transform and filter
   private val attributes = transform.map { case (tdefs, _) =>
-    val fromTransform = TransformProcess.toDefinition(tdefs).asScala.map(_.expression).flatMap {
-      case p: PropertyName => Seq(p.getPropertyName)
-      case e: Expression   => DataUtilities.attributeNames(e, sft)
-    }
+    val fromTransform = Transforms(sft, tdefs).flatMap(_.properties)
     val fromFilter = ecql.map(FilterHelper.propertyNames(_, sft)).getOrElse(Seq.empty)
     (fromTransform ++ fromFilter).distinct
   }
@@ -91,27 +87,28 @@ case class ArrowAdapter(sft: SimpleFeatureType,
 
   override def adapt(results: CloseableIterator[RowResult]): CloseableIterator[SimpleFeature] = {
     val dictionaries = config.dictionaryFields
+    val ipcOpts = FormatVersion.options(FormatVersion.LatestVersion)
 
     val (aggregator, reduce) = if (dictionaries.forall(f => config.providedDictionaries.contains(f))) {
       // we have all the dictionary values
       val dicts = ArrowScan.createDictionaries(null, sft, ecql, config.dictionaryFields,
         config.providedDictionaries, Map.empty)
       val aggregate = config.sort match {
-        case None => new BatchAggregate(arrowSft, dicts, encoding)
-        case Some((sort, reverse)) => new SortingBatchAggregate(arrowSft, dicts, encoding, sort, reverse)
+        case None => new BatchAggregate(arrowSft, dicts, encoding, ipcOpts)
+        case Some((sort, reverse)) => new SortingBatchAggregate(arrowSft, dicts, encoding, ipcOpts, sort, reverse, config.batchSize)
       }
-      val reduce = new ArrowScan.BatchReducer(arrowSft, dicts, encoding, config.batchSize, config.sort)
+      val reduce = new ArrowScan.BatchReducer(arrowSft, dicts, encoding, ipcOpts, config.batchSize, config.sort, sorted = false)
       (aggregate, reduce)
     } else if (config.multiFile) {
       val aggregate = config.sort match {
-        case None => new MultiFileAggregate(arrowSft, dictionaries, encoding)
-        case Some((sort, reverse)) => new MultiFileSortingAggregate(arrowSft, dictionaries, encoding, sort, reverse)
+        case None => new MultiFileAggregate(arrowSft, dictionaries, encoding, ipcOpts)
+        case Some((sort, reverse)) => new MultiFileSortingAggregate(arrowSft, dictionaries, encoding, ipcOpts, sort, reverse, config.batchSize)
       }
-      val reduce = new ArrowScan.FileReducer(arrowSft, dictionaries, encoding, config.sort)
+      val reduce = new ArrowScan.FileReducer(arrowSft, dictionaries, encoding, ipcOpts, config.sort)
       (aggregate, reduce)
     } else {
-      val aggregate = new DeltaAggregate(arrowSft, dictionaries, encoding, config.sort, config.batchSize)
-      val reduce = new ArrowScan.DeltaReducer(arrowSft, dictionaries, encoding, config.batchSize, config.sort)
+      val aggregate = new DeltaAggregate(arrowSft, dictionaries, encoding, ipcOpts, config.sort, config.batchSize)
+      val reduce = new ArrowScan.DeltaReducer(arrowSft, dictionaries, encoding, ipcOpts, config.batchSize, config.sort, sorted = false)
       (aggregate, reduce)
     }
 
@@ -126,23 +123,24 @@ case class ArrowAdapter(sft: SimpleFeatureType,
       }
     }
 
-    aggregator.init(config.batchSize)
+    aggregator.init()
 
     val arrows: Iterator[SimpleFeature] = new Iterator[SimpleFeature] {
       private val sf = ArrowScan.resultFeature()
 
       override def hasNext: Boolean = features.hasNext
       override def next(): SimpleFeature = {
-        aggregator.clear()
-        while (features.hasNext && aggregator.size < config.batchSize) {
-          aggregator.add(features.next)
+        var i = 0
+        while (features.hasNext && i < config.batchSize) {
+          aggregator.aggregate(features.next)
+          i += 1
         }
         sf.setAttribute(0, aggregator.encode())
         sf
       }
     }
 
-    val result = CloseableIterator(arrows, features.close())
+    val result = CloseableIterator(arrows, { features.close(); aggregator.cleanup() })
     if (config.skipReduce) { result } else { reduce(result) }
   }
 

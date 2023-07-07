@@ -59,7 +59,7 @@ ROOTDIR="${ROOTDIR%/}" # standardize to remove trailing slash
 chown -R $GMUSER:$GMUSER ${GMDIR}
 
 # Configure coprocessor auto-registration
-DISTRIBUTED_JAR_NAME=geomesa-hbase-distributed-runtime_2.11-%%project.version%%.jar
+DISTRIBUTED_JAR_NAME=geomesa-hbase-distributed-runtime_2.11-hbase1-%%project.version%%.jar
 
 NL=$'\n'
 echo The HBase Root dir is ${ROOTDIR}.
@@ -67,7 +67,8 @@ echo "# Auto-registration for geomesa coprocessors ${NL}export CUSTOM_JAVA_OPTS=
 
 # Deploy the GeoMesa HBase distributed runtime to the HBase root directory
 if [[ "$ROOTDIR" = s3* ]]; then
-  aws s3 cp /opt/geomesa/dist/hbase/$DISTRIBUTED_JAR_NAME ${ROOTDIR}/lib/ && \
+  availabilityZone=$(wget -q -O - http://169.254.169.254/latest/meta-data/placement/availability-zone) # Static metadata service
+  aws --region ${availabilityZone::-1} s3 cp /opt/geomesa/dist/hbase/$DISTRIBUTED_JAR_NAME ${ROOTDIR}/lib/ && \
   echo "Installed GeoMesa distributed runtime to ${ROOTDIR}/lib/"
 elif [[ "$ROOTDIR" = hdfs* ]]; then
   local libdir="${ROOTDIR}/lib"

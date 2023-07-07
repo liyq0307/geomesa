@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -21,7 +21,7 @@ object EmptyScanner extends ResultScanner {
 
   // override for methods in hbase 1.4 - can't mark them as override as it won't compile with 1.3
 
-  // noinspection AccessorLikeMethodIsEmptyParen
+  // noinspection AccessorLikeMethodIsEmptyParen,JavaAccessorMethodOverriddenAsEmptyParen
   def getScanMetrics(): ScanMetrics = null
   def renewLease(): Boolean = false
 }

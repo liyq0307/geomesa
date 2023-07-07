@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2019 IBM
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2020 IBM
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -43,7 +43,8 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
 
     if (cluster.getMetadata.getKeyspace(ds.session.getLoggedKeyspace).getTable(table) == null) {
       val columns = CassandraColumnMapper(index).columns
-      val (partitions, pks) = columns.partition(_.partition)
+      require(columns.last.name == SimpleFeatureColumnName, s"Expected final column to be ${SimpleFeatureColumnName}")
+      val (partitions, pks) = columns.dropRight(1).partition(_.partition) // drop serialized feature col
       val create = s"CREATE TABLE $table (${columns.map(c => s"${c.name} ${c.cType}").mkString(", ")}, " +
           s"PRIMARY KEY (${partitions.map(_.name).mkString("(", ", ", ")")}" +
           s"${if (pks.nonEmpty) { pks.map(_.name).mkString(", ", ", ", "")} else { "" }}))"
@@ -91,7 +92,7 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
       val ks = ds.session.getLoggedKeyspace
       val statements = tables.flatMap(table => ranges.map(r => CassandraIndexAdapter.statement(ks, table, r.clauses)))
       val rowsToFeatures = new CassandraResultsToFeatures(strategy.index, strategy.index.sft)
-      val threads = ds.config.queryThreads
+      val threads = ds.config.queries.threads
       val sort = hints.getSortFields
       val max = hints.getMaxFeatures
       val project = hints.getProjection

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <!--********************************************************************
-* Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+* Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
 * All rights reserved. This program and the accompanying materials
 * are made available under the terms of the Apache License, Version 2.0 which
 * accompanies this distribution and is available at
@@ -26,16 +26,6 @@
         <description>A colon separated list of paths containing files to be loaded
             onto the classpath. This is useful for getting scripts onto the classpath
             for use by map-reduce ingest jobs.
-        </description>
-        <final>false</final>
-    </property>
-
-    <property>
-        <name>geomesa.tools.accumulo.site.xml</name>
-        <value></value>
-        <description>Path to the accumulo site xml config file. This is used
-            to look up information about the accumulo cluster such as the
-            master or zookeeper names.
         </description>
         <final>false</final>
     </property>

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -17,6 +17,8 @@ import org.locationtech.geomesa.features.kryo.impl.KryoFeatureDeserialization.Kr
 import org.locationtech.geomesa.features.kryo.impl.LazyDeserialization._
 import org.locationtech.geomesa.features.kryo.serialization.KryoUserDataSerialization
 import org.locationtech.geomesa.utils.collection.IntBitSet
+import org.locationtech.geomesa.utils.io.Sizable
+import org.locationtech.geomesa.utils.kryo.NonMutatingInput
 import org.opengis.feature.simple.SimpleFeature
 
 object LazyDeserialization {
@@ -63,16 +65,22 @@ object LazyDeserialization {
       offset: Int,
       length: Int
     ) extends LazyAttributeReader {
+
     override def read(i: Int): AnyRef = {
       if (i >= count || nulls.contains(i)) { null } else {
         // read the offset and go to the position for reading
-        // we create a new kryo input each time, so that position and offset are not affected by other reads
-        // this should be thread-safe, as long as the same attribute is not being read in multiple threads
-        // (since kryo can mutate the bytes during read)
-        val input = new Input(bytes, offset + (2 * i), length - (2 * i))
+        // to make it thread safe, we create a new kryo input each time,
+        // so that position and offset are not affected by other reads
+        val input = new NonMutatingInput()
+        input.setBuffer(bytes, offset + (2 * i), length - (2 * i))
         input.setPosition(offset + input.readShortUnsigned())
         readers(i).apply(input)
       }
+    }
+
+    override def calculateSizeOf(): Long = {
+      // doesn't count shared readers
+      Sizable.sizeOf(this) + Sizable.deepSizeOf(bytes, offset, length, count, nulls)
     }
   }
 
@@ -94,16 +102,22 @@ object LazyDeserialization {
       offset: Int,
       length: Int
   ) extends LazyAttributeReader {
+
     override def read(i: Int): AnyRef = {
       if (i >= count || nulls.contains(i)) { null } else {
         // read the offset and go to the position for reading
-        // we create a new kryo input each time, so that position and offset are not affected by other reads
-        // this should be thread-safe, as long as the same attribute is not being read in multiple threads
-        // (since kryo can mutate the bytes during read)
-        val input = new Input(bytes, offset + (4 * i), length - (4 * i))
+        // to make it thread safe, we create a new kryo input each time,
+        // so that position and offset are not affected by other reads
+        val input = new NonMutatingInput()
+        input.setBuffer(bytes, offset + (4 * i), length - (4 * i))
         input.setPosition(offset + input.readInt())
         readers(i).apply(input)
       }
+    }
+
+    override def calculateSizeOf(): Long = {
+      // doesn't count shared readers
+      Sizable.sizeOf(this) + Sizable.deepSizeOf(bytes, offset, length, count, nulls)
     }
   }
 
@@ -117,16 +131,20 @@ object LazyDeserialization {
     */
   class LazyShortUserDataReaderV3(count: Int, bytes: Array[Byte], offset: Int, length: Int)
       extends LazyUserDataReader {
+
     override def read(): java.util.Map[AnyRef, AnyRef] = {
       // read the offset and go to the position for reading
       // we create a new kryo input each time, so that position and offset are not affected by other reads
       // this should be thread-safe, as long as the user data is not being read in multiple threads
       // (since kryo can mutate the bytes during read)
-      val input = new Input(bytes, offset + (2 * count), length - (2 * count))
+      val input = new NonMutatingInput()
+      input.setBuffer(bytes, offset + (2 * count), length - (2 * count))
       // read the offset and go to the position for reading
       input.setPosition(offset + input.readShortUnsigned())
       KryoUserDataSerialization.deserialize(input)
     }
+
+    override def calculateSizeOf(): Long = Sizable.sizeOf(this) + Sizable.deepSizeOf(bytes, offset, length, count)
   }
 
   /**
@@ -139,16 +157,20 @@ object LazyDeserialization {
     */
   class LazyIntUserDataReaderV3(count: Int, bytes: Array[Byte], offset: Int, length: Int)
       extends LazyUserDataReader {
+
     override def read(): java.util.Map[AnyRef, AnyRef] = {
       // read the offset and go to the position for reading
       // we create a new kryo input each time, so that position and offset are not affected by other reads
       // this should be thread-safe, as long as the user data is not being read in multiple threads
       // (since kryo can mutate the bytes during read)
-      val input = new Input(bytes, offset + (4 * count), length - (4 * count))
+      val input = new NonMutatingInput()
+      input.setBuffer(bytes, offset + (4 * count), length - (4 * count))
       // read the offset and go to the position for reading
       input.setPosition(offset + input.readInt())
       KryoUserDataSerialization.deserialize(input)
     }
+
+    override def calculateSizeOf(): Long = Sizable.sizeOf(this) + Sizable.deepSizeOf(bytes, offset, length, count)
   }
 
   /**
@@ -161,14 +183,22 @@ object LazyDeserialization {
     */
   class LazyReaderV2(readers: Array[Input => AnyRef], offsets: Array[Int], bytes: Array[Byte], length: Int)
       extends LazyAttributeReader {
+
     override def read(i: Int): AnyRef = {
       val offset = offsets(i)
       if (offset == -1) { null } else {
         // we create a new kryo input each time, so that position and offset are not affected by other reads
         // this should be thread-safe, as long as the same attribute is not being read in multiple threads
         // (since kryo can mutate the bytes during read)
-        readers(i)(new Input(bytes, offset, length - offset))
+        val input = new NonMutatingInput()
+        input.setBuffer(bytes, offset, length - offset)
+        readers(i).apply(input)
       }
+    }
+
+    override def calculateSizeOf(): Long = {
+      // doesn't count shared readers
+      Sizable.sizeOf(this) + Sizable.deepSizeOf(bytes, offsets, length)
     }
   }
 
@@ -180,12 +210,17 @@ object LazyDeserialization {
     * @param length number of valid bytes in the byte array
     */
   class LazyUserDataReaderV2(bytes: Array[Byte], userDataOffset: Int, length: Int) extends LazyUserDataReader {
+
     override def read(): java.util.Map[AnyRef, AnyRef] = {
       // we create a new kryo input each time, so that position and offset are not affected by other reads
       // this should be thread-safe, as long as the user data is not being read in multiple threads
       // (since kryo can mutate the bytes during read)
-      KryoUserDataSerialization.deserialize(new Input(bytes, userDataOffset, length - userDataOffset))
+      val input = new NonMutatingInput()
+      input.setBuffer(bytes, userDataOffset, length - userDataOffset)
+      KryoUserDataSerialization.deserialize(input)
     }
+
+    override def calculateSizeOf(): Long = Sizable.sizeOf(this) + Sizable.deepSizeOf(bytes, userDataOffset, length)
   }
 
   /**
@@ -193,6 +228,7 @@ object LazyDeserialization {
     */
   case object WithoutUserDataReader extends LazyUserDataReader {
     override def read(): java.util.Map[AnyRef, AnyRef] = new java.util.HashMap[AnyRef, AnyRef](1)
+    override def calculateSizeOf(): Long = 0L // technically not true but this is a shared reference
   }
 }
 
@@ -227,7 +263,8 @@ trait LazyDeserialization extends KryoFeatureDeserialization {
 
   private def readFeatureV3(id: String, bytes: Array[Byte], offset: Int, length: Int): SimpleFeature = {
     // skip the version byte, which we've already read
-    val input = new Input(bytes, offset + 1, length - 1)
+    val input = new NonMutatingInput()
+    input.setBuffer(bytes, offset + 1, length - 1)
     val metadata = Metadata(input) // read count, size, nulls, etc
 
     // we should now be positioned to read the feature id
@@ -254,7 +291,8 @@ trait LazyDeserialization extends KryoFeatureDeserialization {
   }
 
   private def readFeatureV2(id: String, bytes: Array[Byte], offset: Int, length: Int): SimpleFeature = {
-    val input = new Input(bytes, offset + 1, length - 1) // skip the version byte
+    val input = new NonMutatingInput()
+    input.setBuffer(bytes, offset + 1, length - 1) // skip the version byte
     // read the start of the offsets, then the feature id
     val offsets = Array.ofDim[Int](readersV2.length)
     val offsetStarts = offset + input.readInt()

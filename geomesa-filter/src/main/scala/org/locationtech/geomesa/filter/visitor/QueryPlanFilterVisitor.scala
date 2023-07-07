@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,8 +8,11 @@
 
 package org.locationtech.geomesa.filter.visitor
 
+import java.util.regex.Pattern
 import java.util.{Collections, Date}
 
+import org.geotools.filter.LikeToRegexConverter
+import org.geotools.filter.text.ecql.ECQL
 import org.geotools.filter.visitor.{DuplicatingFilterVisitor, ExpressionTypeVisitor, IsStaticExpressionVisitor}
 import org.locationtech.geomesa.filter.{FilterHelper, GeometryProcessing}
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
@@ -206,86 +209,86 @@ class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVi
   }
 
   override def visit(filter: After, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).after(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: AnyInteracts, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).anyInteracts(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: Before, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).before(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: Begins, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).begins(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: BegunBy, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).begins(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: During, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).during(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: EndedBy, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).endedBy(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: Ends, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).ends(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: Meets, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).meets(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: MetBy, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).metBy(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: OverlappedBy, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).overlappedBy(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: TContains, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).tcontains(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: TEquals, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).tequals(e1, e2, filter.getMatchAction)
   }
 
   override def visit(filter: TOverlaps, extraData: AnyRef): AnyRef = {
-    val e1 = bind(filter.getExpression1, extraData, classOf[Period], classOf[Date])
-    val e2 = bind(filter.getExpression2, extraData, classOf[Period], classOf[Date])
+    val e1 = bindTemporal(filter.getExpression1, extraData)
+    val e2 = bindTemporal(filter.getExpression2, extraData)
     getFactory(extraData).toverlaps(e1, e2, filter.getMatchAction)
   }
 
@@ -316,6 +319,17 @@ class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVi
     }
   }
 
+  override def visit(filter: PropertyIsLike, extraData: Any): AnyRef = {
+    try {
+      val pattern = new LikeToRegexConverter(filter).getPattern
+      Pattern.compile(pattern)
+    } catch {
+      case e: Exception =>
+        throw new IllegalArgumentException(s"The regex filter (${filter.getLiteral}) for the (i)like filter is invalid.", e)
+    }
+    super.visit(filter, extraData)
+  }
+
   private def binding(expressions: Seq[Expression]): Class[_] = {
     val bindings = expressions.flatMap {
       case _: Literal => Seq.empty // don't consider literals, as we're trying to bind them to the right type
@@ -337,14 +351,10 @@ class QueryPlanFilterVisitor(sft: SimpleFeatureType) extends DuplicatingFilterVi
     visit(e, extraData)
   }
 
-  private def bind(e: Expression, extraData: AnyRef, target: Class[_], fallback: Class[_]): Expression = {
+  private def bindTemporal(e: Expression, extraData: AnyRef): Expression = {
     if (e.isInstanceOf[Literal]) {
       val lit = e.evaluate(null)
-      var bound = FastConverter.convert(lit, target)
-      if (bound != null) {
-        return getFactory(extraData).literal(bound)
-      }
-      bound = FastConverter.convert(lit, fallback)
+      val bound = FastConverter.convertFirst[AnyRef](lit, Iterator(classOf[Period], classOf[Date]))
       if (bound != null) {
         return getFactory(extraData).literal(bound)
       }

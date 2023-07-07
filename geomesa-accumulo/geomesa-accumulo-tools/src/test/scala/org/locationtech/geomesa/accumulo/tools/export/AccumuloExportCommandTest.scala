@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,7 @@
 
 package org.locationtech.geomesa.accumulo.tools.export
 
-import java.io.{File, FileInputStream}
+import java.io.{File, FileInputStream, FileWriter}
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.{Collections, Date}
@@ -21,13 +21,14 @@ import org.apache.parquet.filter2.compat.FilterCompat
 import org.geotools.data.DataUtilities
 import org.geotools.data.shapefile.ShapefileDataStore
 import org.geotools.filter.text.ecql.ECQL
-import org.geotools.geojson.feature.FeatureJSON
 import org.geotools.util.URLs
 import org.geotools.wfs.GML
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.TestWithDataStore
+import org.locationtech.geomesa.accumulo.TestWithFeatureType
+import org.locationtech.geomesa.accumulo.data.AccumuloDataStoreParams
 import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader
 import org.locationtech.geomesa.convert.text.DelimitedTextConverter
+import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.avro.AvroDataFileReader
 import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration
@@ -42,9 +43,7 @@ import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.specs2.runner.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
-class AccumuloExportCommandTest extends TestWithDataStore {
-
-  import org.locationtech.geomesa.arrow.allocator
+class AccumuloExportCommandTest extends TestWithFeatureType {
 
   import scala.collection.JavaConverters._
 
@@ -59,15 +58,15 @@ class AccumuloExportCommandTest extends TestWithDataStore {
     ScalaSimpleFeature.create(sft, "id2", "name2", "2016-01-02T00:00:00.000Z", "POINT(0 2)")
   )
 
-  def connectedCommand(): AccumuloExportCommand = {
+  def createCommand(): AccumuloExportCommand = {
     val command = new AccumuloExportCommand()
-    command.params.user        = mockUser
-    command.params.instance    = mockInstanceId
-    command.params.zookeepers  = mockZookeepers
-    command.params.password    = mockPassword
-    command.params.catalog     = catalog
+    command.params.user        = dsParams(AccumuloDataStoreParams.UserParam.key)
+    command.params.instance    = dsParams(AccumuloDataStoreParams.InstanceIdParam.key)
+    command.params.zookeepers  = dsParams(AccumuloDataStoreParams.ZookeepersParam.key)
+    command.params.password    = dsParams(AccumuloDataStoreParams.PasswordParam.key)
+    command.params.catalog     = dsParams(AccumuloDataStoreParams.CatalogParam.key)
     command.params.featureName = sftName
-    command.params.mock        = true
+    command.params.maxFeatures = 100 // suppress leaflet complaints
     command
   }
 
@@ -82,7 +81,7 @@ class AccumuloExportCommandTest extends TestWithDataStore {
     "export to different file formats" in {
       forall(formats) { format =>
         val file = s"$out/${format.name}/base/out.${format.extensions.head}"
-        val command = connectedCommand()
+        val command = createCommand()
         command.params.file = file
         command.execute()
         readFeatures(format, file) must containTheSameElementsAs(features)
@@ -91,7 +90,7 @@ class AccumuloExportCommandTest extends TestWithDataStore {
     "support filtering" in {
       forall(formats) { format =>
         val file = s"$out/${format.name}/filter/out.${format.extensions.head}"
-        val command = connectedCommand()
+        val command = createCommand()
         command.params.file = file
         command.params.cqlFilter = ECQL.toFilter("dtg = '2016-01-01T00:00:00.000Z'")
         command.execute()
@@ -101,7 +100,7 @@ class AccumuloExportCommandTest extends TestWithDataStore {
     "support relational projections" in {
       forall(formats) { format =>
         val file = s"$out/${format.name}/project/out.${format.extensions.head}"
-        val command = connectedCommand()
+        val command = createCommand()
         command.params.file = file
         command.params.attributes = List("dtg", "geom", "id").asJava
         command.execute()
@@ -110,9 +109,10 @@ class AccumuloExportCommandTest extends TestWithDataStore {
       }
     }
     "support sorting" in {
-      forall(formats) { format =>
+      // exclude BIN as we only sort per-batch but not globally
+      forall(formats.filter(_ != ExportFormat.Bin)) { format =>
         val file = s"$out/${format.name}/sort/out.${format.extensions.head}"
-        val command = connectedCommand()
+        val command = createCommand()
         command.params.file = file
         command.params.sortFields = Collections.singletonList("dtg")
         command.execute()
@@ -121,7 +121,7 @@ class AccumuloExportCommandTest extends TestWithDataStore {
       // exclude BIN as we only support sort in ascending order
       forall(formats.filter(_ != ExportFormat.Bin)) { format =>
         val file = s"$out/${format.name}/sort-rev/out.${format.extensions.head}"
-        val command = connectedCommand()
+        val command = createCommand()
         command.params.file = file
         command.params.sortFields = Collections.singletonList("dtg")
         command.params.sortDescending = true
@@ -133,7 +133,7 @@ class AccumuloExportCommandTest extends TestWithDataStore {
       // note: arrow and bin use server side aggregation, so we can't get an exact feature limit
       forall(formats.filter(f => f != ExportFormat.Arrow && f != ExportFormat.Bin)) { format =>
         val file = s"$out/${format.name}/max/out.${format.extensions.head}"
-        val command = connectedCommand()
+        val command = createCommand()
         command.params.file = file
         command.params.maxFeatures = 1
         command.execute()
@@ -193,27 +193,34 @@ class AccumuloExportCommandTest extends TestWithDataStore {
     DelimitedTextConverter.magicParsing(sft.getTypeName, new FileInputStream(file)).toList
 
   def readJson(file: String, sft: SimpleFeatureType): Seq[SimpleFeature] = {
-    WithClose(new FeatureJSON().streamFeatureCollection(new FileInputStream(file))) { iter =>
-      val result = Seq.newBuilder[SimpleFeature]
-      while (iter.hasNext) {
-        val f = iter.next
-        result += ScalaSimpleFeature.create(sft, f.getID, f.getAttributes.toArray: _*)
-      }
-      result.result()
+    val converter = SimpleFeatureConverter.infer(() => new FileInputStream(file), None, Some(file)) match {
+      case None => ko(s"could not create converter from $file"); null: SimpleFeatureConverter
+      case Some((s, c)) => SimpleFeatureConverter(s, c)
     }
+    val result = Seq.newBuilder[SimpleFeature]
+    val names = sft.getAttributeDescriptors.asScala.map(_.getLocalName)
+    WithClose(converter.process(new FileInputStream(file))) { features =>
+      features.foreach { f =>
+        val copy = new ScalaSimpleFeature(sft, f.getID)
+        names.foreach(a => copy.setAttribute(a, f.getAttribute(a)))
+        result += copy
+      }
+    }
+    result.result()
   }
 
   def readLeaflet(file: String, sft: SimpleFeatureType): Seq[SimpleFeature] = {
     val html = IOUtils.toString(new FileInputStream(file), StandardCharsets.UTF_8)
     val i = html.indexOf("var points = ") + 13
     val json = html.substring(i, html.indexOf(";", i))
-    WithClose(new FeatureJSON().streamFeatureCollection(json)) { iter =>
-      val result = Seq.newBuilder[SimpleFeature]
-      while (iter.hasNext) {
-        val f = iter.next
-        result += ScalaSimpleFeature.create(sft, f.getID, f.getAttributes.toArray: _*)
+    val tmp = Files.createTempFile("gm-export-leaflet", ".json").toFile
+    try {
+      WithClose(new FileWriter(tmp))(IOUtils.write(json, _))
+      readJson(tmp.getAbsolutePath, sft)
+    } finally {
+      if (!tmp.delete()) {
+        tmp.deleteOnExit()
       }
-      result.result()
     }
   }
 

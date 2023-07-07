@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
- * Portions Crown Copyright (c) 2017-2019 Dstl
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Portions Crown Copyright (c) 2017-2020 Dstl
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -17,6 +17,7 @@ import java.util.Collections
 import java.util.Map.Entry
 
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.accumulo.core.client.ClientConfiguration
 import org.apache.accumulo.core.client.mapreduce.{AbstractInputFormat, AccumuloInputFormat, InputFormatBase, RangeInputSplit}
 import org.apache.accumulo.core.client.security.tokens.{KerberosToken, PasswordToken}
 import org.apache.accumulo.core.data.{Key, Value}
@@ -24,6 +25,7 @@ import org.apache.accumulo.core.security.Authorizations
 import org.apache.accumulo.core.util.{Pair => AccPair}
 import org.apache.hadoop.io.{Text, Writable}
 import org.apache.hadoop.mapreduce._
+import org.apache.hadoop.security.UserGroupInformation
 import org.geotools.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.accumulo.AccumuloProperties.AccumuloMapperProperties
@@ -153,29 +155,32 @@ object GeoMesaAccumuloInputFormat extends LazyLogging {
   def configure(job: Job, params: java.util.Map[String, _], plan: AccumuloQueryPlan): Unit = {
     job.setInputFormatClass(classOf[GeoMesaAccumuloInputFormat])
 
-    // set Mock or Zookeeper instance
+    // set zookeeper instance
     val instance = AccumuloDataStoreParams.InstanceIdParam.lookup(params)
     val zookeepers = AccumuloDataStoreParams.ZookeepersParam.lookup(params)
     val keytabPath = AccumuloDataStoreParams.KeytabPathParam.lookup(params)
 
-    if (AccumuloDataStoreParams.MockParam.lookup(params)) {
-      AbstractInputFormat.setMockInstance(job, instance)
-    } else {
-      InputFormatBaseAdapter.setZooKeeperInstance(job, instance, zookeepers, keytabPath != null)
-    }
+    AbstractInputFormat.setZooKeeperInstance(job,
+      ClientConfiguration.create().withInstance(instance).withZkHosts(zookeepers).withSasl(keytabPath != null))
 
     // set connector info
     val user = AccumuloDataStoreParams.UserParam.lookup(params)
     val token = AccumuloDataStoreParams.PasswordParam.lookupOpt(params) match {
       case Some(p) => new PasswordToken(p.getBytes(StandardCharsets.UTF_8))
-      case None    => new KerberosToken(user, new File(keytabPath), true) // must be using Kerberos
+      case None =>
+        // must be using Kerberos
+        val file = new java.io.File(keytabPath)
+        // mimic behavior from accumulo 1.9 and earlier:
+        // `public KerberosToken(String principal, File keytab, boolean replaceCurrentUser)`
+        UserGroupInformation.loginUserFromKeytab(user, file.getAbsolutePath)
+        new KerberosToken(user, file)
     }
 
     // note: for Kerberos, this will create a DelegationToken for us and add it to the Job credentials
-    InputFormatBaseAdapter.setConnectorInfo(job, user, token)
+    AbstractInputFormat.setConnectorInfo(job, user, token)
 
     AccumuloDataStoreParams.AuthsParam.lookupOpt(params).foreach { auths =>
-      InputFormatBaseAdapter.setScanAuthorizations(job, new Authorizations(auths.split(","): _*))
+      AbstractInputFormat.setScanAuthorizations(job, new Authorizations(auths.split(","): _*))
     }
 
     // use the query plan to set the accumulo input format options

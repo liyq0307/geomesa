@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -51,7 +51,7 @@ class Z2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, g
     if (geom == null) {
       throw new IllegalArgumentException(s"Null geometry in feature ${writable.feature.getID}")
     }
-    val z = try { sfc.index(geom.getX, geom.getY, lenient).z } catch {
+    val z = try { sfc.index(geom.getX, geom.getY, lenient) } catch {
       case NonFatal(e) => throw new IllegalArgumentException(s"Invalid z value from geometry: $geom", e)
     }
     val shard = sharding(writable)
@@ -131,7 +131,7 @@ class Z2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, g
     // don't need to apply the filter on top of it. this may cause some minor errors at extremely
     // fine resolutions, but the performance is worth it
     // if we have a complicated geometry predicate, we need to pass it through to be evaluated
-    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.looseBBox))
+    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.queries.looseBBox))
     lazy val simpleGeoms = values.toSeq.flatMap(_.geometries.values).forall(GeometryUtils.isRectangular)
 
     !looseBBox || !simpleGeoms

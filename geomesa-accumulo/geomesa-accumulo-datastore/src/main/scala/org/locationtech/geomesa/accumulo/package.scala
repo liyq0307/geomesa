@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,12 +13,6 @@ import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemPropert
 package object accumulo {
 
   object AccumuloProperties {
-
-    object AccumuloQueryProperties {
-      // if we generate more ranges than this we will split them up into sequential scans
-      @deprecated("Use 'geomesa.scan.ranges.target'")
-      val SCAN_BATCH_RANGES = SystemProperty("geomesa.scan.ranges.batch", "20000")
-    }
 
     object AccumuloMapperProperties {
       val DESIRED_SPLITS_PER_TSERVER = SystemProperty("geomesa.mapreduce.splits.tserver.max")

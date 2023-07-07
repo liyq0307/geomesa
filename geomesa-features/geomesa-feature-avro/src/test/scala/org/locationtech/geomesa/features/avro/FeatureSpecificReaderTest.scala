@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -307,7 +307,6 @@ class FeatureSpecificReaderTest extends LazyLogging {
 
     val userData = sf.getUserData
 
-    userData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
     userData.put(SecurityUtils.FEATURE_VISIBILITY, "USER|ADMIN")
     userData.put(null, java.lang.Integer.valueOf(5))
     userData.put(java.lang.Long.valueOf(10), "10")

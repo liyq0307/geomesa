@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -55,6 +55,13 @@ class QueryPlannerTest extends Specification {
       foreach(ds.getQueryPlan(query)) { plan =>
         plan.filter.index.name mustEqual Z3Index.name
       }
+    }
+
+    "fail to return a query plan for a bad ilike filter" in {
+      val filter = ECQL.toFilter("name ilike '%abc\\'")
+      val query = new Query(sft.getTypeName, filter)
+
+      ds.getQueryPlan(query) must throwA[IllegalArgumentException]
     }
 
     "be able to sort by id asc" >> {

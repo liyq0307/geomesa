@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -363,9 +363,9 @@ class AvroSimpleFeatureUtilsTest extends Specification {
           .addInt("age")
           .build("toavro")
 
-        val expectedSchema = new Schema.Parser().parse("""{"type":"record","name":"toavro","namespace":"test.avro","fields":[{"name":"__version__","type":"int"},{"name":"__fid__","type":"string"},{"name":"geom","type":["bytes","null"]},{"name":"age","type":["int","null"]},{"name":"__userdata__","type":{"type":"array","items":{"type":"record","name":"userDataItem","fields":[{"name":"keyClass","type":"string"},{"name":"key","type":"string"},{"name":"valueClass","type":"string"},{"name":"value","type":"string"}]}}}]}""")
+        val expectedSchema = new Schema.Parser().parse("""{"type":"record","name":"toavro","namespace":"test.avro","fields":[{"name":"__version__","type":"int"},{"name":"__fid__","type":"string"},{"name":"geom","type":["bytes","null"]},{"name":"age","type":["int","null"]},{"name":"__userdata__","type":{"type":"array","items":{"type":"record","name":"userDataItem","fields":[{"name":"key","type":["null","string","int","long","float","double","boolean","bytes"]},{"name":"value","type":["null","string","int","long","float","double","boolean","bytes"]}]}}}]}""")
         val schema = AvroSimpleFeatureUtils.generateSchema(sft, withUserData = true, withFeatureId = true, "test.avro")
-        expectedSchema must be equalTo schema
+        schema mustEqual expectedSchema
       }
     }
   }

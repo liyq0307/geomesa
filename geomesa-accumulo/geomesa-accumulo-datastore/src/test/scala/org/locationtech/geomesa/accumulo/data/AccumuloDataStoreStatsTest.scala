@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -218,9 +218,9 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
         val maxGeom = WKTUtils.read("POINT (27 9)")
 
         // execute a stat update so we have the latest values
-        ds.stats.generateStats(sft)
+        ds.stats.writer.analyze(sft)
         // run it twice so that all our bounds are exact for histograms
-        ds.stats.generateStats(sft)
+        ds.stats.writer.analyze(sft)
 
         ds.stats.getCount(sft) must beSome(10L)
         ds.stats.getBounds(sft) mustEqual new ReferencedEnvelope(0, 27, 0, 9, CRS_EPSG_4326)
@@ -350,12 +350,12 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
       }
 
       "estimate counts for schemas without a date" >> {
-        val sft = createNewSchema("name:String:index=join,*geom:Point:srid=4326", None)
+        val sft = createNewSchema("name:String:index=join,*geom:Point:srid=4326")
         val reader = ds.getFeatureReader(new Query(AccumuloDataStoreStatsTest.this.sftName), Transaction.AUTO_COMMIT)
         val features = SelfClosingIterator(reader).map { f =>
           ScalaSimpleFeature.create(sft, f.getID, f.getAttribute("name"), f.getAttribute("geom"))
         }
-        addFeatures(sft, features.toSeq)
+        addFeatures(features.toSeq)
         val filters = Seq("name = '5'", "name < '7'", "name > 'foo'", "NOT name = '3'")
         forall(filters.map(ECQL.toFilter)) { filter =>
           val reader = ds.getFeatureReader(new Query(sft.getTypeName, filter), Transaction.AUTO_COMMIT)

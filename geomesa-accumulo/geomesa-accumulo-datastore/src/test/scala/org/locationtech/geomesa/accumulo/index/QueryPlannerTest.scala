@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -15,13 +15,14 @@ import org.apache.hadoop.io.Text
 import org.geotools.data.Query
 import org.geotools.factory.CommonFactoryFinder
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.TestWithDataStore
+import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.accumulo.data.AccumuloIndexAdapter.AccumuloResultsToFeatures
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, SerializationType, SimpleFeatureSerializers}
 import org.locationtech.geomesa.index.index.id.IdIndex
+import org.locationtech.geomesa.index.utils.SortingSimpleFeatureIterator
 import org.locationtech.geomesa.utils.index.IndexMode
-import org.locationtech.geomesa.utils.iterators.SortingSimpleFeatureIterator
+import org.locationtech.geomesa.utils.iterators.ExceptionalIterator
 import org.opengis.filter.sort.SortBy
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
@@ -29,24 +30,26 @@ import org.specs2.runner.JUnitRunner
 import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
-class QueryPlannerTest extends Specification with TestWithDataStore {
+class QueryPlannerTest extends Specification with TestWithFeatureType {
 
   override val spec = "*geom:Point,dtg:Date,s:String"
-  val sf = new ScalaSimpleFeature(sft, "id")
-  sf.setAttributes(Array[AnyRef]("POINT(45 45)", "2014-10-10T00:00:00Z", "string"))
-  val sf2 = new ScalaSimpleFeature(sft, "id2")
-  sf2.setAttributes(Array[AnyRef]("POINT(45 45)", "2014-10-10T00:00:00Z", "astring"))
 
-  addFeatures(Seq(sf, sf2))
+  lazy val planner = ds.queryPlanner
 
-  val planner = ds.queryPlanner
+  lazy val sf = ScalaSimpleFeature.create(sft, "id", "POINT(45 45)", "2014-10-10T00:00:00Z", "string")
+  lazy val sf2 = ScalaSimpleFeature.create(sft, "id2", "POINT(45 45)", "2014-10-10T00:00:00Z", "astring")
+
+  step {
+    addFeatures(Seq(sf, sf2))
+  }
 
   "adaptStandardIterator" should {
     "return a LazySortedIterator when the query has an order by clause" >> {
       val query = new Query(sft.getTypeName)
       query.setSortBy(Array(SortBy.NATURAL_ORDER))
       val result = planner.runQuery(sft, query)
-      result must beAnInstanceOf[SortingSimpleFeatureIterator]
+      result must beAnInstanceOf[ExceptionalIterator[_]]
+      result.asInstanceOf[ExceptionalIterator[_]].delegate must beAnInstanceOf[SortingSimpleFeatureIterator]
     }
 
     "not return a LazySortedIterator when the query does not have an order by clause" >> {

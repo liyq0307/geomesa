@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,7 +10,6 @@ package org.locationtech.geomesa.features.avro
 
 import java.nio.ByteBuffer
 
-import org.locationtech.jts.io.WKBWriter
 import org.apache.avro.Schema
 import org.apache.avro.io.{DatumWriter, Encoder}
 import org.geotools.data.DataUtilities
@@ -25,7 +24,7 @@ class AvroSimpleFeatureWriter(sft: SimpleFeatureType, opts: Set[SerializationOpt
 
   private val converters = {
     val nameEncoder = new FieldNameEncoder(VERSION)
-    val typeMap = createTypeMap(sft, new WKBWriter(), nameEncoder)
+    val typeMap = createTypeMap(sft, nameEncoder)
     DataUtilities.attributeNames(sft).map(n => typeMap(nameEncoder.encode(n)).conv)
   }
   private val includeFid = !opts.withoutId

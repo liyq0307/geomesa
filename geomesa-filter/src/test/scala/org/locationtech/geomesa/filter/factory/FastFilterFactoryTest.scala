@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -80,6 +80,12 @@ class FastFilterFactoryTest extends Specification {
       foreach(Seq("blu", "qux")) { name =>
         or.evaluate(ScalaSimpleFeature.create(sft, "1", name, "POINT (45 55)")) must beFalse
       }
+    }
+    "kick out bad filters from optimize" >> {
+      val sft = SimpleFeatureTypes.createType("test", "name:String,*geom:Point:srid=4326")
+      FastFilterFactory.toFilter(sft, "name ilike '%abc\\'") must throwA[IllegalArgumentException]
+      FastFilterFactory.toFilter(sft, "name like '%abc\\'") must throwA[IllegalArgumentException]
+      ok
     }
   }
 }

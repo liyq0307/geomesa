@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -118,17 +118,6 @@ object GeoMesaMetadata {
   val VersionKey         = "version"
   val StatsGenerationKey = "stats-date"
   val StatsIntervalKey   = "stats-interval"
-
-  @deprecated("AttributesKey")
-  val ATTRIBUTES_KEY: String = AttributesKey
-  @deprecated("VersionKey")
-  val VERSION_KEY: String = VersionKey
-  @deprecated("StatsGenerationKey")
-  val STATS_GENERATION_KEY: String = StatsGenerationKey
-  @deprecated("StatsIntervalKey")
-  val STATS_INTERVAL_KEY: String = StatsIntervalKey
-
-
 
   /**
     * Gets an empty metadata instance. This instance will not persist or return any values

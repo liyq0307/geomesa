@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -76,7 +76,7 @@ trait QueryRunner {
     ViewParams.setHints(query)
 
     // set transformations in the query
-    QueryPlanner.setQueryTransforms(query, sft)
+    QueryPlanner.setQueryTransforms(sft, query)
     // set return SFT in the query
     query.getHints.put(QueryHints.Internal.RETURN_SFT, getReturnSft(sft, query.getHints))
 
@@ -87,10 +87,11 @@ trait QueryRunner {
 
     // add the bbox from the density query to the filter, if there is no more restrictive filter
     query.getHints.getDensityEnvelope.foreach { env =>
-      val geoms = FilterHelper.extractGeometries(query.getFilter, sft.getGeomField)
+      val geom = query.getHints.getDensityGeometry.getOrElse(sft.getGeomField)
+      val geoms = FilterHelper.extractGeometries(query.getFilter, geom)
       if (geoms.isEmpty || geoms.exists(g => !env.contains(g.getEnvelopeInternal))) {
         val split = GeometryUtils.splitBoundingBox(env.asInstanceOf[ReferencedEnvelope])
-        val bbox = orFilters(split.map(ff.bbox(ff.property(sft.getGeomField), _)))
+        val bbox = orFilters(split.map(ff.bbox(ff.property(geom), _)))
         if (query.getFilter == Filter.INCLUDE) {
           query.setFilter(bbox)
         } else {

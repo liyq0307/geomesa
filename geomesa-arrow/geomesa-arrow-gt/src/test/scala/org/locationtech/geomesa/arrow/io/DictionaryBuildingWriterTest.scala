@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,8 +10,7 @@ package org.locationtech.geomesa.arrow.io
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
 
-import org.apache.arrow.memory.BufferAllocator
-import org.apache.arrow.vector.DirtyRootAllocator
+import org.apache.arrow.vector.ipc.message.IpcOption
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.features.ScalaSimpleFeature
@@ -28,12 +27,12 @@ class DictionaryBuildingWriterTest extends Specification {
     ScalaSimpleFeature.create(sft, s"0$i", s"name0${i % 2}", s"2017-03-15T00:0$i:00.000Z", s"POINT (4$i 5$i)")
   }
 
-  implicit val allocator: BufferAllocator = new DirtyRootAllocator(Long.MaxValue, 6.toByte)
+  val ipcOpts = new IpcOption() // TODO test legacy opts
 
   "SimpleFeatureVector" should {
     "dynamically encode dictionary values" >> {
       val out = new ByteArrayOutputStream()
-      WithClose(DictionaryBuildingWriter.create(sft, Seq("name"), SimpleFeatureEncoding.Max)) { writer =>
+      WithClose(new DictionaryBuildingWriter(sft, Seq("name"), SimpleFeatureEncoding.Max, ipcOpts)) { writer =>
         features.foreach(writer.add)
         writer.encode(out)
       }
@@ -45,9 +44,5 @@ class DictionaryBuildingWriterTest extends Specification {
         WithClose(reader.features())(f => f.map(ScalaSimpleFeature.copy).toSeq mustEqual features)
       }
     }
-  }
-
-  step {
-    allocator.close()
   }
 }

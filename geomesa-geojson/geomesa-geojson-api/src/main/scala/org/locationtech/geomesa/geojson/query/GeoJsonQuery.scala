@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,12 @@
 
 package org.locationtech.geomesa.geojson.query
 
-import java.io.ByteArrayOutputStream
-
-import org.locationtech.jts.geom.Geometry
-import org.geotools.geojson.geom.GeometryJSON
+import org.geotools.geometry.jts.ReferencedEnvelope
 import org.json4s.{JArray, JObject, JValue}
 import org.locationtech.geomesa.features.kryo.json.JsonPathParser
+import org.locationtech.geomesa.utils.geotools.CRS_EPSG_4326
+import org.locationtech.jts.geom.Geometry
+import org.locationtech.jts.io.geojson.{GeoJsonReader, GeoJsonWriter}
 import org.opengis.filter.Filter
 
 import scala.util.control.NonFatal
@@ -53,7 +53,12 @@ object GeoJsonQuery {
 
   private[query] val defaultGeom = "geom"
 
-  private val jsonGeometry = new GeometryJSON()
+  private val geometryReader = new GeoJsonReader()
+  private val geometryWriter = {
+    val writer = new GeoJsonWriter()
+    writer.setEncodeCRS(false)
+    writer
+  }
 
   /**
     * Parse a query string
@@ -196,7 +201,7 @@ object GeoJsonQuery {
     val geom = json.obj.find(_._1 == "$geometry").map(_._2).getOrElse {
       throw new IllegalArgumentException(s"Expected $$geometry, got ${json.obj.map(_._1).mkString(", ")}")
     }
-    jsonGeometry.read(compact(render(geom)))
+    geometryReader.read(compact(render(geom)))
   }
 
   /**
@@ -226,11 +231,7 @@ object GeoJsonQuery {
     * @param geometry geometry
     * @return
     */
-  private def printJson(geometry: Geometry): String = {
-    val bytes = new ByteArrayOutputStream
-    jsonGeometry.write(geometry, bytes)
-    s"""{"$$geometry":${bytes.toString}}"""
-  }
+  private def printJson(geometry: Geometry): String = s"""{"$$geometry":${geometryWriter.write(geometry)}}"""
 
   /**
     * Format a value as required for json - e.g. quote when necessary
@@ -341,8 +342,10 @@ object GeoJsonQuery {
     * @param ymax max y value
     */
   case class Bbox(prop: String, xmin: Double, ymin: Double, xmax: Double, ymax: Double) extends GeoJsonQuery {
-    override def toFilter(propertyTransformer: PropertyTransformer): Filter =
-      ff.bbox(ff.property(propertyTransformer.transform(prop)), xmin, ymin, xmax, ymax, "4326")
+    override def toFilter(propertyTransformer: PropertyTransformer): Filter = {
+      val env = new ReferencedEnvelope(xmin, xmax, ymin, ymax, CRS_EPSG_4326)
+      ff.bbox(ff.property(propertyTransformer.transform(prop)), env)
+    }
 
     override def toString = s"""{"$prop":{"$$bbox":[$xmin,$ymin,$xmax,$ymax]}}"""
   }

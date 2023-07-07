@@ -52,7 +52,7 @@ master_doc = 'index'
 # General information about the project.
 project = u'GeoMesa'
 # note: shown in our custom footer
-copyright = u'2013-2019'
+copyright = u'2013-2020'
 author = u''
 
 # The version info for the project you're documenting, acts as replacement for
@@ -67,7 +67,7 @@ from target.versions import release,version,version_devel,release_last
 release_eclipse = '1.2.0'
 url_github_archive = "https://github.com/locationtech/geomesa/archive"
 
-url_locationtech_release = "https://repo.locationtech.org/content/repositories/geomesa-releases/org/locationtech/geomesa"
+url_locationtech_release = "https://repo.eclipse.org/content/repositories/geomesa-releases/org/locationtech/geomesa"
 
 # RST appended to every file. Used for global substitions.
 # (the "%(release)s" substitutions are done by the Python format() method
@@ -100,27 +100,29 @@ rst_epilog = """
 
 .. |maven_version| replace:: 3.5.2 or later
 
-.. |geoserver_version| replace:: 2.15.x
+.. |geoserver_version| replace:: 2.17.x
 
-.. |geotools_version| replace:: 21.x
+.. |geotools_version| replace:: 23.x
 
-.. |accumulo_required_version| replace:: 1.7.x, 1.8.x or 1.9.x
+.. |accumulo_required_version| replace:: 1.7.x, 1.8.x, 1.9.x or 2.0.x
 
-.. |accumulo_supported_versions| replace:: versions 1.7.x, 1.8.x and 1.9.x
+.. |accumulo_supported_versions| replace:: versions 1.7.x, 1.8.x, 1.9.x and 2.0.x
 
-.. |hbase_required_version| replace::  1.3.x or 1.4.x
+.. |hbase_required_version| replace::  1.4.x or 2.2.x
 
-.. |hbase_supported_versions| replace:: versions 1.3.x and 1.4.x
+.. |hbase_supported_versions| replace:: versions 1.4.x and 2.2.x
 
-.. |hbase_bundled_version| replace:: 1.3.1
+.. |hbase_bundled_version| replace:: 2.2.3
 
-.. |hadoop_version| replace:: 2.6 or later
+.. |hadoop_version| replace:: 2.8 or later
 
 .. |zookeeper_version| replace:: 3.4.5 or later
 
 .. |kafka_version| replace:: 0.9.x or later
 
 .. |cassandra_version| replace:: 3.x
+
+.. |redis_version| replace:: 5.0.x
 
 .. |kudu_version| replace:: 1.7.x
 

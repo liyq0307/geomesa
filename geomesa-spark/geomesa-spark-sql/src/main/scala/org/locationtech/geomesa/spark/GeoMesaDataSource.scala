@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -30,7 +30,6 @@ import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 //   .option(GM.userParam.getName, "user")
 //   .option(GM.passwordParam.getName, "password")
 //   .option(GM.tableNameParam.getName, "sparksql")
-//   .option(GM.mockParam.getName, "true")
 //   .option("geomesa.feature", "chicago")
 //   .load()
 // }}
@@ -53,10 +52,6 @@ class GeoMesaDataSource extends DataSourceRegister
       schema: StructType): BaseRelation = {
     GeoMesaRelation(sqlContext, parameters, schema)
   }
-
-  @deprecated("Use SparkUtils.createFeatureType")
-  def structType2SFT(struct: StructType, name: String): SimpleFeatureType =
-    SparkUtils.createFeatureType(name, struct)
 
   override def createRelation(
       sqlContext: SQLContext,

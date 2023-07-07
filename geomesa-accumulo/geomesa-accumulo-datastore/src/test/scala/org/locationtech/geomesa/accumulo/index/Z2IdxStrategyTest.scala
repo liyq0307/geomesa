@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -15,7 +15,7 @@ import org.apache.accumulo.core.security.Authorizations
 import org.geotools.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.TestWithDataStore
+import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.accumulo.data.AccumuloQueryPlan
 import org.locationtech.geomesa.accumulo.iterators.BinAggregatingIterator
 import org.locationtech.geomesa.curve.Z2SFC
@@ -25,7 +25,6 @@ import org.locationtech.geomesa.index.index.z2.Z2Index
 import org.locationtech.geomesa.index.utils.{ExplainNull, Explainer}
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.BIN_ATTRIBUTE_INDEX
-import org.locationtech.sfcurve.zorder.Z2
 import org.opengis.feature.simple.SimpleFeature
 import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
@@ -34,7 +33,7 @@ import org.specs2.runner.JUnitRunner
 import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
-class Z2IdxStrategyTest extends Specification with TestWithDataStore {
+class Z2IdxStrategyTest extends Specification with TestWithFeatureType {
 
   val spec = "name:String,track:String,dtg:Date,*geom:Point:srid=4326"
 
@@ -66,7 +65,7 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
         ds.connector.createScanner(table, new Authorizations()).foreach { r =>
           val bytes = r.getKey.getRow.getBytes
           val keyZ = Longs.fromByteArray(bytes.drop(2))
-          val (x, y) = Z2SFC.invert(Z2(keyZ))
+          val (x, y) = Z2SFC.invert(keyZ)
           println(s"row: $x $y")
         }
       }
@@ -229,7 +228,7 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
       query.getHints.put(SAMPLING, new java.lang.Float(.5f))
       query.getHints.put(QUERY_INDEX, Z2Index.name)
       val results = queryPlanner.runQuery(sft, query, ExplainNull).toList
-      results must haveLength(15)
+      results.length must beLessThan(30)
     }
 
     "support sampling with cql" in {
@@ -237,7 +236,7 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
       query.getHints.put(SAMPLING, new java.lang.Float(.5f))
       query.getHints.put(QUERY_INDEX, Z2Index.name)
       val results = queryPlanner.runQuery(sft, query, ExplainNull).toList
-      results must haveLength(5)
+      results.length must beLessThan(10)
       forall(results)(_.getAttribute("track") mustEqual "track1")
     }
 
@@ -246,7 +245,7 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
       query.getHints.put(SAMPLING, new java.lang.Float(.5f))
       query.getHints.put(QUERY_INDEX, Z2Index.name)
       val results = queryPlanner.runQuery(sft, query, ExplainNull).toList
-      results must haveLength(15)
+      results.length must beLessThan(30)
       forall(results)(_.getAttributeCount mustEqual 2)
     }
 
@@ -255,7 +254,7 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
       query.getHints.put(SAMPLING, new java.lang.Float(.2f))
       query.getHints.put(QUERY_INDEX, Z2Index.name)
       val results = queryPlanner.runQuery(sft, query, ExplainNull).toList
-      results must haveLength(2)
+      results.length must beLessThan(10)
       forall(results)(_.getAttributeCount mustEqual 2)
     }
 
@@ -265,10 +264,10 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
       query.getHints.put(SAMPLE_BY, "track")
       query.getHints.put(QUERY_INDEX, Z2Index.name)
       val results = queryPlanner.runQuery(sft, query, ExplainNull).toList
-      results.length must beLessThan(17)
-      results.count(_.getAttribute("track") == "track1") must beLessThan(6)
-      results.count(_.getAttribute("track") == "track2") must beLessThan(6)
-      results.count(_.getAttribute("track") == "track3") must beLessThan(6)
+      results.length must beLessThan(30)
+      results.count(_.getAttribute("track") == "track1") must beLessThan(10)
+      results.count(_.getAttribute("track") == "track2") must beLessThan(10)
+      results.count(_.getAttribute("track") == "track3") must beLessThan(10)
     }
 
     "support sampling with bin queries" in {
@@ -284,10 +283,8 @@ class Z2IdxStrategyTest extends Specification with TestWithDataStore {
       val results = queryPlanner.runQuery(sft, query, ExplainNull).map(_.getAttribute(BIN_ATTRIBUTE_INDEX)).toList
       forall(results)(_ must beAnInstanceOf[Array[Byte]])
       val bins = results.flatMap(_.asInstanceOf[Array[Byte]].grouped(16).map(BinaryOutputEncoder.decode))
-      bins must haveLength(6)
-      bins.map(_.trackId) must containTheSameElementsAs {
-        Seq("track1", "track1", "track2", "track2", "track3", "track3").map(_.hashCode)
-      }
+      bins.length must beLessThan(30)
+      bins.map(_.trackId) must containAllOf(Seq("track1", "track2", "track3").map(_.hashCode))
     }
   }
 

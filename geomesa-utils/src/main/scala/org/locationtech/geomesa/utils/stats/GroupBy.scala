@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,11 +16,6 @@ class GroupBy[T](val sft: SimpleFeatureType, val property: String, val stat: Str
     extends Stat {
 
   override type S = GroupBy[T]
-
-  @deprecated("property")
-  lazy val attribute: Int = i
-  @deprecated("stat")
-  lazy val exampleStat: String = stat
 
   private val i = sft.indexOf(property)
   private [stats] val groups = scala.collection.mutable.Map.empty[T, Stat]

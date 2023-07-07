@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -163,7 +163,7 @@ object StringSerialization extends LazyLogging {
         val c = input.charAt(i)
         if (c != '_') { sb.append(c) } else {
           i += 2
-          sb.append(Hex.decodeHex(Array(input.charAt(i - 1), input.charAt(i))))
+          sb.append(new String(Hex.decodeHex(Array(input.charAt(i - 1), input.charAt(i))), StandardCharsets.UTF_8))
         }
         i += 1
       }

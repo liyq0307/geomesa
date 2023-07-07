@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -97,15 +97,15 @@ class S2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, g
     val bytes = Array.ofDim[Byte](shard.length + 8 + id.length)
 
     if (shard.isEmpty) {
-      ByteArrays.writeLong(s.id(), bytes)
+      ByteArrays.writeLong(s, bytes)
       System.arraycopy(id, 0, bytes, 8, id.length)
     } else {
       bytes(0) = shard.head // shard is only a single byte
-      ByteArrays.writeLong(s.id(), bytes, 1)
+      ByteArrays.writeLong(s, bytes, 1)
       System.arraycopy(id, 0, bytes, 9, id.length)
     }
 
-    SingleRowKeyValue(bytes, sharing, shard, s.id(), tier, id, writable.values)
+    SingleRowKeyValue(bytes, sharing, shard, s, tier, id, writable.values)
   }
 
   /**
@@ -200,7 +200,7 @@ class S2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, g
     // don't need to apply the filter on top of it. this may cause some minor errors at extremely
     // fine resolutions, but the performance is worth it
     // if we have a complicated geometry predicate, we need to pass it through to be evaluated
-    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.looseBBox))
+    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.queries.looseBBox))
     lazy val simpleGeoms = values.toSeq.flatMap(_.geometries.values).forall(GeometryUtils.isRectangular)
 
     !looseBBox || !simpleGeoms

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,18 +8,16 @@
 
 package org.locationtech.geomesa.utils.uuid
 
-import java.security.SecureRandom
 import java.util.UUID
 
-import com.google.common.primitives.Longs
-import org.locationtech.geomesa.utils.cache.SoftThreadLocal
-import org.opengis.feature.simple.{SimpleFeatureType, SimpleFeature}
+import org.locationtech.geomesa.utils.index.ByteArrays
+import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 /**
  * Creates feature id based on current system time.
  */
 class IngestTimeFeatureIdGenerator extends FeatureIdGenerator {
-  override def createId(sft: SimpleFeatureType, sf: SimpleFeature) =
+  override def createId(sft: SimpleFeatureType, sf: SimpleFeature): String =
     TimeSortedUuidGenerator.createUuid().toString
 }
 
@@ -68,6 +66,6 @@ object TimeSortedUuidGenerator extends RandomLsbUuidGenerator {
     // set the version number for the UUID
     setVersion(array)
 
-    Longs.fromByteArray(array)
+    ByteArrays.readLong(array)
   }
 }

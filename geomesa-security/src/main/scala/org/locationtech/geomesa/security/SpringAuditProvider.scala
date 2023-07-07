@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -49,7 +49,7 @@ class SpringAuditProvider extends AuditProvider {
     }
   }
 
-  override def configure(params: java.util.Map[String, Serializable]): Unit = {}
+  override def configure(params: java.util.Map[String, _ <: Serializable]): Unit = {}
 
   private def getAuth: Option[Authentication] =
     Option(SecurityContextHolder.getContext).flatMap(c => Option(c.getAuthentication))

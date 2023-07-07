@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -73,17 +73,6 @@ abstract class AbstractConverter[T, C <: ConverterConfig, F <: Field, O <: Conve
 
   override def createEvaluationContext(globalParams: Map[String, Any]): EvaluationContext =
     EvaluationContext(requiredFields.map(_.name), globalParams, caches, metrics)
-
-  // noinspection ScalaDeprecation
-  override def createEvaluationContext(
-      globalParams: Map[String, Any],
-      caches: Map[String, EnrichmentCache],
-      counter: org.locationtech.geomesa.convert.Counter): EvaluationContext = {
-    logger.warn("Using deprecated evaluation context - metrics will not be registered correctly")
-    val keys = requiredFields.map(_.name) ++ globalParams.keys
-    val values = keys.map(key => globalParams.get(key).orNull)
-    EvaluationContext(keys, values, counter, this.caches ++ caches)
-  }
 
   override def process(is: InputStream, ec: EvaluationContext): CloseableIterator[SimpleFeature] = {
     val hist = ec.metrics.histogram("parse.nanos")

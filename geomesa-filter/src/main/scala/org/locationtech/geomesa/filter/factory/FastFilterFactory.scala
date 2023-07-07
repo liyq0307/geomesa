@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -259,10 +259,10 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
       new FastPropertyNameAttribute(name, index)
     } else {
       val sf = new SimpleFeatureBuilder(sft).buildFeature("")
-      SimpleFeaturePropertyAccessor.getAccessor(sf, name) match {
-        case Some(a) => new FastPropertyNameAccessor(name, a)
-        case None    => super.property(name)
+      val accessor = SimpleFeaturePropertyAccessor.getAccessor(sf, name).getOrElse {
+        throw new IllegalArgumentException(s"Property '$name' does not exist in feature type ${sft.getTypeName}")
       }
+      new FastPropertyNameAccessor(name, accessor)
     }
   }
 

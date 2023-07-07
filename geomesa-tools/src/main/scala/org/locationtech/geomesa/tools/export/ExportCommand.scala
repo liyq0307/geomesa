@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -280,6 +280,11 @@ object ExportCommand extends LazyLogging {
       }
       val order = if (params.sortDescending) { SortOrder.DESCENDING } else { SortOrder.ASCENDING }
       query.setSortBy(fields.map(f => org.locationtech.geomesa.filter.ff.sort(f, order)).toArray)
+    } else if (hints.isArrowQuery) {
+      hints.getArrowSort.foreach { case (f, r) =>
+        val order = if (r) { SortOrder.DESCENDING } else { SortOrder.ASCENDING }
+        query.setSortBy(Array(org.locationtech.geomesa.filter.ff.sort(f, order)))
+      }
     }
 
     logger.debug(s"Applying CQL filter ${ECQL.toCQL(filter)}")

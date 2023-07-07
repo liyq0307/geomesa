@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -131,13 +131,14 @@ class Z2Test extends Specification {
         )
 
         def print(l: Z2, u: Z2, size: Int): Unit =
-          println(s"${round(sfc.invert(l))} ${round(sfc.invert(u))}\t$size")
+          println(s"${round(sfc.invert(l.z))} ${round(sfc.invert(u.z))}\t$size")
         def round(z: (Double, Double)): (Double, Double) =
           (math.round(z._1 * 1000.0) / 1000.0, math.round(z._2 * 1000.0) / 1000.0)
 
         foreach(ranges) { r =>
-          val ret = Z2.zranges(ZRange(r._1, r._2))
+          val ret = Z2.zranges(Array(ZRange(r._1, r._2)), maxRanges = Some(1000))
           ret.length must beGreaterThan(0)
+          ret.length must beLessThanOrEqualTo(1000)
         }
       }
     }

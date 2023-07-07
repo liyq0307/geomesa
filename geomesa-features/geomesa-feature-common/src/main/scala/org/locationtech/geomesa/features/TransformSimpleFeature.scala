@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,13 +10,14 @@ package org.locationtech.geomesa.features
 
 import java.util.{Collection => jCollection, List => jList, Map => jMap}
 
-import org.locationtech.jts.geom.Geometry
 import org.geotools.geometry.jts.ReferencedEnvelope
-import org.geotools.process.vector.TransformProcess
+import org.locationtech.geomesa.utils.geotools.Transform
+import org.locationtech.geomesa.utils.geotools.Transform.Transforms
+import org.locationtech.geomesa.utils.io.Sizable
+import org.locationtech.jts.geom.Geometry
 import org.opengis.feature.`type`.Name
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.feature.{GeometryAttribute, Property}
-import org.opengis.filter.expression.{Expression, PropertyName}
 import org.opengis.filter.identity.FeatureId
 import org.opengis.geometry.BoundingBox
 
@@ -26,9 +27,11 @@ import org.opengis.geometry.BoundingBox
   * @param transformSchema transformed feature type
   * @param attributes attribute evaluations, in order
   */
-class TransformSimpleFeature(transformSchema: SimpleFeatureType,
-                             attributes: Array[SimpleFeature => AnyRef],
-                             private var underlying: SimpleFeature = null) extends SimpleFeature {
+class TransformSimpleFeature(
+    transformSchema: SimpleFeatureType,
+    attributes: Array[Transform],
+    private var underlying: SimpleFeature = null
+  ) extends SimpleFeature with Sizable {
 
   private lazy val geomIndex = transformSchema.indexOf(transformSchema.getGeometryDescriptor.getLocalName)
 
@@ -37,7 +40,12 @@ class TransformSimpleFeature(transformSchema: SimpleFeatureType,
     this
   }
 
-  override def getAttribute(index: Int): AnyRef = attributes(index).apply(underlying)
+  override def calculateSizeOf(): Long = underlying match {
+    case s: Sizable => s.calculateSizeOf()
+    case _ => Sizable.sizeOf(underlying) + Sizable.deepSizeOf(underlying.getAttributes, underlying.getUserData)
+  }
+
+  override def getAttribute(index: Int): AnyRef = attributes(index).evaluate(underlying)
 
   override def getIdentifier: FeatureId = underlying.getIdentifier
   override def getID: String = underlying.getID
@@ -116,23 +124,17 @@ class TransformSimpleFeature(transformSchema: SimpleFeatureType,
 
 object TransformSimpleFeature {
 
-  import scala.collection.JavaConversions._
-
-  def apply(sft: SimpleFeatureType, transformSchema: SimpleFeatureType, transforms: String): TransformSimpleFeature = {
-    val a = attributes(sft, transformSchema, transforms)
-    new TransformSimpleFeature(transformSchema, a)
+  def apply(
+      sft: SimpleFeatureType,
+      transformSchema: SimpleFeatureType,
+      transforms: String): TransformSimpleFeature = {
+    new TransformSimpleFeature(transformSchema, Transforms(sft, transforms).toArray)
   }
 
-  def attributes(sft: SimpleFeatureType,
-                 transformSchema: SimpleFeatureType,
-                 transforms: String): Array[SimpleFeature => AnyRef] = {
-    TransformProcess.toDefinition(transforms).map(attribute(sft, _)).toArray
-  }
+  def apply(transformSchema: SimpleFeatureType, transforms: Seq[Transform]): TransformSimpleFeature =
+    new TransformSimpleFeature(transformSchema, transforms.toArray)
 
-  private def attribute(sft: SimpleFeatureType, d: TransformProcess.Definition): SimpleFeature => AnyRef = {
-    d.expression match {
-      case p: PropertyName => val i = sft.indexOf(p.getPropertyName); sf => sf.getAttribute(i)
-      case e: Expression   => sf => e.evaluate(sf)
-    }
-  }
+  @deprecated("replaced with org.locationtech.geomesa.utils.geotools.Transform")
+  def attributes(sft: SimpleFeatureType, transforms: String): Array[SimpleFeature => AnyRef] =
+    Transforms(sft, transforms).map(t => t.evaluate _).toArray
 }

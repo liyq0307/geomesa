@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -20,7 +20,7 @@ case class Z2Scheme(bits: Int, geom: String, geomIndex: Int) extends SpatialSche
 
   override def getPartitionName(feature: SimpleFeature): String = {
     val pt = feature.getAttribute(geomIndex).asInstanceOf[Point]
-    z2.index(pt.getX, pt.getY).z.formatted(format)
+    z2.index(pt.getX, pt.getY).formatted(format)
   }
 
   override protected def digits(bits: Int): Int = math.ceil(bits * math.log10(2)).toInt

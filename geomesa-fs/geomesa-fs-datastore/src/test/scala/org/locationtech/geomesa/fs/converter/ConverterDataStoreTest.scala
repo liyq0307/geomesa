@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -36,7 +36,7 @@ class ConverterDataStoreTest extends Specification {
       |  <property><name>fs.partition-scheme.opts.step-unit</name><value>MINUTES</value></property>
       |  <property><name>fs.partition-scheme.opts.step</name><value>15</value></property>
       |  <property><name>fs.partition-scheme.opts.dtg-attribute</name><value>dtg</value></property>
-      |  <property><name>fs.partition-scheme.opts.leaf-storage</name><value>true</value></property>
+      |  <property><name>fs.options.leaf-storage</name><value>true</value></property>
       |</configuration>
       |""".stripMargin
   }

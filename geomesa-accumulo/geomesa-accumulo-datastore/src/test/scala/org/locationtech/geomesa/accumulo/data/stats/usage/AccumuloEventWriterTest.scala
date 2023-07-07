@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,33 +8,26 @@
 
 package org.locationtech.geomesa.accumulo.data.stats.usage
 
-import org.apache.accumulo.core.client.mock.MockInstance
-import org.apache.accumulo.core.client.security.tokens.PasswordToken
 import org.apache.accumulo.core.security.Authorizations
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.accumulo.TestWithDataStore
 import org.locationtech.geomesa.accumulo.audit.{AccumuloAuditService, AccumuloEventReader, AccumuloEventWriter, AccumuloQueryEventTransform}
 import org.locationtech.geomesa.index.audit.QueryEvent
 import org.locationtech.geomesa.utils.text.DateParsing
-import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
-class AccumuloEventWriterTest extends Specification {
+class AccumuloEventWriterTest extends TestWithDataStore {
 
-  val catalogTable = "geomesa_catalog"
   val featureName = "stat_writer_test"
-  val statsTable = s"${catalogTable}_${featureName}_queries"
 
   val auths = new Authorizations()
-
-  val connector = new MockInstance().getConnector("user", new PasswordToken("password"))
-
-  val statReader = new AccumuloEventReader(connector, statsTable)
 
   "StatWriter" should {
 
     "write query stats asynchronously" in {
-      val writer = new AccumuloEventWriter(connector, statsTable)
+      val writer = new AccumuloEventWriter(ds.connector, catalog)
+      val statReader = new AccumuloEventReader(ds.connector, catalog)
       implicit val transform: AccumuloQueryEventTransform.type = AccumuloQueryEventTransform
 
       writer.queueStat(QueryEvent(AccumuloAuditService.StoreType,

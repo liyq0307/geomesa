@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2019 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -109,7 +109,7 @@ object AttributeIndexJob {
         wrapper = AccumuloWritableFeature.wrapper(sft, WritableFeature.wrapper(sft, ds.adapter.groups))
         converters = indices.map(_.createConverter()).zipWithIndex
         colFamilyMappings = indices.map(AccumuloIndexAdapter.mapColumnFamily).toIndexedSeq
-        defaultVis = new ColumnVisibility(ds.config.defaultVisibilities)
+        defaultVis = new ColumnVisibility()
         tables = TablePartition(ds, sft) match {
           case Some(tp) =>
             val tables = scala.collection.mutable.Map.empty[String, IndexedSeq[Text]]
