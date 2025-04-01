@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,9 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.feature.simple.SimpleFeature
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
@@ -22,9 +21,10 @@ import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder.BIN_ATTRIBUTE_INDE
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.util.Date
 
 @RunWith(classOf[JUnitRunner])
 class HBaseS2IndexTest extends Specification with LazyLogging {
@@ -116,7 +116,7 @@ class HBaseS2IndexTest extends Specification with LazyLogging {
         { // apply transforms
           val filter = "bbox(geom, 35, 55, 45, 75)" +
               " AND dtg between '2010-05-07T06:00:00.000Z' and '2010-05-08T00:00:00.000Z'"
-          val features = runQuery(new Query(sft.getTypeName, ECQL.toFilter(filter), Array("name")))
+          val features = runQuery(new Query(sft.getTypeName, ECQL.toFilter(filter), "name"))
           features must haveSize(4)
           features.map(_.getID.toInt) must containTheSameElementsAs(6 to 9)
           forall(features)((f: SimpleFeature) => f.getAttributeCount mustEqual 1)
@@ -126,7 +126,7 @@ class HBaseS2IndexTest extends Specification with LazyLogging {
         { // apply functional transforms
           val filter = "bbox(geom, 35, 55, 45, 75)" +
               " AND dtg between '2010-05-07T06:00:00.000Z' and '2010-05-08T00:00:00.000Z'"
-          val features = runQuery(new Query(sft.getTypeName, ECQL.toFilter(filter), Array("derived=strConcat('my', name)")))
+          val features = runQuery(new Query(sft.getTypeName, ECQL.toFilter(filter), "derived=strConcat('my', name)"))
           features must haveSize(4)
           features.map(_.getID.toInt) must containTheSameElementsAs(6 to 9)
           forall(features)((f: SimpleFeature) => f.getAttributeCount mustEqual 1)

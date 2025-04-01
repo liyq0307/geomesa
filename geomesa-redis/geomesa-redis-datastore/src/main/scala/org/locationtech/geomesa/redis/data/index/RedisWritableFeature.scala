@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,6 +8,7 @@
 
 package org.locationtech.geomesa.redis.data.index
 
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.features.SimpleFeatureSerializer
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
@@ -15,7 +16,6 @@ import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, KeyValue, Writab
 import org.locationtech.geomesa.security.SecurityUtils
 import org.locationtech.geomesa.utils.conf.FeatureExpiration
 import org.locationtech.geomesa.utils.index.ByteArrays
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 /**
   * Writable feature values cache for Redis
@@ -41,10 +41,11 @@ class RedisWritableFeature(
   lazy val ttl: Double = feature.getUserData.get(RedisAgeOff.TtlUserDataKey).asInstanceOf[java.lang.Long].toDouble
 
   // we don't use column families, column qualifiers or visibilities in the the rows
-  override lazy val values: Seq[KeyValue] =
-    Seq(KeyValue(EmptyBytes, EmptyBytes, EmptyBytes, serializer.serialize(feature)))
+  override lazy val values: Seq[KeyValue] = Seq(KeyValue(EmptyBytes, EmptyBytes, EmptyBytes, serializer.serialize(feature)))
 
   override lazy val id: Array[Byte] = idSerializer(feature.getID)
+
+  override def reducedValues: Seq[KeyValue] = throw new NotImplementedError()
 }
 
 object RedisWritableFeature {

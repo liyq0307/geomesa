@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,7 +10,7 @@ package org.locationtech.geomesa.accumulo.data
 
 import org.apache.accumulo.core.data.{Key, Value}
 import org.apache.accumulo.core.security.Authorizations
-import org.geotools.data.Query
+import org.geotools.api.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -21,22 +21,22 @@ import org.locationtech.geomesa.utils.index.IndexMode
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
-
 @RunWith(classOf[JUnitRunner])
 class ZLineTest extends Specification with TestWithFeatureType {
 
-  sequential
+  import scala.collection.JavaConverters._
 
   override val spec = "name:String,dtg:Date,*geom:LineString:srid=4326"
 
-  addFeatures({
-    val sf = new ScalaSimpleFeature(sft, "fid1")
-    sf.setAttribute("name", "fred")
-    sf.setAttribute("dtg", "2015-01-01T12:00:00.000Z")
-    sf.setAttribute("geom", "LINESTRING(47.28515625 25.576171875, 48 26, 49 27)")
-    Seq(sf)
-  })
+  step {
+    addFeatures({
+      val sf = new ScalaSimpleFeature(sft, "fid1")
+      sf.setAttribute("name", "fred")
+      sf.setAttribute("dtg", "2015-01-01T12:00:00.000Z")
+      sf.setAttribute("geom", "LINESTRING(47.28515625 25.576171875, 48 26, 49 27)")
+      Seq(sf)
+    })
+  }
 
   def printR(e: java.util.Map.Entry[Key, Value]): Unit = {
     val row = Key.toPrintableString(e.getKey.getRow.getBytes, 0, e.getKey.getRow.getLength, e.getKey.getRow.getLength)
@@ -52,7 +52,7 @@ class ZLineTest extends Specification with TestWithFeatureType {
       new Z3Index(ds, sft, "geom", "dtg", IndexMode.ReadWrite).getTableNames().foreach { table =>
         println(table)
         val scanner = ds.connector.createScanner(table, new Authorizations())
-        println(scanner.toSeq.length)
+        println(scanner.asScala.toSeq.length)
         scanner.close()
       }
       success

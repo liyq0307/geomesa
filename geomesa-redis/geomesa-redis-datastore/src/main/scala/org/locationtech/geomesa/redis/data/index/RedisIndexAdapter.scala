@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,25 +9,24 @@
 package org.locationtech.geomesa.redis.data
 package index
 
-import java.nio.charset.StandardCharsets
-
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
-import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
+import org.locationtech.geomesa.index.api.IndexAdapter.{BaseIndexWriter, RequiredVisibilityWriter}
 import org.locationtech.geomesa.index.api.QueryPlan.IndexResultsToFeatures
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.planning.LocalQueryRunner
-import org.locationtech.geomesa.index.planning.LocalQueryRunner.{ArrowDictionaryHook, LocalTransformReducer}
+import org.locationtech.geomesa.index.planning.LocalQueryRunner.LocalTransformReducer
 import org.locationtech.geomesa.redis.data.index.RedisAgeOff.AgeOffWriter
 import org.locationtech.geomesa.redis.data.index.RedisIndexAdapter.{RedisIndexWriter, RedisResultsToFeatures}
 import org.locationtech.geomesa.redis.data.index.RedisQueryPlan.{EmptyPlan, ZLexPlan}
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import redis.clients.jedis.JedisPool
 
+import java.nio.charset.StandardCharsets
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
@@ -37,6 +36,8 @@ import scala.util.control.NonFatal
   * @param ds data store
   */
 class RedisIndexAdapter(ds: RedisDataStore) extends IndexAdapter[RedisDataStore] with StrictLogging {
+
+  import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
   // each 'table' is a sorted set - they are created automatically when you insert values
   override def createTable(
@@ -64,8 +65,7 @@ class RedisIndexAdapter(ds: RedisDataStore) extends IndexAdapter[RedisDataStore]
 
     val reducer = {
       val visible = Some(LocalQueryRunner.visible(Some(ds.config.authProvider)))
-      val hook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
-      Some(new LocalTransformReducer(strategy.index.sft, ecql, visible, hints.getTransform, hints, hook))
+      Some(new LocalTransformReducer(strategy.index.sft, ecql, visible, hints.getTransform, hints))
     }
 
     if (byteRanges.isEmpty) { EmptyPlan(filter, reducer) } else {
@@ -87,8 +87,16 @@ class RedisIndexAdapter(ds: RedisDataStore) extends IndexAdapter[RedisDataStore]
   override def createWriter(
       sft: SimpleFeatureType,
       indices: Seq[GeoMesaFeatureIndex[_, _]],
-      partition: Option[String]): RedisIndexWriter = {
-    new RedisIndexWriter(ds.connection, indices, partition, ds.aging.writer(sft), RedisWritableFeature.wrapper(sft))
+      partition: Option[String],
+      atomic: Boolean): RedisIndexWriter = {
+    require(!atomic, "Redis data store does not currently support atomic writes")
+    val aging = ds.aging.writer(sft)
+    val wrapper = RedisWritableFeature.wrapper(sft)
+    if (sft.isVisibilityRequired) {
+      new RedisIndexWriter(ds.connection, indices, partition, aging, wrapper) with RequiredVisibilityWriter
+    } else {
+      new RedisIndexWriter(ds.connection, indices, partition, aging, wrapper)
+    }
   }
 }
 
@@ -221,10 +229,8 @@ object RedisIndexAdapter extends LazyLogging {
     }
 
     private val tables = indices.toArray.map { index =>
-      index.getTableNames(partition) match {
-        case Seq(t) => t.getBytes(StandardCharsets.UTF_8) // should always be writing to a single table here
-        case names => throw new IllegalStateException(s"Expected a single table but got: ${names.mkString(", ")}")
-      }
+      // should always be writing to a single table here
+      index.getTableName(partition).getBytes(StandardCharsets.UTF_8)
     }
 
     private val inserts = Array.fill[java.util.Map[Array[Byte], java.lang.Double]](tables.length)(new java.util.HashMap[Array[Byte], java.lang.Double]())
@@ -235,10 +241,7 @@ object RedisIndexAdapter extends LazyLogging {
 
     private val errors = ArrayBuffer.empty[Throwable]
 
-    override protected def write(
-        feature: RedisWritableFeature,
-        values: Array[RowKeyValue[_]],
-        update: Boolean): Unit = {
+    override protected def append(feature: RedisWritableFeature, values: Array[RowKeyValue[_]]): Unit = {
       i = 0
       while (i < values.length) {
         val insert = inserts(i)
@@ -258,6 +261,15 @@ object RedisIndexAdapter extends LazyLogging {
       } else {
         flush()
       }
+    }
+
+    override protected def update(
+        feature: RedisWritableFeature,
+        values: Array[RowKeyValue[_]],
+        previous: RedisWritableFeature,
+        previousValues: Array[RowKeyValue[_]]): Unit = {
+      delete(previous, previousValues)
+      append(feature, values)
     }
 
     override protected def delete(feature: RedisWritableFeature, values: Array[RowKeyValue[_]]): Unit = {
@@ -286,7 +298,7 @@ object RedisIndexAdapter extends LazyLogging {
       i = 0
       while (i < tables.length) {
         if (deletes(i).nonEmpty) {
-          try { WithClose(jedis.getResource)(_.zrem(tables(i), deletes(i): _*)) } catch {
+          try { WithClose(jedis.getResource)(_.zrem(tables(i), deletes(i).toSeq: _*)) } catch {
             case NonFatal(e) => errors.append(e)
           }
           deletes(i).clear()

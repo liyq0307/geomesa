@@ -46,7 +46,7 @@ API Compatibility
 ^^^^^^^^^^^^^^^^^
 
 The GeoMesa public API is not currently well defined, so API compatibility is only guaranteed at the GeoTools
-`DataStore <http://docs.geotools.org/stable/javadocs/org/geotools/data/DataStore.html>`__ level. In the future,
+`DataStore <https://docs.geotools.org/stable/javadocs/org/geotools/api/data/DataStore.html>`__ level. In the future,
 GeoMesa will clearly indicate which classes and methods are part of the public API. Non-public classes may change
 without warning between minor versions.
 
@@ -66,7 +66,7 @@ Dependency Compatibility
 
 Dependency compatibility refers to the ability to update GeoMesa without updating other components
 (e.g. Accumulo, HBase, Hadoop, Spark, GeoServer, etc). Generally, GeoMesa supports a range of dependency versions
-(e.g. Accumulo 1.6 to 1.9). Spark versions are more tightly coupled, due to the use of private Spark APIs.
+(e.g. Accumulo 2.0 to 2.1). Spark versions are more tightly coupled, due to the use of private Spark APIs.
 
 Pre-Release Code
 ^^^^^^^^^^^^^^^^
@@ -89,6 +89,457 @@ Compatibility Matrix
 +--------------+-------+-------+-------+
 | Dependencies | N     | N     | Y     |
 +--------------+-------+-------+-------+
+
+Version 5.3.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Dependency Version Upgrades
+---------------------------
+
+The following dependencies have been upgraded:
+
+* arrow ``18.1.0`` -> ``18.2.0``
+* json4s ``3.6.12`` -> ``4.0.7``
+* json-smart ``2.5.1`` -> ``2.5.2``
+* netty ``4.1.114.Final`` -> ``4.1.118.Final``
+* spark ``3.5.0`` -> ``3.5.5``
+
+Version 5.2.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Dependency Version Upgrades
+---------------------------
+
+The following dependencies have been upgraded:
+
+* arrow ``17.0.0`` -> ``18.1.0``
+* confluent ``6.2.9`` -> ``7.8.0``
+* geotools ``32.0`` -> ``32.1``
+* hbase ``2.5.8-hadoop3`` -> ``2.6.1-hadoop3``
+* hadoop ``3.4.0`` -> ``3.4.1``
+* kafka ``3.7.0`` -> ``3.9.0``
+* orc ``1.9.4`` -> ``1.9.5``
+* protobuf ``3.25.3`` -> ``3.25.6``
+* spring-security ``5.8.14`` -> ``5.8.15``
+* zookeeper ``3.9.2`` -> ``3.9.3``
+
+Version 5.1.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Version Compatibility
+---------------------
+
+GeoMesa 5.1.x is generally compatible with versions 5.0.x, 4.0.x and 3.5.x across different environments. This means that
+it is possible to upgrade in parts; i.e. upgrade GeoServer to 5.1.0 but keep NiFi at 3.5.2. Please note that
+previously deprecated functionality (see below) may no longer work once any part of the environment is upgraded to
+5.1.0.
+
+Dependency Version Upgrades
+---------------------------
+
+The following dependencies have been upgraded:
+
+* accumulo ``2.1.2`` -> ``2.1.3``
+* aircompressor ``0.25`` -> ``0.27``
+* arrow ``15.0.2`` -> ``17.0.0``
+* avro ``1.11.3`` -> ``1.11.4``
+* aws-java-sdk ``1.12.625`` -> ``1.12.735``
+* com.fasterxml.jackson ``2.16.1`` -> ``2.17.2``
+* commons-codec ``1.16.0`` -> ``1.17.1``
+* commons-io ``2.15.1`` -> ``2.16.1``
+* commons-lang3 ``3.14.0`` -> ``3.15.0``
+* commons-logging ``1.2`` -> ``1.3.3``
+* commons-text ``1.11.0`` -> ``1.12.0``
+* failureaccess ``1.0.1`` -> ``1.0.2``
+* flatbuffers ``23.5.26`` -> ``24.3.25``
+* geotools ``30.2`` -> ``32.0``
+* guava ``32.0.0-jre`` -> ``33.2.1-jre``
+* javax.measure ``2.1.2`` -> ``2.2``
+* jts ``1.19.0`` -> ``1.20.0``
+* micrometer ``1.11.1`` -> ``1.13.4``
+* netty ``4.1.106.Final`` -> ``4.1.114.Final``
+* opentelemetry ``1.27.0`` -> ``1.34.1``
+* snakeyaml ``2.0`` -> ``2.2``
+
+Audit Logger Changes
+--------------------
+
+The package for configuring audit logging has changed from ``org.locationtech.geomesa.utils.audit`` to
+``org.locationtech.geomesa.index.audit``. See :ref:`audit_provider` for additional details on audit logging.
+
+Version 5.0.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Version Compatibility
+---------------------
+
+GeoMesa 5.0.x is generally compatible with versions 4.0.x and 3.5.x across different environments. This means that
+it is possible to upgrade in parts; i.e. upgrade GeoServer to 5.0.0 but keep NiFi at 3.5.2. Please note that
+previously deprecated functionality (see below) may no longer work once any part of the environment is upgraded to
+5.0.0.
+
+Java Version
+------------
+
+GeoMesa no longer supports Java 8. The Java ecosystem is slowly moving on from Java 8, and it is no longer
+possible to support Java 8 while staying up-to-date with dependencies and security patches. GeoMesa now
+supports Java versions 11 and 17.
+
+GeoTools Upgrade
+----------------
+
+GeoTools has been updated to version 30.2. This version contains
+`extensive package changes <https://geotoolsnews.blogspot.com/2023/10/geotools-300-released.html>`__. In addition to
+the Ant migration script provided by GeoTools, GeoMesa provides a ``sed``
+`script <https://github.com/locationtech/geomesa/blob/geomesa-5.0.0/build/gt-30-api-changes.sed>`__ to help migrate Scala projects.
+Use the following ``bash`` script to upgrade a project from an earlier version of GeoTools to version 30:
+
+.. code::
+
+    # run the following from the root directory of your project:
+    wget 'https://raw.githubusercontent.com/locationtech/geomesa/geomesa-5.0.0/build/remove-opengis.xml'
+    ant -f remove-opengis.xml
+    # for Scala projects, also run:
+    wget 'https://raw.githubusercontent.com/locationtech/geomesa/geomesa-5.0.0/build/gt-30-api-changes.sed'
+    find . -name "*.scala" -not -exec grep -q "import org.geotools.api.data._" {} \; -exec sed -E -i -f gt-30-api-changes.sed {} \;
+
+HBase Versions
+--------------
+
+Support for HBase 1.4 has been dropped, as HBase 1.4 does not support Java 11.
+
+Dependency Version Upgrades
+---------------------------
+
+The following dependencies have been upgraded:
+
+* accumulo ``2.0.1`` -> ``2.1.2``
+* aircompressor ``0.21`` -> ``0.25``
+* antlr ``4.7.1`` -> ``4.7.2``
+* arrow ``11.0.0`` -> ``15.0.2``
+* avro ``1.11.1`` -> ``1.11.3``
+* aws-java-sdk ``1.11.179`` -> ``1.12.625``
+* caffeine ``2.9.3`` -> ``3.1.8``
+* cassandra-driver ``3.11.3`` -> ``3.11.5``
+* com.clearspring.analytics ``2.9.2`` -> ``2.9.8``
+* com.fasterxml.jackson ``2.14.1`` -> ``2.16.1``
+* com.jayway.jsonpath ``2.7.0`` -> ``2.9.0``
+* com.typesafe:config ``1.4.2`` -> ``1.4.3``
+* commons-cli ``1.2`` -> ``1.6.0``
+* commons-codec ``1.15`` -> ``1.16.0``
+* commons-compress ``1.22`` -> ``1.26.0``
+* commons-configuration2 ``2.5`` -> ``2.10.1``
+* commons-csv ``1.9.0`` -> ``1.10.0``
+* commons-dbcp2 ``2.6.0`` -> ``2.11.0``
+* commons-io ``2.8.0`` -> ``2.15.1``
+* commons-lang3 ``3.8.1`` -> ``3.14.0``
+* commons-pool2 ``2.6.1`` -> ``2.12.0``
+* commons-text ``1.10.0`` -> ``1.11.0``
+* confluent ``6.2.7`` -> ``6.2.9``
+* cqengine ``3.0.0`` -> ``3.6.0``
+* org.apache.curator ``4.3.0`` -> ``5.6.0``
+* geotools ``28.2`` -> ``30.2``
+* gson ``2.10`` -> ``2.10.1``
+* guava ``30.1-jre`` -> ``32.0.0-jre``
+* hadoop ``2.10.2`` -> ``3.4.0``
+* hbase ``2.5.2`` -> ``2.5.8-hadoop3``
+* httpclient ``4.5.13`` -> ``4.5.14``
+* httpcore ``4.4.15`` -> ``4.4.16``
+* io.netty ``4.1.85.Final`` -> ``4.1.106.Final``
+* javax.measure:unit-api ``2.0`` -> ``2.1.2``
+* jcommander ``1.78`` -> ``1.82``
+* jedis ``4.3.1`` -> ``5.1.0``
+* kafka ``2.8.2`` -> ``3.7.0``
+* kryo ``4.0.2`` -> ``4.0.3``
+* orc ``1.8.2`` -> ``1.9.3``
+* org.eclipse.emf.common ``2.15.0`` -> ``2.29.0``
+* org.eclipse.emf.ecore ``2.15.0`` -> ``2.35.0``
+* org.eclipse.emf.ecore.xmi ``2.15.0`` -> ``2.36.0``
+* org.ehcache:sizeof ``0.4.0`` -> ``0.4.3``
+* parquet ``1.12.3`` -> ``1.13.1``
+* parboiled ``1.3.1`` -> ``1.4.1``
+* postgresql ``42.5.1`` -> ``42.7.2``
+* pureconfig ``0.17.2`` -> ``0.17.4``
+* saxon ``11.4`` -> ``12.4``
+* scala ``2.12.17`` -> ``2.12.18``
+* scala-parser-combinators ``2.1.1`` -> ``2.3.0``
+* scala-xml ``2.1.0`` -> ``2.2.0``
+* sedona ``1.3.1-incubating`` -> ``1.5.0``
+* si.uom ``2.0.1`` -> ``2.1``
+* spark ``3.3.1`` -> ``3.5.0``
+* spring-security ``5.8.0`` -> ``5.8.11``
+* systems.uom ``2.0.2`` -> ``2.1``
+* tech.units:indriya ``2.0.2`` -> ``2.2``
+* tech.uom.lib ``2.0`` -> ``2.1``
+* xmlresolver ``4.4.3`` -> ``5.2.2``
+* zookeeper ``3.5.10`` -> ``3.9.2``
+
+Deprecated Classes and Methods
+------------------------------
+
+The following classes have been deprecated and will be removed in a future version:
+
+* org.locationtech.geomesa.kafka.confluent.SchemaParser.GeoMesaAvroDeserializableEnumProperty
+
+Removed Modules
+---------------
+
+The ``geomesa-metrics-ganglia`` module has been removed, and Ganglia is no longer supported as a destination for
+metrics.
+
+As part of dropping support for HBase 1.x, the ``geomesa-hbase-distributed-runtime-hbase1``,
+``geomesa-hbase-server-hbase1`` and ``geomesa-hbase-spark-runtime-hbase1`` modules have been removed.
+
+GeoMesa Convert OSM
+-------------------
+
+The ``geomesa-convert-osm`` module has been relocated to https://github.com/geomesa/geomesa-convert-osm.
+
+Partitioned PostGIS Prepared Statements
+---------------------------------------
+
+If not specified, prepared statements now default to ``true``  in the partitioned PostGIS data store. Prepared
+statements are generally faster on insert, and some attribute types (such as list-type attributes) are only
+supported through prepared statements.
+
+Version 4.0.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Version Compatibility
+---------------------
+
+GeoMesa 4.0.0 is focused on upgrading dependency versions and removing deprecated features, and only contains
+a few new features. To make upgrading easier, version 4.0.x is generally compatible with version 3.5.x across
+different environments. This means that it is possible to upgrade in parts; i.e. upgrade GeoServer to 4.0.0
+but keep NiFi at 3.5.1. Please note that previously deprecated functionality (see below) may no longer work once
+any part of the environment is upgraded to 4.0.0.
+
+Scala Versions
+--------------
+
+Scala 2.11 support has been removed, and Scala 2.13 support has been added (in addition to the existing
+Scala 2.12 support).
+
+GeoTools/GeoServer Versions
+---------------------------
+
+GeoTools has been upgraded from ``23.3`` to ``28.2``. GeoServer has been upgrade from ``2.17.3`` to ``2.22.2``.
+JTS has been upgraded from ``1.17.0`` to ``1.19.0``.
+
+As part of this upgrade, various GeoTools methods have changed in incompatible ways. Several classes, in
+particular ``Query`` and ``SimpleFeatureBuilder``, have changed from accepting arrays to using varargs (variable
+arguments). Additionally, the various ``DataStore`` methods, such as ``DataStoreFinder``, now require
+``Map<String, ?>`` instead of ``Map<String, ? extends Serializable>``.
+
+Dependency Version Upgrades
+---------------------------
+
+The following high-level dependencies have been upgraded:
+
+* Apache Hadoop ``2.8.5`` -> ``2.10.2``
+* Apache Spark ``2.4.7`` -> ``3.3.1``
+* Apache Accumulo ``2.0.0`` -> ``2.0.1``
+* Apache HBase ``1.4.12`` -> ``1.4.14``, ``2.2.3`` -> ``2.5.2``
+* Apache Kafka ``2.1.1`` -> ``2.8.2``
+* Apache Arrow ``0.16.0`` -> ``11.0.0``
+* Apache Avro ``1.8.2`` -> ``1.11.1``
+* Apache Parquet ``1.9.0`` -> ``1.12.3``
+* Apache Orc ``1.5.4`` -> ``1.8.2``
+* Jedis ``3.0.1`` -> ``4.3.1``
+* Confluent ``5.1.0`` -> ``6.2.7``
+* Kryo ``3.0.3`` -> ``4.0.2``
+* Typesafe Config ``1.3.3`` -> ``1.4.2``
+* EJML ``0.34`` -> ``0.41``
+* Saxon ``9.7.0-20`` -> ``11.4``
+
+For a full changelist of all dependencies, see the diff
+`here <https://gist.github.com/elahrvivaz/f86d31f78b57bf92113c16661a886c12/revisions?diff=split>`__.
+
+Minimum Library Versions
+------------------------
+
+Support for older versions of some libraries has been dropped. The following minimum versions are now required:
+
+* Apache Accumulo ``2.0.0`` (dropped support for ``1.7``, ``1.8``, ``1.9``, and ``1.10``)
+* Apache Spark ``3.0`` (dropped support for ``2.4``)
+* Apache Kafka ``2.0`` (dropped support for ``0.10``, ``0.11``, ``1.0``, and ``1.1``)
+
+Removal of Deprecated Modules
+-----------------------------
+
+The following deprecated modules were removed:
+
+* geomesa-bigtable
+* geomesa-kudu
+* geomesa-stream
+* geomesa-geojson
+* geomesa-web
+* geomesa-feature-nio
+* geomesa-convert-metrics-cloudwatch
+* geomesa-convert-metrics-ganglia
+* geomesa-convert-metrics-graphite
+
+In addition, various other deprecated classes and methods were removed. To identify any code that requires changes,
+build your project against GeoMesa 3.5.1 and note any deprecation warnings generated by the compiler.
+
+Package Changes
+---------------
+
+The following packages were moved, renamed or split in order to support Java 11 modules:
+
+* ``org.locationtech.geomesa.jobs.accumulo`` -> ``org.locationtech.geomesa.accumulo.jobs``
+* ``org.locationtech.geomesa.spark.accumulo`` -> ``org.locationtech.geomesa.accumulo.spark``
+* ``org.locationtech.geomesa.spark.hbase`` -> ``org.locationtech.geomesa.hbase.spark``
+* ``org.locationtech.geomesa.arrow.vector`` (partial) -> ``package org.locationtech.geomesa.arrow.jts``
+* ``org.locationtech.geomesa.parquet`` -> ``org.locationtech.geomesa.fs.storage.parquet``
+* ``org.locationtech.geomesa.process`` (partial) -> ``org.locationtech.geomesa.process.wps``
+
+GeoMesa NiFi Changes
+--------------------
+
+GeoMesa NiFi is now built against NiFi 1.19.1. The GeoMesa NARs and JARs have been renamed to include the Scala
+version (i.e. ``geomesa-datastore-services-nar_2.12-4.0.0.nar``). The datastore-specific processors (e.g.
+``PutGeoMesaHBase``) have been removed in favor of the generic processors (e.g. ``PutGeoMesa``). The
+recommended upgrade path is to first upgrade to GeoMesa NiFi 3.5.1, and replace all the datastore-specific
+processors in the flow. This will ensure that the flow is still valid after upgrading to GeoMesa NiFi 4.0.0.
+The ``geomesa-accumulo2-nar`` has been replaced with ``geomesa-accumulo20-nar``, and there is an additional
+``geomesa-accumulo21-nar`` for Accumulo 2.1 support.
+
+Scan Range Changes
+------------------
+
+GeoMesa will now generate a more accurate number of ranges based on ``geomesa.scan.ranges.target``. Users
+who have configured this property should verify their setting is still appropriate, especially if set to a
+large value. Setting ``geomesa.scan.ranges.recurse`` to ``7`` will restore the old behavior if needed.
+
+Partitioned PostGIS Query Changes
+---------------------------------
+
+GeoMesa will now ignore queries that encompass the entire world in the partitioned PostGIS data store. For more
+information, refer to :ref:`postgis_filter_world`.
+
+Version 3.5.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Removal of Log4j
+----------------
+
+GeoMesa has been updated to ban all usages of ``log4j``, to mitigate various CVEs present in that framework. In
+most cases, GeoMesa uses ``slf4j``, and delegates to the logging framework of the runtime environment.
+However, this change impacts the JARs bundled with the command-line tools, which now ship with
+`reload4j <https://reload4j.qos.ch/>`__ instead. Other environments using GeoMesa (i.e. GeoServer) must be
+hardened independently.
+
+Kafka Serialization
+-------------------
+
+The GeoMesa Kafka data store now supports a new serialization format, ``avro-native``. This format uses Avro
+array and map types for ``List`` and ``Map`` type attributes, which makes it easier to read with standard Avro
+tools. Note that GeoMesa versions before 3.5.0 will not be able to consume topics written in this format.
+
+Deprecated Modules
+------------------
+
+The following modules have been deprecated, and will be removed in a future version:
+
+* GeoMesa Bigtable
+
+Dependency Updates
+------------------
+
+* org.slf4j:slf4j-api: ``1.7.25`` -> ``1.7.36``
+* com.google.code.gson:gson: ``2.8.1`` -> ``2.8.9``
+
+Version 3.3.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Scala Versions
+--------------
+
+GeoMesa NiFi NARs now ship with Scala 2.12 by default. This should be largely transparent to end-users, however
+any custom GeoMesa converter JARs used in NiFi and written in Scala will need to be compiled with Scala 2.12.
+
+Version 3.2.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Scala Versions
+--------------
+
+GeoMesa now supports Scala 2.12. Scala 2.11 support has been deprecated and will be removed in a future version.
+
+Spark Versions
+--------------
+
+GeoMesa now supports Spark 3.0 and 3.1. Support for Spark 2.3 and 2.4 has been deprecated and will be removed
+in a future version.
+
+Dependency Updates
+------------------
+
+* com.fasterxml.jackson: ``2.9.10`` -> ``2.12.1``
+
+FileSystem Data Store Metadata Format Change
+--------------------------------------------
+
+The metadata format for the FileSystem data store has been changed to support storing arbitrary key-value pairs.
+Any data written with version 3.2.0 or later will not be readable by earlier GeoMesa versions.
+
+Lambda Data Store Binary Distribution Change
+--------------------------------------------
+
+The Lambda data store binary distribution no longer contains the ``geomesa-accumulo-distributed-runtime`` JAR.
+This JAR is available in the Accumulo data store binary distribution.
+
+StrategyDecider API Update
+--------------------------
+
+The ``org.locationtech.geomesa.index.planning.StrategyDecider`` API has been extended with an optional
+``GeoMesaStats`` argument that enables stat-based strategy decisions. The old API method has been deprecated
+and will be removed in a future version.
+
+Deprecated Modules
+------------------
+
+The following modules have been deprecated, and will be removed in a future version:
+
+* GeoMesa Kudu
+* GeoMesa Streaming (Camel integration)
+* GeoMesa Web
+* GeoMesa GeoJSON
+
+Deprecated Arrow Output Options
+-------------------------------
+
+The Arrow output options for providing cached dictionaries, returning multiple logical files, and running
+queries in two passes have been deprecated and will be removed in the next major version.
+
+Version 3.1.0 Upgrade Guide
++++++++++++++++++++++++++++
+
+Maven Type of GeoServer Plugin Modules
+--------------------------------------
+
+All of the ``geomesa-*-gs-plugin`` artifacts have been changed to ``<type>pom</type>``, since they did not
+contain any code. Any ``pom.xml`` references to them should be updated to use the correct type.
+
+Avro Version Update
+-------------------
+
+The version of Avro used by GeoMesa has been updated from 1.7.5 to 1.8.2. Avro serialized files should
+be compatible between versions, but compile and runtime dependencies may need to be updated if a project
+uses Avro and references GeoMesa.
+
+Query Interceptors API Change
+-----------------------------
+
+The query interceptors API has been expanded to support query guards. Any existing query interceptor
+implementations will continue to work, but may need to be re-compiled against the GeoMesa 3.1.0.
+
+Dependency Updates
+------------------
+
+* GeoTools: ``23.0`` -> ``23.3``
+* Avro: ``1.7.5`` -> ``1.8.2``
 
 Version 3.0.0 Upgrade Guide
 +++++++++++++++++++++++++++
@@ -135,14 +586,14 @@ Users should use the Spark runtime corresponding to their Accumulo installation.
 NiFi Processors
 ---------------
 
-The GeoMesa NiFi processors have been split out into separate nar files for each supported back-end database.
-Additionally, there are separate nar files for HBase 1.4/2.2 and Accumulo 1.9/2.0, respectively. The processor
-classes and configurations have also changed. See :ref:`nifi_bundle` for details.
+The GeoMesa NiFi processors have been updated to NiFi 11 and split out into separate ``nar`` files for each
+supported back-end database. Additionally, there are separate ``nar`` files for HBase 1.4/2.2 and Accumulo 1.9/2.0,
+respectively. The processor classes and configurations have also changed. See :ref:`nifi_bundle` for details.
 
 Dependency Updates
 ------------------
 
-* Apache Arrow: 0.10 -> 0.16
+* Apache Arrow: ``0.10`` -> ``0.16``
 
 Apache Arrow Updates
 --------------------
@@ -177,7 +628,7 @@ Accumulo Default Visibilities Removed
 -------------------------------------
 
 The Accumulo data store parameter ``geomesa.security.visibilities`` have been removed. Visibilities should be set
-per-feature, as per :ref:`accumulo_visibilities`.
+per-feature, as described in :ref:`data_security`.
 
 Version 2.4.0 Upgrade Guide
 +++++++++++++++++++++++++++
@@ -188,10 +639,6 @@ GeoTools 21 and GeoServer 2.15
 GeoMesa 2.4.0 is compiled against GeoTools 21.1 and GeoServer 2.15. This version of GeoTools contains package
 and class location changes to support Java 11. Due to the changes, GeoMesa will no longer work with older
 versions of GeoTools and GeoServer.
-
-.. warning::
-
-  GeoMesa 2.4.0 requires GeoTools 21.x and GeoServer 2.15.x.
 
 Configuration of Cached Statistics
 ----------------------------------
@@ -415,11 +862,10 @@ Data Store Parameters
 ---------------------
 
 The data store parameters used in calls to ``DataStoreFinder`` and the Spark ``SpatialRDDProvider`` have
-been standardized . New parameters are outlined in the individual data store pages:
+been standardized. New parameters are outlined in the individual data store pages:
 
   * :ref:`accumulo_parameters`
   * :ref:`hbase_parameters`
-  * :ref:`bigtable_parameters`
   * :ref:`cassandra_parameters`
   * :ref:`kafka_parameters`
   * :ref:`lambda_parameters`
@@ -455,7 +901,7 @@ at parsing XML than the default Java implementation. Previously, Saxon was avail
 Kafka Data Store
 ----------------
 
-The Kafka Data Store has been rewritten into a single implementation for Kafka |kafka_version|. Support for
+The Kafka Data Store has been rewritten into a single implementation for all supported Kafka versions. Support for
 Kafka 0.8 has been removed. See :ref:`kafka_index` for more information.
 
 Accumulo Standardization

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,25 +8,26 @@
 
 package org.locationtech.geomesa.fs.data
 
-import java.io.{Closeable, Flushable}
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
-
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, RemovalCause, RemovalListener}
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.data.{FeatureReader, FeatureWriter, Query, QueryCapabilities}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.data.simple.DelegateSimpleFeatureReader
 import org.geotools.data.store.{ContentEntry, ContentFeatureStore}
-import org.geotools.data.{FeatureReader, FeatureWriter, Query, QueryCapabilities}
 import org.geotools.feature.collection.DelegateSimpleFeatureIterator
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.fs.data.FileSystemFeatureStore.{FileSystemFeatureIterator, FileSystemFeatureWriterAppend, FileSystemFeatureWriterModify}
+import org.locationtech.geomesa.fs.data.FileSystemFeatureStore._
 import org.locationtech.geomesa.fs.storage.api.FileSystemStorage.FileSystemWriter
 import org.locationtech.geomesa.fs.storage.api.{CloseableFeatureIterator, FileSystemStorage}
+import org.locationtech.geomesa.index.geotools.GeoMesaFeatureWriter
+import org.locationtech.geomesa.index.utils.ThreadManagement.{LowLevelScanner, ManagedScan, Timeout}
 import org.locationtech.geomesa.utils.io.{CloseQuietly, CloseWithLogging, FlushQuietly, FlushWithLogging}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
+import java.io.{Closeable, Flushable}
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.Duration
 
 class FileSystemFeatureStore(
@@ -34,7 +35,8 @@ class FileSystemFeatureStore(
     entry: ContentEntry,
     query: Query,
     readThreads: Int,
-    writeTimeout: Duration
+    writeTimeout: Duration,
+    queryTimeout: Option[Duration],
   ) extends ContentFeatureStore(entry, query) with LazyLogging {
 
   private val sft = storage.metadata.sft
@@ -70,8 +72,14 @@ class FileSystemFeatureStore(
     // The type name can sometimes be empty such as Query.ALL
     query.setTypeName(sft.getTypeName)
 
+    val reader = queryTimeout match {
+      case None => storage.getReader(query, threads = readThreads)
+      case Some(timeout) =>
+        val filter = Option(query.getFilter).filter(_ != Filter.INCLUDE)
+        new ManagedScan(new FileSystemScanner(storage, query, readThreads), Timeout(timeout), query.getTypeName, filter)
+    }
     // get a closeable java iterator that DelegateSimpleFeatureIterator will process correctly
-    val iter = new FileSystemFeatureIterator(storage.getReader(query, threads = readThreads))
+    val iter = new FileSystemFeatureIterator(reader)
 
     // transforms will be set after getting the iterator
     val transformSft = query.getHints.getTransformSchema.getOrElse(sft)
@@ -81,13 +89,16 @@ class FileSystemFeatureStore(
   }
 
   override def canLimit: Boolean = false
+  override def canLimit(query: Query): Boolean = false
   override def canTransact: Boolean = false
   override def canEvent: Boolean = false
   override def canReproject: Boolean = false
   override def canSort: Boolean = false
-
+  override def canSort(query: Query): Boolean = false
   override def canFilter: Boolean = true
+  override def canFilter(query: Query): Boolean = true
   override def canRetype: Boolean = true
+  override def canRetype(query: Query): Boolean = true
 
   override protected def buildQueryCapabilities(): QueryCapabilities = FileSystemFeatureStore.capabilities
 }
@@ -99,6 +110,22 @@ object FileSystemFeatureStore {
   private val capabilities = new QueryCapabilities() {
     override def isReliableFIDSupported: Boolean = true
     override def isUseProvidedFIDSupported: Boolean = true
+  }
+
+  private class FileSystemScanner(storage: FileSystemStorage, val query: Query, threads: Int)
+      extends LowLevelScanner[SimpleFeature] {
+
+    private var reader: CloseableFeatureIterator = _
+
+    override def iterator: Iterator[SimpleFeature] = synchronized {
+      reader = storage.getReader(query, threads = threads)
+      reader
+    }
+    override def close(): Unit = synchronized {
+      if (reader != null) {
+        reader.close()
+      }
+    }
   }
 
   /**
@@ -156,7 +183,8 @@ object FileSystemFeatureStore {
     }
 
     override def write(): Unit = {
-      writers.get(storage.metadata.scheme.getPartitionName(feature)).write(feature)
+      val sf = GeoMesaFeatureWriter.featureWithFid(feature)
+      writers.get(storage.metadata.scheme.getPartitionName(sf)).write(sf)
       feature = null
     }
 

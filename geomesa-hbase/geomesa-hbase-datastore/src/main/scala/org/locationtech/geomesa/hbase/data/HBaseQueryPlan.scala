@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,7 +16,6 @@ import org.apache.hadoop.hbase.util.Bytes
 import org.locationtech.geomesa.hbase.HBaseSystemProperties
 import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.{TableScan, filterToString, rangeToString, scanToString}
 import org.locationtech.geomesa.hbase.utils.{CoprocessorBatchScan, HBaseBatchScan}
-import org.locationtech.geomesa.index.PartitionParallelScan
 import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFeatures}
 import org.locationtech.geomesa.index.api.{FilterStrategy, QueryPlan}
 import org.locationtech.geomesa.index.utils.Explainer
@@ -45,9 +44,9 @@ sealed trait HBaseQueryPlan extends QueryPlan[HBaseDataStore] {
     // convert the relative timeout to an absolute timeout up front
     val timeout = ds.config.queries.timeout.map(Timeout.apply)
     val iter = scans.iterator.map(singleTableScan(_, ds.connection, threads(ds), timeout))
-    if (PartitionParallelScan.toBoolean.contains(true)) {
+    if (ds.config.queries.parallelPartitionScans) {
       // kick off all the scans at once
-      iter.foldLeft(CloseableIterator.empty[Results])(_ ++ _)
+      iter.foldLeft(CloseableIterator.empty[Results])(_ concat _)
     } else {
       // kick off the scans sequentially as they finish
       SelfClosingIterator(iter).flatMap(s => s)
@@ -62,6 +61,7 @@ sealed trait HBaseQueryPlan extends QueryPlan[HBaseDataStore] {
     explainer(s"Column families: ${scans.headOption.flatMap(_.scans.headOption).flatMap(r => Option(r.getFamilies)).getOrElse(Array.empty).map(Bytes.toString).mkString(",")}")
     explainer(s"Remote filters: ${scans.headOption.flatMap(_.scans.headOption).flatMap(r => Option(r.getFilter)).map(filterToString).getOrElse("none")}")
     explain(explainer)
+    explainer(s"Reduce: ${reducer.getOrElse("none")}")
     explainer.popLevel()
   }
 

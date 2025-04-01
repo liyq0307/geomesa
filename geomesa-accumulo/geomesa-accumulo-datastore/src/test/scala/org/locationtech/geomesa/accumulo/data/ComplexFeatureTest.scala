@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.filter.Filter
 import org.geotools.factory.CommonFactoryFinder
-import org.geotools.util.factory.Hints
 import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.geotools.filter.text.ecql.ECQL
+import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
-import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -38,14 +38,12 @@ class ComplexFeatureTest extends Specification with TestWithFeatureType {
   addFeatures({
     // create and add a feature
     val builder = new SimpleFeatureBuilder(sft, CommonFactoryFinder.getFeatureFactory(null))
-    builder.addAll(List(
-      List("joe", "joseph"),
-      List("pointer", "thumb", "ring").asJava,
-      Map("java" -> 1, "scala" -> 100),
-      Map(1.0 -> "value1", 2.0 -> "value2").asJava,
-      "2010-01-01T00:00:00.000Z",
-      "POINT(45.0 49.0)"
-    ).asJava)
+    builder.add(List("joe", "joseph"))
+    builder.add(List("pointer", "thumb", "ring").asJava)
+    builder.add(Map("java" -> 1, "scala" -> 100))
+    builder.add(Map(1.0 -> "value1", 2.0 -> "value2").asJava)
+    builder.add("2010-01-01T00:00:00.000Z")
+    builder.add("POINT(45.0 49.0)")
     val liveFeature = builder.buildFeature("fid-1")
     liveFeature.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
     Seq(liveFeature)

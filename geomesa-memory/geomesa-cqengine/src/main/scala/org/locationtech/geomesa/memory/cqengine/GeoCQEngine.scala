@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -7,9 +7,6 @@
  ***********************************************************************/
 
 package org.locationtech.geomesa.memory.cqengine
-
-import java.util
-import java.util.UUID
 
 import com.googlecode.cqengine.attribute.Attribute
 import com.googlecode.cqengine.index.hash.HashIndex
@@ -21,6 +18,8 @@ import com.googlecode.cqengine.query.simple.{All, Equal}
 import com.googlecode.cqengine.query.{Query, QueryFactory}
 import com.googlecode.cqengine.{ConcurrentIndexedCollection, IndexedCollection}
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter._
 import org.locationtech.geomesa.memory.cqengine.attribute.SimpleFeatureAttribute
 import org.locationtech.geomesa.memory.cqengine.index.GeoIndexType
 import org.locationtech.geomesa.memory.cqengine.index.param.{BucketIndexParam, GeoIndexParams}
@@ -28,10 +27,9 @@ import org.locationtech.geomesa.memory.cqengine.utils.CQIndexType.CQIndexType
 import org.locationtech.geomesa.memory.cqengine.utils._
 import org.locationtech.geomesa.utils.index.SimpleFeatureIndex
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter._
 
-import scala.collection.JavaConversions._
+import java.util.UUID
+import scala.collection.JavaConverters._
 
 class GeoCQEngine(val sft: SimpleFeatureType,
                   attributes: Seq[(String, CQIndexType)],
@@ -64,7 +62,7 @@ class GeoCQEngine(val sft: SimpleFeatureType,
 
   override def insert(feature: SimpleFeature): Unit = cqcache.add(feature)
 
-  override def insert(features: Iterable[SimpleFeature]): Unit = cqcache.addAll(features)
+  override def insert(features: Iterable[SimpleFeature]): Unit = cqcache.addAll(features.asJavaCollection)
 
   override def update(feature: SimpleFeature): SimpleFeature = {
     val existing = remove(feature.getID)
@@ -82,7 +80,7 @@ class GeoCQEngine(val sft: SimpleFeatureType,
 
   override def get(id: String): SimpleFeature = {
     // if this gets used, set enableFidIndex=true
-    cqcache.retrieve(new Equal(SFTAttributes.fidAttribute, id)).headOption.orNull
+    cqcache.retrieve(new Equal(SFTAttributes.fidAttribute, id)).asScala.headOption.orNull
   }
 
   override def query(filter: Filter): Iterator[SimpleFeature] = {
@@ -93,7 +91,7 @@ class GeoCQEngine(val sft: SimpleFeatureType,
     } else {
       cqcache.retrieve(query).iterator()
     }
-    if (query.isInstanceOf[All[_]]) { iter.filter(filter.evaluate) } else { iter }
+    if (query.isInstanceOf[All[_]]) { iter.asScala.filter(filter.evaluate) } else { iter.asScala }
   }
 
   def size(): Int = cqcache.size()

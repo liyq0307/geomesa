@@ -1,4 +1,4 @@
-.. _geomesa-process:
+.. _geomesa_process:
 
 GeoMesa Processes
 =================
@@ -35,18 +35,16 @@ with GeoServer. To deploy them in GeoServer requires:
 
 1. a GeoMesa datastore plugin
 2. the GeoServer WPS extension
-3. the ``geomesa-process-wps_2.11-<version>.jar`` deployed in ``${GEOSERVER_HOME}/WEB-INF/lib``
 
 .. note::
 
   Some processes also require custom output formats, available separately in the GPL licensed
   `GeoMesa GeoServer WFS module <https://github.com/geomesa/geomesa-geoserver>`__
 
-The GeoMesa datastore plugin and GeoMesa process jars are both
-available in the binary distribution in the gs-plugins directory.
+The GeoMesa datastore plugin is available in the binary distribution in the gs-plugins directory.
 
 Documentation about the GeoServer WPS Extension (including download
-instructions) is available `here <http://docs.geoserver.org/stable/en/user/services/wps/install.html>`__.
+instructions) is available `here <https://docs.geoserver.org/stable/en/user/services/wps/install.html>`__.
 
 To verify the install, start GeoServer, and you should see a line like
 ``INFO [geoserver.wps] - Found 15 bindable processes in GeoMesa Process Factory``.
@@ -69,14 +67,14 @@ The ``ArrowConversionProcess`` converts an input feature collection to arrow for
 =====================  ===========
 Parameters             Description
 =====================  ===========
-features               Input feature collection to encode.
-includeFids            Include feature IDs in arrow file.
-dictionaryFields       Attributes to dictionary encode.
-useCachedDictionaries  Use cached top-k stats (if available), or run a dynamic stats query to build dictionaries.
-sortField              Attribute to sort by.
-sortReverse            Reverse the default sort order.
-batchSize              Number of features to include in each record batch.
-doublePass             Build dictionaries first, then query results in a separate scan.
+features               Input feature collection to encode
+includeFids            Include feature IDs in arrow file
+proxyFids              Proxy feature IDs to integers instead of strings
+formatVersion          Arrow IPC format version
+dictionaryFields       Attributes to dictionary encode
+sortField              Attribute to sort by
+sortReverse            Reverse the default sort order
+batchSize              Number of features to include in each record batch
 =====================  ===========
 
 .. _bin_conversion_process:
@@ -89,15 +87,13 @@ The ``BinConversionProcess`` converts an input feature collection to BIN format.
 ==========  ===========
 Parameters  Description
 ==========  ===========
-features    Input feature collection to query.
-track       Track field to use for BIN records.
-geom        Geometry field to use for BIN records.
-dtg         Use cached top-k stats (if available), or run a dynamic stats query to build dictionaries.
-label       Attribute to sort by.
-axisOrder   Reverse the default sort order.
+features    Input feature collection to query
+track       Track field to use for BIN records
+geom        Geometry field to use for BIN records
+dtg         Use cached top-k stats (if available), or run a dynamic stats query to build dictionaries
+label       Attribute to sort by
+axisOrder   Reverse the default sort order
 ==========  ===========
-
-
 
 .. _density_process:
 
@@ -109,12 +105,13 @@ The ``DensityProcess`` computes a density map over a set of features stored in G
 ============  ===========
 Parameters    Description
 ============  ===========
-data          Input Simple Feature Collection to run the density process over.
-radiusPixels  Radius of the density kernel in pixels. Controls the "fuzziness" of the density map.
-weightAttr    Name of the attribute to use for data point weights.
-outputBBOX    Bounding box and CRS of the output raster.
-outputWidth   Width of the output raster in pixels.
-outputHeight  Height of the output raster in pixels.
+data          Input Simple Feature Collection to run the density process over
+radiusPixels  Radius of the density kernel in pixels. Controls the "fuzziness" of the density map
+geomAttr      Name of the geometry attribute to render, if not specified will use the default geometry for the layer
+weightAttr    Name of the attribute to use for data point weights, if not specified all points will be constant weight
+outputBBOX    Bounding box and CRS of the output raster
+outputWidth   Width of the output raster in pixels
+outputHeight  Height of the output raster in pixels
 ============  ===========
 
 .. _date_offset_process:
@@ -127,12 +124,10 @@ The ``DateOffsetProcess`` modifies the specified date field in a feature collect
 ============  ===========
 Parameters    Description
 ============  ===========
-data          Input features.
-dateField     The date attribute to modify.
-timeOffset    Time offset (e.g. P1D).
+data          Input features
+dateField     The date attribute to modify
+timeOffset    Time offset (e.g. P1D)
 ============  ===========
-
-
 
 .. _hash_process:
 
@@ -144,9 +139,9 @@ The ``HashAttributeProcess`` adds an attribute to each SimpleFeature that hashes
 ============  ===========
 Parameters    Description
 ============  ===========
-data          Input Simple Feature Collection to run the hash process over.
-attribute     The attribute to hash on.
-modulo        The divisor.
+data          Input Simple Feature Collection to run the hash process over
+attribute     The attribute to hash on
+modulo        The divisor
 ============  ===========
 
 .. _hashExampleXML:
@@ -195,9 +190,9 @@ The ``HashAttributeColorProcess`` adds an attribute to each SimpleFeature that h
 ============  ===========
 Parameters    Description
 ============  ===========
-data          Input Simple Feature Collection to run the hash process over.
-attribute     The attribute to hash on.
-modulo        The divisor.
+data          Input Simple Feature Collection to run the hash process over
+attribute     The attribute to hash on
+modulo        The divisor
 ============  ===========
 
 .. _join_process:
@@ -210,11 +205,11 @@ The ``JoinProcess`` queries a feature type based on attributes from a second fea
 =============  ===========
 Parameters     Description
 =============  ===========
-primary        Primary feature collection being queried.
-secondary      Secondary feature collection to be joined.
-joinAttribute  Attribute field to join on.
-joinFilter     Additional filter to apply to joined features.
-attributes     Attributes to return. Attribute names should be qualified with the schema name, e.g. foo.bar.
+primary        Primary feature collection being queried
+secondary      Secondary feature collection to be joined
+joinAttribute  Attribute field to join on
+joinFilter     Additional filter to apply to joined features
+attributes     Attributes to return. Attribute names should be qualified with the schema name, e.g. foo.bar
 =============  ===========
 
 .. _knn_process:
@@ -229,11 +224,11 @@ is the nearest neighbor of multiple points in the input data set, it is returned
 ================= ===================================================================================================
 Parameter         Description
 ================= ===================================================================================================
-inputFeatures     Input feature collection. The geometries of the features defines the KNN search.
-dataFeatures      The data set to query for neighbors.
-numDesired        ``k``, number of nearest neighbors to return.
-estimatedDistance Estimate of the distance in meters for the ``k``-th nearest neighbor, used for the initial query window.
-maxSearchDistance Maximum search distance in meters, used to prevent runaway queries of the entire data set.
+inputFeatures     Input feature collection. The geometries of the features defines the KNN search
+dataFeatures      The data set to query for neighbors
+numDesired        ``k``, number of nearest neighbors to return
+estimatedDistance Estimate of the distance in meters for the ``k``-th nearest neighbor, used for the initial query window
+maxSearchDistance Maximum search distance in meters, used to prevent runaway queries of the entire data set
 ================= ===================================================================================================
 
 .. _knnExampleXML:
@@ -259,12 +254,12 @@ The ``Point2PointProcess`` aggregates a collection of points into a collection o
 =====================  ===========
 Parameters             Description
 =====================  ===========
-data                   Input feature collection.
-groupingField          Field on which to group.
-sortField              Field on which to sort (must be Date type).
-minimumNumberOfPoints  Minimum number of points.
-breakOnDay             Break connections on day marks.
-filterSingularPoints   Filter out segments that fall on the same point.
+data                   Input feature collection
+groupingField          Field on which to group
+sortField              Field on which to sort (must be Date type)
+minimumNumberOfPoints  Minimum number of points
+breakOnDay             Break connections on day marks
+filterSingularPoints   Filter out segments that fall on the same point
 =====================  ===========
 
 .. _point2pointExampleXML:
@@ -319,9 +314,9 @@ The ``ProximitySearchProcess`` performs a proximity search on a Geomesa feature 
 =====================  ===========
 Parameters             Description
 =====================  ===========
-inputFeatures          Input feature collection that defines the proximity search.
-dataFeatures           The data set to query for matching features.
-bufferDistance         Buffer size in meters.
+inputFeatures          Input feature collection that defines the proximity search
+dataFeatures           The data set to query for matching features
+bufferDistance         Buffer size in meters
 =====================  ===========
 
 .. _proximityExampleXML:
@@ -346,14 +341,14 @@ The ``RouteSearchProcess`` finds features around a route that are heading along 
 ================  ===========
 Parameters        Description
 ================  ===========
-features          Input feature collection to query.
-routes            Routes to search along. Features must have a geometry of LineString.
-bufferSize        Buffer size (in meters) to search around the route.
-headingThreshold  Threshold for comparing headings, in degrees.
-routeGeomField    Attribute that will be examined for routes to match. Must be a LineString.
-geomField         Attribute that will be examined for route matching.
-bidirectional     Consider the direction of the route or just the path of the route.
-headingField      Attribute that will be examined for heading in the input features. If not provided, input features geometries must be LineStrings.
+features          Input feature collection to query
+routes            Routes to search along. Features must have a geometry of LineString
+bufferSize        Buffer size (in meters) to search around the route
+headingThreshold  Threshold for comparing headings, in degrees
+routeGeomField    Attribute that will be examined for routes to match. Must be a LineString
+geomField         Attribute that will be examined for route matching
+bidirectional     Consider the direction of the route or just the path of the route
+headingField      Attribute that will be examined for heading in the input features. If not provided, input features geometries must be LineStrings
 ================  ===========
 
 .. _routeSearchExampleXML:
@@ -366,8 +361,6 @@ Route search example (XML)
 .. code-block:: bash
 
     curl -v -u admin:geoserver -H "Content-Type: text/xml" -d@RouteSearchProcess_wps.xml localhost:8080/geoserver/wps
-
-
 
 .. _sampling_process:
 
@@ -395,8 +388,6 @@ Sampling example (XML)
 
     curl -v -u admin:geoserver -H "Content-Type: text/xml" -d@SamplingProcess_wps.xml localhost:8080/geoserver/wps
 
-
-
 .. _statsiterator_process:
 
 StatsProcess
@@ -407,95 +398,17 @@ The ``StatsProcess`` allows the running of statistics on a given feature set.
 ==========  ===========
 Parameters  Description
 ==========  ===========
-features    The feature set on which to query. Can be a raw text input, reference to a remote URL, a subquery or a vector layer.
-statString  Stat string indicating which stats to instantiate. More info here :ref:`statString`.
-encode      Return the values encoded as json. Must be ``true`` or ``false``; empty values will not work.
-properties  The properties / transforms to apply before gathering stats.
+features    The feature set on which to query. Can be a raw text input, reference to a remote URL, a subquery or a vector layer
+statString  Stat string indicating which stats to instantiate - see below
+encode      Return the values encoded as json. Must be ``true`` or ``false``; empty values will not work
+properties  The properties / transforms to apply before gathering stats
 ==========  ===========
-
-.. _statString:
 
 Stat Strings
 """"""""""""
 
 Stat strings are a GeoMesa domain specific language (DSL) that allows the specification of stats for the iterators
-to collect. The available stat function are listed below:
-
-.. note::
-
-    Items marked with ``*`` are the name of an attribute, either in your sft or as the result of a transformation or projection.
-
-.. note::
-
-    A TimePeriod is defined as one of the following strings: "day", "week", "month", "year"
-
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| Syntax                                                            |   Parameters         | Description                                             |
-+===================================================================+======================+=========================================================+
-| Count                                                                                                                                              |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``Count()``                                                       |                      | Counts the number of features.                          |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| MinMax                                                                                                                                             |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``MinMax(attribute)``                                             | * attribute*: String | Finds the min and max values of the given attribute.    |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| GroupBy                                                                                                                                            |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``GroupBy(attribute,stat)``                                       | * attribute*: String | Groups stats by the given attribute and then runs       |
-|                                                                   | * stat: Stat String  | the given stat on each group. Any stat can be provided. |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| Descriptive Stats                                                                                                                                  |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``DescriptiveStats(attribute)``                                   | * attribute*: String | Runs single pass stats on the given attribute           |
-|                                                                   |                      | calculating stats describing the attribute such as:     |
-|                                                                   |                      | count; min; max; mean; and population and sample        |
-|                                                                   |                      | versions of variance, standard deviation, kurtosis,     |
-|                                                                   |                      | excess kurtosis, covariance, and correlation.           |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| Enumeration                                                                                                                                        |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``Enumeration(attribute)``                                        | * attribute*: String | Enumerates the values in the give attribute and the     |
-|                                                                   |                      | number of occurrences.                                  |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| TopK                                                                                                                                               |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``TopK(attribute)``                                               | * attribute*: String | TopK of the given attribute                             |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| Histogram                                                                                                                                          |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``Histogram(attribute,numBins,lower,upper)``                      | * attribute*: String | Provides a histogram of the given attribute, binning    |
-|                                                                   | * numBins: Int       | the results into a binned array using the numBins as    |
-|                                                                   | * lower: Int         | the number of bins and lower and upper as the bounds    |
-|                                                                   | * upper: Int         | of the binned array.                                    |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| Frequency                                                                                                                                          |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``Frequency(attribute,dtg,period,precision)``                     | * attribute*: String | Estimates frequency counts at scale.                    |
-|                                                                   | * dtg*: String       |                                                         |
-|                                                                   | * period: TimePeriod |                                                         |
-|                                                                   | * precision: Int     |                                                         |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| z3Histogram                                                                                                                                        |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``Z3Histogram(geom,dtg,period,length)``                           | * geom*: String      | Provides a histogram similar to ``Histogram`` but       |
-|                                                                   | * dtg*: String       | treats the geometry and date attributes as a single     |
-|                                                                   | * period: TimePeriod | value.                                                  |
-|                                                                   | * length: Int        |                                                         |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| z3Frequency                                                                                                                                        |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``Z3Frequency(geom,dtg,period,precision)``                        | * geom*: String      | Provides a freqency estimate similar to ``Frequency``   |
-|                                                                   | * dtg*: String       | but treats the geometry and date attributes as a        |
-|                                                                   | * period: TimePeriod | single value.                                           |
-|                                                                   | * precision: Int     |                                                         |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| Iterator Stack                                                                                                                                     |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
-| ``IteratorStackCount()``                                          |                      | IteratorStackCount keeps track of the number of times   |
-|                                                                   |                      | Accumulo sets up an iterator stack as a result of a     |
-|                                                                   |                      | query.                                                  |
-+-------------------------------------------------------------------+----------------------+---------------------------------------------------------+
+to collect. See :ref:`statistical_queries` for an explanation of the available stats.
 
 .. _tracklabel_process:
 
@@ -507,9 +420,9 @@ The ``TrackLabelProcess`` returns a single feature that is the head of a track o
 ==========  ===========
 Parameters  Description
 ==========  ===========
-data        Input features.
-track       Track attribute to use for grouping features.
-dtg         Date attribute to use for ordering tracks.
+data        Input features
+track       Track attribute to use for grouping features
+dtg         Date attribute to use for ordering tracks
 ==========  ===========
 
 .. _trackLabelExampleXML:
@@ -531,19 +444,19 @@ TrackLabel example (XML)
 TubeSelectProcess
 ^^^^^^^^^^^^^^^^^
 
-The ``TubeSelectProcess`` performs a tube select on a Geomesa feature collection based on another feature collection. To get more informations on ``TubeSelectProcess`` and how to use it, you can read `this tutorial <http://www.geomesa.org/documentation/tutorials/geomesa-tubeselect.html>`__. 
+The ``TubeSelectProcess`` performs a tube select on a Geomesa feature collection based on another feature collection. To get more informations on ``TubeSelectProcess`` and how to use it, you can read `this tutorial <https://www.geomesa.org/documentation/tutorials/geomesa-tubeselect.html>`__. 
 
 =================   ===========
 Parameters          Description
 =================   ===========
-tubeFeatures        Input feature collection (must have geometry and datetime).
-featureCollection   The data set to query for matching features.
-filter              The filter to apply to the featureCollection.
-maxSpeed            Max speed of the object in m/s for nofill & line gapfill methods.
-maxTime             Time as seconds for nofill & line gapfill methods.
-bufferSize          Buffer size in meters to use instead of maxSpeed/maxTime calculation.
-maxBins             Number of bins to use for breaking up query into individual queries.
-gapFill             Method of filling gap (nofill, line).
+tubeFeatures        Input feature collection (must have geometry and datetime)
+featureCollection   The data set to query for matching features
+filter              The filter to apply to the featureCollection
+maxSpeed            Max speed of the object in m/s for nofill & line gapfill methods
+maxTime             Time as seconds for nofill & line gapfill methods
+bufferSize          Buffer size in meters to use instead of maxSpeed/maxTime calculation
+maxBins             Number of bins to use for breaking up query into individual queries
+gapFill             Method of filling gap (nofill, line)
 =================   ===========
 
 .. _tubeSelectExampleXML:
@@ -557,9 +470,6 @@ TubeSelect example (XML)
 
     curl -v -u admin:geoserver -H "Content-Type: text/xml" -d@TubeSelectProcess_wps.xml localhost:8080/geoserver/wps
 
-
-
-
 .. _query_process:
 
 QueryProcess
@@ -571,9 +481,9 @@ the result as a json object.
 ==========  ===========
 Parameters  Description
 ==========  ===========
-features    The data source feature collection to query. Reference as ``store:layername``.
-		        For an XML file enter ``<wfs:Query typeName=store:layername />``
-		        For interactive WPS request builder select ``VECTOR_LAYER`` & choose ``store:layername``
+features    The data source feature collection to query. Reference as ``workspace:layername``.
+		        For an XML file enter ``<wfs:Query typeName=workspace:layername />``
+		        For interactive WPS request builder select ``VECTOR_LAYER`` & choose ``workspace:layername``
 
 filter      The filter to apply to the feature collection.
 		        For an XML file enter:
@@ -611,7 +521,7 @@ Query example (XML)
 """""""""""""""""""
 
 :download:`QueryProcess_wps.xml </user/_static/process/QueryProcess_wps.xml>` is a geoserver WPS call to the GeoMesa QueryProcess that performs the same query shown
-in the `Accumulo-quickstart <http://www.geomesa.org/documentation/tutorials/geomesa-quickstart-accumulo.html>`_. It can be run with the following curl call:
+in the `Accumulo-quickstart <https://www.geomesa.org/documentation/tutorials/geomesa-quickstart-accumulo.html>`_. It can be run with the following curl call:
 
 .. code-block:: bash
 
@@ -655,9 +565,9 @@ which are returned as a json object.
 ===========  ===========
 Parameters   Description
 ===========  ===========
-features     The data source feature collection to query. Reference as ``store:layername``.
-		        For an XML file enter ``<wfs:Query typeName=store:layername />``
-		        For interactive WPS request builder select ``VECTOR_LAYER`` & choose ``store:layername``
+features     The data source feature collection to query. Reference as ``workspace:layername``.
+		        For an XML file enter ``<wfs:Query typeName=workspace:layername />``
+		        For interactive WPS request builder select ``VECTOR_LAYER`` & choose ``workspace:layername``
 
 attribute    The attribute for which unique values will be extracted. Attributes are expressed as a string.
 		        For an XML file enter ``<wps:LiteralData>attribute-name</wps:LiteralData>``

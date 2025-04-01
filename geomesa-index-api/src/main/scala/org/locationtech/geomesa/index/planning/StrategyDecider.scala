@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,17 +9,19 @@
 package org.locationtech.geomesa.index.planning
 
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
+import org.locationtech.geomesa.index.index.EmptyIndex
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.planning.QueryPlanner.CostEvaluation
 import org.locationtech.geomesa.index.planning.QueryPlanner.CostEvaluation.CostEvaluation
+import org.locationtech.geomesa.index.stats.GeoMesaStats
 import org.locationtech.geomesa.index.utils.{ExplainNull, Explainer}
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.index.IndexMode
 import org.locationtech.geomesa.utils.stats.MethodProfiling
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 
 /**
   * Selects from available strategies for answering a query
@@ -27,16 +29,20 @@ import org.opengis.filter.Filter
 trait StrategyDecider {
 
   /**
-    * Select from available filter plans
-    *
-    * @param sft simple feature type being queried
-    * @param options filter plans that can satisfy the query
-    * @param explain explain logging
-    * @return filter plan to execute
-    */
-  def selectFilterPlan(sft: SimpleFeatureType, options: Seq[FilterPlan], explain: Explainer): FilterPlan
+   * Select from available filter plans
+   *
+   * @param sft simple feature type being queried
+   * @param options filter plans that can satisfy the query
+   * @param stats stats (if available)
+   * @param explain explain logging
+   * @return filter plan to execute
+   */
+  def selectFilterPlan(
+      sft: SimpleFeatureType,
+      options: Seq[FilterPlan],
+      stats: Option[GeoMesaStats],
+      explain: Explainer): FilterPlan
 }
-
 
 object StrategyDecider extends MethodProfiling with LazyLogging {
 
@@ -74,17 +80,11 @@ object StrategyDecider extends MethodProfiling with LazyLogging {
 
     def complete(op: String, time: Long, count: Int): Unit = explain(s"$op took ${time}ms for $count options")
 
-    // choose the best option based on cost
-    val stats = evaluation match {
-      case CostEvaluation.Stats => Some(ds.stats)
-      case CostEvaluation.Index => None
-    }
-
     val indices = ds.manager.indices(sft, mode = IndexMode.Read)
 
     // get the various options that we could potentially use
     val options = profile((o: Seq[FilterPlan], t: Long) => complete("Query processing", t, o.length)) {
-      new FilterSplitter(sft, indices, stats).getQueryOptions(filter, transform)
+      new FilterSplitter(sft, indices).getQueryOptions(filter, transform)
     }
 
     val selected = profile(t => complete("Strategy selection", t, options.length)) {
@@ -94,17 +94,20 @@ object StrategyDecider extends MethodProfiling with LazyLogging {
         forced
       } else if (options.isEmpty) {
         // corresponds to filter.exclude
-        explain("No filter plans found")
-        FilterPlan(Seq.empty)
+        // we still need to return something so that we can handle reduce steps, if needed
+        explain("No filter plans found - creating empty plan")
+        FilterPlan(Seq(FilterStrategy(new EmptyIndex(ds, sft), Some(Filter.EXCLUDE), None, temporal = false, 1f)))
       } else if (options.lengthCompare(1) == 0) {
         // only a single option, so don't bother with cost
         explain(s"Filter plan: ${options.head}")
         options.head
       } else {
-        val plan = decider.selectFilterPlan(sft, options, explain)
-        explain(s"Filter plan selected: $plan")
-        explain(s"Filter plans not selected: ${options.filterNot(_.eq(plan)).mkString(", ")}")
-        plan
+        // choose the best option based on cost
+        val stats = evaluation match {
+          case CostEvaluation.Stats => Some(ds.stats)
+          case CostEvaluation.Index => None
+        }
+        decider.selectFilterPlan(sft, options, stats, explain)
       }
     }
 
@@ -131,7 +134,7 @@ object StrategyDecider extends MethodProfiling with LazyLogging {
                 indices.map(i => s"${i.name}, ${i.identifier}").mkString(", "))
           }
       val secondary = if (filter == Filter.INCLUDE) { None } else { Some(filter) }
-      FilterPlan(Seq(FilterStrategy(index, None, secondary, temporal = false, 0L)))
+      FilterPlan(Seq(FilterStrategy(index, None, secondary, temporal = false, Float.PositiveInfinity)))
     }
 
     byId.orElse(byName).orElse(byJoin).getOrElse(fallback)
@@ -144,21 +147,30 @@ object StrategyDecider extends MethodProfiling with LazyLogging {
     override def selectFilterPlan(
         sft: SimpleFeatureType,
         options: Seq[FilterPlan],
+        stats: Option[GeoMesaStats],
         explain: Explainer): FilterPlan = {
 
+      def cost(option: FilterPlan): FilterPlanCost = {
+        profile((fpc: FilterPlanCost, time: Long) => fpc.copy(time = time)) {
+          var cost = BigInt(0)
+          option.strategies.foreach { strategy =>
+            val filter = strategy.primary.getOrElse(Filter.INCLUDE)
+            val count = stats.flatMap(_.getCount(sft, filter, exact = false)).getOrElse(100L)
+            cost = cost + BigInt((count * strategy.costMultiplier).toLong)
+          }
+          FilterPlanCost(option, if (cost.isValidLong) { cost.longValue } else { Long.MaxValue }, 0L)
+        }
+      }
+
       val costs = options.map(cost).sorted
-      explain(s"Costs: ${costs.mkString("; ")}")
 
       val temporal = if (!sft.isTemporalPriority) { None } else {
         costs.find(c => c.plan.strategies.nonEmpty && c.plan.strategies.forall(_.temporal))
       }
-      temporal.getOrElse(costs.head).plan
-    }
-
-    private def cost(option: FilterPlan): FilterPlanCost = {
-      profile((fpc: FilterPlanCost, time: Long) => fpc.copy(time = time)) {
-        FilterPlanCost(option, option.strategies.map(_.cost).sum, 0L)
-      }
+      val selected = temporal.getOrElse(costs.head)
+      explain(s"Filter plan selected: $selected")
+      explain(s"Filter plans not selected: ${costs.filterNot(_.eq(selected)).mkString(", ")}")
+      selected.plan
     }
 
     private case class FilterPlanCost(plan: FilterPlan, cost: Long, time: Long) extends Comparable[FilterPlanCost] {

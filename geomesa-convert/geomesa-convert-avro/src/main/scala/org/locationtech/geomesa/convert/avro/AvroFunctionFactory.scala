@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,14 @@
 
 package org.locationtech.geomesa.convert.avro
 
-import java.nio.ByteBuffer
-
 import org.apache.avro.generic.GenericRecord
-import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.transforms.Expression.LiteralString
 import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
 import org.locationtech.geomesa.convert2.transforms.{Expression, TransformerFunction, TransformerFunctionFactory}
-import org.locationtech.geomesa.features.avro.AvroSimpleFeatureUtils
+import org.locationtech.geomesa.features.avro.serialization.AvroField.UuidBinaryField
+import org.locationtech.geomesa.features.avro.serialization.CollectionSerialization
+
+import java.nio.ByteBuffer
 
 class AvroFunctionFactory extends TransformerFunctionFactory {
 
@@ -25,17 +25,29 @@ class AvroFunctionFactory extends TransformerFunctionFactory {
 
   // parses a list encoded by the geomesa avro writer
   private val binaryList = TransformerFunction.pure("avroBinaryList") { args =>
-    AvroSimpleFeatureUtils.decodeList(ByteBuffer.wrap(args(0).asInstanceOf[Array[Byte]]))
+    args(0) match {
+      case bytes: Array[Byte] => CollectionSerialization.decodeList(ByteBuffer.wrap(bytes))
+      case null => null
+      case arg => throw new IllegalArgumentException(s"Expected byte array but got: $arg")
+    }
   }
 
   // parses a map encoded by the geomesa avro writer
   private val binaryMap = TransformerFunction.pure("avroBinaryMap") { args =>
-    AvroSimpleFeatureUtils.decodeMap(ByteBuffer.wrap(args(0).asInstanceOf[Array[Byte]]))
+    args(0) match {
+      case bytes: Array[Byte] => CollectionSerialization.decodeMap(ByteBuffer.wrap(bytes))
+      case null => null
+      case arg => throw new IllegalArgumentException(s"Expected byte array but got: $arg")
+    }
   }
 
   // parses a uuid encoded by the geomesa avro writer
   private val binaryUuid = TransformerFunction.pure("avroBinaryUuid") { args =>
-    AvroSimpleFeatureUtils.decodeUUID(ByteBuffer.wrap(args(0).asInstanceOf[Array[Byte]]))
+    args(0) match {
+      case bytes: Array[Byte] => UuidBinaryField.decode(ByteBuffer.wrap(bytes))
+      case null => null
+      case arg => throw new IllegalArgumentException(s"Expected byte array but got: $arg")
+    }
   }
 
   class AvroPathFn(path: AvroPath) extends NamedTransformerFunction(Seq("avroPath"), pure = true) {
@@ -48,7 +60,7 @@ class AvroFunctionFactory extends TransformerFunctionFactory {
       new AvroPathFn(path)
     }
 
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any =
-      path.eval(args(0).asInstanceOf[GenericRecord]).orNull
+    override def apply(args: Array[AnyRef]): AnyRef =
+      path.eval(args(0).asInstanceOf[GenericRecord]).orNull.asInstanceOf[AnyRef]
   }
 }

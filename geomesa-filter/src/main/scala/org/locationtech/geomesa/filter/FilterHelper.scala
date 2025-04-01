@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,13 @@
 
 package org.locationtech.geomesa.filter
 
-import java.time.{ZoneOffset, ZonedDateTime}
-import java.util.{Date, Locale}
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter._
+import org.geotools.api.filter.expression.{Expression, PropertyName}
+import org.geotools.api.filter.spatial._
+import org.geotools.api.filter.temporal.{After, Before, During, TEquals}
+import org.geotools.api.temporal.Period
 import org.geotools.data.DataUtilities
 import org.locationtech.geomesa.filter.Bounds.Bound
 import org.locationtech.geomesa.filter.expression.AttributeExpression.{FunctionLiteral, PropertyLiteral}
@@ -20,14 +23,10 @@ import org.locationtech.geomesa.utils.date.DateUtils.toInstant
 import org.locationtech.geomesa.utils.geotools.GeometryUtils
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.jts.geom._
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter._
-import org.opengis.filter.expression.{Expression, PropertyName}
-import org.opengis.filter.spatial._
-import org.opengis.filter.temporal.{After, Before, During, TEquals}
-import org.opengis.temporal.Period
 
-import scala.collection.JavaConversions._
+import java.time.{ZoneOffset, ZonedDateTime}
+import java.util.{Date, Locale}
+import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 
 object FilterHelper {
@@ -39,7 +38,7 @@ object FilterHelper {
     private [FilterHelper] def log = logger
   }
 
-  val ff: FilterFactory2 = org.locationtech.geomesa.filter.ff
+  val ff: FilterFactory = org.locationtech.geomesa.filter.ff
 
   def isFilterWholeWorld(f: Filter): Boolean = f match {
       case op: BBOX       => isOperationGeomWholeWorld(op)
@@ -112,17 +111,17 @@ object FilterHelper {
   private def extractUnclippedGeometries(filter: Filter, attribute: String, intersect: Boolean): FilterValues[Geometry] = {
     filter match {
       case o: Or  =>
-        val all = o.getChildren.map(extractUnclippedGeometries(_, attribute, intersect))
+        val all = o.getChildren.asScala.map(extractUnclippedGeometries(_, attribute, intersect))
         val join = FilterValues.or[Geometry]((l, r) => l ++ r) _
         all.reduceLeftOption[FilterValues[Geometry]](join).getOrElse(FilterValues.empty)
 
       case a: And =>
-        val all = a.getChildren.map(extractUnclippedGeometries(_, attribute, intersect)).filter(_.nonEmpty)
+        val all = a.getChildren.asScala.map(extractUnclippedGeometries(_, attribute, intersect)).filter(_.nonEmpty)
         if (intersect) {
           val intersect = FilterValues.and[Geometry]((l, r) => Option(l.intersection(r)).filterNot(_.isEmpty)) _
           all.reduceLeftOption[FilterValues[Geometry]](intersect).getOrElse(FilterValues.empty)
         } else {
-          FilterValues(all.flatMap(_.values))
+          FilterValues(all.toSeq.flatMap(_.values))
         }
 
       // Note: although not technically required, all known spatial predicates are also binary spatial operators
@@ -150,6 +149,7 @@ object FilterHelper {
                        handleExclusiveBounds: Boolean = false): FilterValues[Bounds[ZonedDateTime]] = {
     extractAttributeBounds(filter, attribute, classOf[Date]).map { bounds =>
       var lower, upper: Bound[ZonedDateTime] = null
+      // this if check determines if rounding will be used and if we need to account for narrow ranges
       if (!handleExclusiveBounds || bounds.lower.value.isEmpty || bounds.upper.value.isEmpty ||
           (bounds.lower.inclusive && bounds.upper.inclusive)) {
         lower = createDateTime(bounds.lower, roundSecondsUp, handleExclusiveBounds)
@@ -198,15 +198,19 @@ object FilterHelper {
   def extractAttributeBounds[T](filter: Filter, attribute: String, binding: Class[T]): FilterValues[Bounds[T]] = {
     filter match {
       case o: Or =>
-        val all = o.getChildren.flatMap { f =>
-          val child = extractAttributeBounds(f, attribute, binding)
-          if (child.isEmpty) { Seq.empty } else { Seq(child) }
-        }
         val union = FilterValues.or[Bounds[T]](Bounds.union[T]) _
-        all.reduceLeftOption[FilterValues[Bounds[T]]](union).getOrElse(FilterValues.empty)
+        o.getChildren.asScala.map(f =>
+          extractAttributeBounds(f, attribute, binding)
+        ).reduceLeft[FilterValues[Bounds[T]]]((acc, child) => {
+          if (acc.isEmpty || child.isEmpty) {
+            FilterValues.empty
+          } else {
+            union(acc, child)
+          }
+        })
 
       case a: And =>
-        val all = a.getChildren.flatMap { f =>
+        val all = a.getChildren.asScala.flatMap { f =>
           val child = extractAttributeBounds(f, attribute, binding)
           if (child.isEmpty) { Seq.empty } else { Seq(child) }
         }
@@ -517,16 +521,21 @@ object FilterHelper {
     */
   def simplify(filter: Filter): Filter = {
     def deduplicateOrs(f: Filter): Filter = f match {
-      case and: And => ff.and(and.getChildren.map(deduplicateOrs))
+      case and: And => ff.and(and.getChildren.asScala.map(deduplicateOrs).asJava)
 
       case or: Or =>
         // OR(AND(1,2,3), AND(1,2,4)) -> Seq(Seq(1,2,3), Seq(1,2,4))
-        val decomposed = or.getChildren.map(decomposeAnd)
+        val decomposed = or.getChildren.asScala.map(decomposeAnd)
         val clauses = decomposed.head // Seq(1,2,3)
         val duplicates = clauses.filter(c => decomposed.tail.forall(_.contains(c))) // Seq(1,2)
         if (duplicates.isEmpty) { or } else {
-          val deduplicated = orOption(decomposed.flatMap(d => andOption(d.filterNot(duplicates.contains))))
-          andFilters(deduplicated.toSeq ++ duplicates)
+          val simplified = decomposed.flatMap(d => andOption(d.filterNot(duplicates.contains)))
+          if (simplified.length < decomposed.length) {
+            // the duplicated filters are an entire clause, so we can ignore the rest of the clauses
+            andFilters(duplicates)
+          } else {
+            andFilters(orOption(simplified.toSeq).toSeq ++ duplicates)
+          }
         }
 
       case _ => f
@@ -545,8 +554,8 @@ object FilterHelper {
     */
   def flatten(filter: Filter): Filter = {
     filter match {
-      case and: And  => ff.and(flattenAnd(and.getChildren))
-      case or: Or    => ff.or(flattenOr(or.getChildren))
+      case and: And  => ff.and(flattenAnd(and.getChildren.asScala.toSeq).asJava)
+      case or: Or    => ff.or(flattenOr(or.getChildren.asScala.toSeq).asJava)
       case f: Filter => f
     }
   }
@@ -554,24 +563,24 @@ object FilterHelper {
   private [filter] def flattenAnd(filters: Seq[Filter]): ListBuffer[Filter] = {
     val remaining = ListBuffer.empty[Filter] ++ filters
     val result = ListBuffer.empty[Filter]
-    do {
+    while (remaining.nonEmpty) {
       remaining.remove(0) match {
-        case f: And => remaining.appendAll(f.getChildren)
+        case f: And => remaining.appendAll(f.getChildren.asScala)
         case f      => result.append(flatten(f))
       }
-    } while (remaining.nonEmpty)
+    }
     result
   }
 
   private [filter] def flattenOr(filters: Seq[Filter]): ListBuffer[Filter] = {
     val remaining = ListBuffer.empty[Filter] ++ filters
     val result = ListBuffer.empty[Filter]
-    do {
+    while (remaining.nonEmpty) {
       remaining.remove(0) match {
-        case f: Or => remaining.appendAll(f.getChildren)
+        case f: Or => remaining.appendAll(f.getChildren.asScala)
         case f     => result.append(flatten(f))
       }
-    } while (remaining.nonEmpty)
+    }
     result
   }
 

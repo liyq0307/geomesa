@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,6 +8,7 @@
 
 package org.locationtech.geomesa.features.kryo.json
 
+import org.geotools.api.feature.`type`.AttributeDescriptor
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.expression.PropertyAccessors
 import org.geotools.filter.text.ecql.ECQL
@@ -15,7 +16,6 @@ import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.`type`.AttributeDescriptor
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -24,7 +24,7 @@ class JsonPathPropertyAccessorTest extends Specification {
 
   sequential
 
-  private val filterFactory = CommonFactoryFinder.getFilterFactory2
+  private val filterFactory = CommonFactoryFinder.getFilterFactory
   val sft = SimpleFeatureTypes.createType("json", "json:String:json=true,s:String,dtg:Date,*geom:Point:srid=4326")
 
   "JsonPathPropertyAccessor" should {
@@ -33,7 +33,7 @@ class JsonPathPropertyAccessorTest extends Specification {
       val accessors =
         PropertyAccessors.findPropertyAccessors(new ScalaSimpleFeature(sft, ""), "$.json.foo", classOf[String], null)
       accessors must not(beNull)
-      accessors.asScala must contain(JsonPathPropertyAccessor)
+      accessors.asScala.indexOf(JsonPathPropertyAccessor) must beGreaterThanOrEqualTo(0)
     }
 
     "access json values in simple features" in {

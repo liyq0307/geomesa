@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,7 +9,7 @@
 package org.locationtech.geomesa.accumulo.index
 
 import org.apache.accumulo.core.security.Authorizations
-import org.geotools.data.{Query, Transaction}
+import org.geotools.api.data.{Query, Transaction}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -38,7 +38,10 @@ class ConfigurableIndexesTest extends Specification with TestWithFeatureType {
     sf.setAttribute(2, s"POINT(4$i 5$i)")
     sf
   }
-  addFeatures(features)
+
+  step {
+    addFeatures(features)
+  }
 
   "AccumuloDataStore" should {
     "only create the z3 index" >> {

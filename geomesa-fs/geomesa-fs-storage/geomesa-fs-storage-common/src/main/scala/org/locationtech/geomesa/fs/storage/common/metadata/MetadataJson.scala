@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,29 +9,27 @@
 package org.locationtech.geomesa.fs.storage.common // get pureconfig converters from common package
 package metadata
 
-import java.io.InputStreamReader
-import java.nio.charset.StandardCharsets
-import java.util.concurrent.ConcurrentHashMap
-
 import com.typesafe.config.{Config, ConfigFactory}
-import org.apache.hadoop.fs.Options.CreateOpts
-import org.apache.hadoop.fs.{CreateFlag, Path}
+import org.apache.hadoop.fs.Path
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{PartitionMetadata, StorageFile}
 import org.locationtech.geomesa.fs.storage.api._
 import org.locationtech.geomesa.fs.storage.common.utils.PathCache
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.WithClose
-import org.locationtech.geomesa.utils.stats.MethodProfiling
-import pureconfig.ConfigWriter
+import org.locationtech.geomesa.utils.stats.DebugLogProfiling
+import pureconfig.{ConfigSource, ConfigWriter}
 
+import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import scala.util.control.NonFatal
 
 /**
   * File storing the connection parameters for a metadata instance
   */
-object MetadataJson extends MethodProfiling {
+object MetadataJson extends DebugLogProfiling {
 
-  private val MetadataPath = "metadata.json"
+  val MetadataPath = "metadata.json"
 
   private val cache = new ConcurrentHashMap[String, NamedOptions]()
 
@@ -50,20 +48,20 @@ object MetadataJson extends MethodProfiling {
       // using an atomic operation or cache loader can cause problems, as we sometimes insert into the
       // map during the load, which is not allowed
       val file = new Path(context.root, MetadataPath)
-      if (PathCache.exists(context.fc, file)) {
+      if (PathCache.exists(context.fs, file)) {
         val config = profile("Loaded metadata configuration") {
-          WithClose(new InputStreamReader(context.fc.open(file), StandardCharsets.UTF_8)) { in =>
-            ConfigFactory.parseReader(in, ParseOptions)
+          WithClose(new InputStreamReader(context.fs.open(file), StandardCharsets.UTF_8)) { in =>
+            ConfigFactory.load(ConfigFactory.parseReader(in, ParseOptions)) // call load to resolve sys props
           }
         }
         if (config.hasPath("name")) {
           cached = profile("Parsed metadata configuration") {
-            pureconfig.loadConfigOrThrow[NamedOptions](config)
+            ConfigSource.fromConfig(config).loadOrThrow[NamedOptions]
           }
           cache.put(key, cached)
         } else {
-          context.fc.rename(file, new Path(context.root, s"$MetadataPath.bak"))
-          PathCache.invalidate(context.fc, file)
+          context.fs.rename(file, new Path(context.root, s"$MetadataPath.bak"))
+          PathCache.invalidate(context.fs, file)
           transitionMetadata(context, config).foreach { meta =>
             cached = meta // will be set in the cache in the transition code
           }
@@ -81,22 +79,31 @@ object MetadataJson extends MethodProfiling {
     */
   def writeMetadata(context: FileSystemContext, metadata: NamedOptions): Unit = {
     val file = new Path(context.root, MetadataPath)
-    if (PathCache.exists(context.fc, file, reload = true)) {
+    if (PathCache.exists(context.fs, file, reload = true)) {
       throw new IllegalArgumentException(
         s"Trying to create a new storage instance but metadata already exists at '$file'")
     }
     val data = profile("Serialized metadata configuration") {
       ConfigWriter[NamedOptions].to(metadata).render(RenderOptions)
     }
+    // remove quotes around substitutions so that they resolve properly
+    // this logic relies on the fact that all strings will be quoted, and just puts another quote on
+    // either side of the expression (typesafe will concatenate them), i.e. "foo ${bar}" -> "foo "${bar}""
+    val interpolated = data.replaceAll("\\$\\{[a-zA-Z0-9_.]+}", "\"$0\"")
     profile("Persisted metadata configuration") {
-      WithClose(context.fc.create(file, java.util.EnumSet.of(CreateFlag.CREATE), CreateOpts.createParent)) { out =>
-        out.write(data.getBytes(StandardCharsets.UTF_8))
+      WithClose(context.fs.create(file, false)) { out =>
+        out.write(interpolated.getBytes(StandardCharsets.UTF_8))
         out.hflush()
         out.hsync()
       }
     }
-    cache.put(context.root.toUri.toString, metadata)
-    PathCache.register(context.fc, file)
+    val toCache = if (data == interpolated) { metadata } else {
+      // reload through ConfigFactory to resolve substitutions
+      ConfigSource.fromConfig(ConfigFactory.load(ConfigFactory.parseString(interpolated, ParseOptions)))
+          .loadOrThrow[NamedOptions]
+    }
+    cache.put(context.root.toUri.toString, toCache)
+    PathCache.register(context.fs, file)
   }
 
 
@@ -122,15 +129,16 @@ object MetadataJson extends MethodProfiling {
       val meta = Metadata(sft, encoding, scheme, leafStorage)
       val partitionConfig = config.getConfig("partitions")
 
-      WithClose(new FileBasedMetadataFactory().create(context, Map.empty, meta)) { metadata =>
+      val defaults = FileBasedMetadata.LegacyOptions
+      WithClose(new FileBasedMetadataFactory().create(context, defaults.options, meta)) { metadata =>
         partitionConfig.root().entrySet().asScala.foreach { e =>
           val name = e.getKey
           val files = partitionConfig.getStringList(name).asScala.map(StorageFile(_, 0L))
-          metadata.addPartition(PartitionMetadata(name, files, None, 0L))
+          metadata.addPartition(PartitionMetadata(name, files.toSeq, None, 0L))
         }
       }
 
-      Some(FileBasedMetadata.DefaultOptions)
+      Some(defaults)
     } catch {
       case NonFatal(e) => logger.warn("Error transitioning old metadata format: ", e); None
     }

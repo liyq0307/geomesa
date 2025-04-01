@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -18,6 +18,7 @@ import org.locationtech.geomesa.tools.ingest.IngestCommand
 import org.locationtech.geomesa.tools.ingest.IngestCommand.IngestParams
 
 class AccumuloIngestCommand extends IngestCommand[AccumuloDataStore] with AccumuloDistributedCommand {
+
   override val params = new AccumuloIngestParams()
 
   override def execute(): Unit = {

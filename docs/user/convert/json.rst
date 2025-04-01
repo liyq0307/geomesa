@@ -15,11 +15,11 @@ For large documents, this may take considerable time and memory. Thus, it is usu
 smaller JSON documents per file, when possible.
 
 Since a single JSON document may contain multiple features, the JSON parser supports a
-`JSONPath <http://goessner.net/articles/JsonPath/>`__ expression pointing to each feature element. This can
+`JSONPath <https://goessner.net/articles/JsonPath/>`__ expression pointing to each feature element. This can
 be specified using the ``feature-path`` element.
 
 The ``fields`` element in a JSON converter supports two additional attributes, ``path`` and ``json-type``.
-``path`` should be a `JSONPath <http://goessner.net/articles/JsonPath/>`__ expression, which is relative to the
+``path`` should be a `JSONPath <https://goessner.net/articles/JsonPath/>`__ expression, which is relative to the
 ``feature-path``, if defined (above). For absolute paths, ``root-path`` may be used instead of ``path``.
 ``json-type`` should specify the type of JSON field being read. Valid values are: **string**, **float**, **double**,
 **integer**, **long**, **boolean**, **geometry**, **array** and **object**. The value will be appropriately typed,
@@ -65,6 +65,18 @@ require further processing (e.g. ``jsonList`` or ``jsonMap``, below).
 In addition to the standard functions in :ref:`converter_functions`, the JSON converter provides the following
 JSON-specific functions:
 
+emptyJsonToNull
+~~~~~~~~~~~~~~~
+
+This function converts empty JSON objects and arrays to null. A JSON object is also considered empty if all its
+values are null.
+
+jsonArrayToObject
+~~~~~~~~~~~~~~~~~
+
+This function converts a JSON array into a JSON object, by using the index of each array element as the object
+key. This is useful for GeoMesa's JSON attribute types, which currently require a top-level object and not an array.
+
 jsonList
 ~~~~~~~~
 
@@ -80,6 +92,14 @@ type of the map key elements as a string, the second is the type of the map valu
 third is a JSON object. The type of keys and values must be one of the types defined in :ref:`attribute_types`.
 See below for an example.
 
+jsonPath
+~~~~~~~~
+
+This function will evaluate a `JSONPath <https://goessner.net/articles/JsonPath/>`__ expression against a
+given JSON element. Generally, it is better to use the ``path`` element of the ``fields`` element, but
+this method can be useful for composite predicates (see above). The first argument is the path to evaluate,
+and the second argument is the element to operate on.
+
 mapToJson
 ~~~~~~~~~
 
@@ -87,13 +107,18 @@ This function converts a java.util.Map into a JSON string. It requires a single 
 java.util.Map. It can be useful for storing complex JSON as a single attribute, which can then be queried
 using GeoMesa's JSON attribute support. See :ref:`json_attributes` for more information.
 
-jsonPath
-~~~~~~~~
+newJsonObject
+~~~~~~~~~~~~~
 
-This function will evaluate a `JSONPath <http://goessner.net/articles/JsonPath/>`__ expression against a
-given JSON element. Generally, it is better to use the ``path`` element of the ``fields`` element, but
-this method can be useful for composite predicates (see above). The first argument is the path to evaluate,
-and the second argument is the element to operate on.
+This function creates a new JSON object from key-value pairs. It can be useful for generating JSON text values.
+
+Example::
+
+  fields = [
+    { name = "foo", path = "$.foo", json-type = "String" }
+    { name = "bar", path = "$.bar", json-type = "Array" }
+    { name = "foobar", transform = "toString(newJsonObject('foo', $foo, 'bar', $bar))"
+  ]
 
 Example Usage
 -------------

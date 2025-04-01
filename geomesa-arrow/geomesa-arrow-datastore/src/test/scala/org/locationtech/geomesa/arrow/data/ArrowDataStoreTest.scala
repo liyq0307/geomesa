@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,10 @@
 
 package org.locationtech.geomesa.arrow.data
 
-import java.io.{File, FileOutputStream}
-import java.net.URL
-import java.nio.file.Files
-
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.DirtyRootAllocator
-import org.geotools.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.arrow.io.{FormatVersion, SimpleFeatureArrowFileWriter}
@@ -24,16 +21,19 @@ import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.{File, FileOutputStream}
+import java.net.URL
+import java.nio.file.Files
 
 @RunWith(classOf[JUnitRunner])
 class ArrowDataStoreTest extends Specification {
 
   import ArrowDataStoreFactory.{CachingParam, UrlParam}
 
-  import scala.collection.JavaConversions._
+  import scala.collection.JavaConverters._
 
   implicit val allocator: BufferAllocator = new DirtyRootAllocator(Long.MaxValue, 6.toByte)
 
@@ -60,13 +60,13 @@ class ArrowDataStoreTest extends Specification {
   "ArrowDataStore" should {
     "write and read values" >> {
       withTempFile { file =>
-        val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> file))
+        val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> file).asJava)
         ds must not(beNull)
 
         ds.createSchema(sft)
         ds.getSchema(sft.getTypeName) mustEqual sft
 
-        var caching = DataStoreFinder.getDataStore(Map(UrlParam.key -> file, CachingParam.key -> true))
+        var caching = DataStoreFinder.getDataStore(Map(UrlParam.key -> file, CachingParam.key -> true).asJava)
         caching.getSchema(sft.getTypeName) mustEqual sft
         caching.dispose() must not(throwAn[Exception])
 
@@ -74,7 +74,7 @@ class ArrowDataStoreTest extends Specification {
           features0.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
         }
 
-        caching = DataStoreFinder.getDataStore(Map(UrlParam.key -> file, CachingParam.key -> true))
+        caching = DataStoreFinder.getDataStore(Map(UrlParam.key -> file, CachingParam.key -> true).asJava)
 
         foreach(Seq(ds, caching, caching)) { store =>
           val results = CloseableIterator(store.getFeatureReader(new Query(sft.getTypeName, Filter.INCLUDE), Transaction.AUTO_COMMIT))
@@ -91,7 +91,7 @@ class ArrowDataStoreTest extends Specification {
           features1.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
         }
 
-        caching = DataStoreFinder.getDataStore(Map(UrlParam.key -> file, CachingParam.key -> true))
+        caching = DataStoreFinder.getDataStore(Map(UrlParam.key -> file, CachingParam.key -> true).asJava)
 
         foreach(Seq(ds, caching, caching)) { store =>
           val results = CloseableIterator(store.getFeatureReader(new Query(sft.getTypeName, Filter.INCLUDE), Transaction.AUTO_COMMIT))
@@ -121,7 +121,7 @@ class ArrowDataStoreTest extends Specification {
         withTempFile { url =>
           WithClose(writer(url)) { _ => }
           foreach(Seq(true, false)) { caching =>
-            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching))
+            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching).asJava)
             ds.getSchema("test") mustEqual sft
             WithClose(ds.getFeatureSource(sftName).getFeatures().features())(_.hasNext must beFalse)
             ds.dispose() must not(throwAn[Exception])
@@ -138,7 +138,7 @@ class ArrowDataStoreTest extends Specification {
             features1.foreach(writer.add)
           }
           foreach(Seq(true, false)) { caching =>
-            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching))
+            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching).asJava)
             ds.getSchema(sftName) mustEqual sft
             foreach(queries) { query =>
               WithClose(CloseableIterator(ds.getFeatureSource(sftName).getFeatures(query).features())) { results =>
@@ -160,7 +160,7 @@ class ArrowDataStoreTest extends Specification {
             features1.foreach(writer.add)
           }
           foreach(Seq(true, false)) { caching =>
-            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching))
+            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching).asJava)
             ds.getSchema(sftName) mustEqual sft
             foreach(queries) { query =>
               WithClose(CloseableIterator(ds.getFeatureSource(sftName).getFeatures(query).features())) { results =>
@@ -175,15 +175,15 @@ class ArrowDataStoreTest extends Specification {
       "dictionary encoded files" >> {
         val encoding = SimpleFeatureEncoding.min(includeFids = true)
         val dicts = Map(
-          "name" -> ArrowDictionary.create(1L, features.map(_.getAttribute(0).asInstanceOf[String]).toArray),
-          "foo"  -> ArrowDictionary.create(2L, features.map(_.getAttribute(1).asInstanceOf[String]).toArray)
+          "name" -> ArrowDictionary.create(sft.getTypeName, 1L, features.map(_.getAttribute(0).asInstanceOf[String]).toArray),
+          "foo"  -> ArrowDictionary.create(sft.getTypeName, 2L, features.map(_.getAttribute(1).asInstanceOf[String]).toArray)
         )
         withTempFile { url =>
           WithClose(writer(url, encoding = encoding, dictionaries = dicts)) { writer =>
             features.foreach(writer.add)
           }
           foreach(Seq(true, false)) { caching =>
-            var ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching))
+            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching).asJava)
             ds.getSchema(sftName) mustEqual sft
             foreach(queries) { query =>
               WithClose(CloseableIterator(ds.getFeatureSource(sftName).getFeatures(query).features())) { results =>
@@ -197,7 +197,7 @@ class ArrowDataStoreTest extends Specification {
 
       "dictionary encoded files with default values" >> {
         val encoding = SimpleFeatureEncoding.min(includeFids = true)
-        val dicts = Map("foo"  -> ArrowDictionary.create(1L, Array("foo0", "foo1")))
+        val dicts = Map("foo"  -> ArrowDictionary.create(sft.getTypeName, 1L, Array("foo0", "foo1")))
         withTempFile { url =>
           WithClose(writer(url, encoding = encoding, dictionaries = dicts)) { writer =>
             features.foreach(writer.add)
@@ -211,7 +211,7 @@ class ArrowDataStoreTest extends Specification {
               updated
           }
           foreach(Seq(true, false)) { caching =>
-            var ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching))
+            val ds = DataStoreFinder.getDataStore(Map(UrlParam.key -> url, CachingParam.key -> caching).asJava)
             ds.getSchema(sftName) mustEqual sft
             foreach(queries) { query =>
               WithClose(CloseableIterator(ds.getFeatureSource(sftName).getFeatures(query).features())) { results =>

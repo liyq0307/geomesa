@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,6 +8,8 @@
 
 package org.locationtech.geomesa.accumulo.index
 
+import org.geotools.api.filter._
+import org.geotools.api.filter.temporal.During
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.filter
@@ -19,21 +21,18 @@ import org.locationtech.geomesa.index.index.z2.Z2Index
 import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.index.planning.FilterSplitter
 import org.locationtech.geomesa.utils.geotools.{SchemaBuilder, SimpleFeatureTypes}
-import org.locationtech.geomesa.utils.index.IndexMode
 import org.locationtech.geomesa.utils.stats.Cardinality
-import org.opengis.filter._
-import org.opengis.filter.temporal.During
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
-
-import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
 class QueryFilterSplitterTest extends Specification {
 
   import org.locationtech.geomesa.filter.ff
   import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+
+  import scala.collection.JavaConverters._
 
   val sft = SchemaBuilder.builder()
     .addString("attr1")
@@ -48,7 +47,7 @@ class QueryFilterSplitterTest extends Specification {
 
   sft.setIndices(GeoMesaFeatureIndexFactory.indices(sft))
 
-  val splitter = new FilterSplitter(sft, GeoMesaFeatureIndexFactory.create(null, sft, sft.getIndices), None)
+  val splitter = new FilterSplitter(sft, GeoMesaFeatureIndexFactory.create(null, sft, sft.getIndices))
 
   val geom                = "BBOX(geom,40,40,50,50)"
   val geom2               = "BBOX(geom,60,60,70,70)"
@@ -67,10 +66,10 @@ class QueryFilterSplitterTest extends Specification {
 
   val includeStrategy     = Z3Index.name
 
-  def and(clauses: Filter*) = ff.and(clauses)
-  def or(clauses: Filter*)  = ff.or(clauses)
-  def and(clauses: String*)(implicit d: DummyImplicit) = ff.and(clauses.map(ECQL.toFilter))
-  def or(clauses: String*)(implicit d: DummyImplicit)  = ff.or(clauses.map(ECQL.toFilter))
+  def and(clauses: Filter*) = ff.and(java.util.Arrays.asList(clauses: _*))
+  def or(clauses: Filter*)  = ff.or(java.util.Arrays.asList(clauses: _*))
+  def and(clauses: String*)(implicit d: DummyImplicit) = ff.and(clauses.map(ECQL.toFilter).asJava)
+  def or(clauses: String*)(implicit d: DummyImplicit)  = ff.or(clauses.map(ECQL.toFilter).asJava)
   def not(clauses: String*) = filter.andFilters(clauses.map(ECQL.toFilter).map(ff.not))(ff)
   def f(filter: String)     = ECQL.toFilter(filter)
 
@@ -187,7 +186,7 @@ class QueryFilterSplitterTest extends Specification {
         z3.strategies.head.primary must beSome
         z3.strategies.head.primary.get must beAnInstanceOf[And]
         z3.strategies.head.primary.get.asInstanceOf[And].getChildren must haveLength(2)
-        z3.strategies.head.primary.get.asInstanceOf[And].getChildren.map(Option.apply) must
+        z3.strategies.head.primary.get.asInstanceOf[And].getChildren.asScala.map(Option.apply) must
             contain(compareOr(_: Option[Filter], geom, geom2), compareOr(_: Option[Filter], dtg, dtg2))
         z3.strategies.head.secondary must beSome // secondary filter is too complex to compare here...
       }
@@ -426,9 +425,14 @@ class QueryFilterSplitterTest extends Specification {
         options.head.strategies must haveLength(2)
         options.head.strategies.map(_.index.name) must containTheSameElementsAs(Seq(Z2Index.name, AttributeIndex.name))
         options.head.strategies.find(_.index.name == Z2Index.name).get.primary must beSome(f(geom))
-        options.head.strategies.find(_.index.name == Z2Index.name).get.secondary must beNone
         options.head.strategies.find(_.index.name == AttributeIndex.name).get.primary must beSome(f(indexedAttr))
-        options.head.strategies.find(_.index.name == AttributeIndex.name).get.secondary must beSome(not(geom))
+        options.head.strategies.find(_.index.name == Z2Index.name).get.secondary match {
+          case None =>
+            options.head.strategies.find(_.index.name == AttributeIndex.name).get.secondary must beSome(not(geom))
+          case Some(secondary) =>
+            secondary mustEqual not(indexedAttr)
+            options.head.strategies.find(_.index.name == AttributeIndex.name).get.secondary must beNone
+        }
       }
 
       "and collapse overlapping query filters" >> {
@@ -463,29 +467,36 @@ class QueryFilterSplitterTest extends Specification {
         val filter = or(f(geom), or(dtg, indexedAttr))
         val options = splitter.getQueryOptions(filter)
         options must haveLength(1)
-        options.head.strategies must haveLength(3)
-        options.head.strategies.map(_.index.name) must
+        val strategies = options.head.strategies
+        strategies must haveLength(3)
+        strategies.map(_.index.name) must
             containTheSameElementsAs(Seq(Z3Index.name, Z2Index.name, AttributeIndex.name))
-        options.head.strategies.map(_.primary) must contain(beSome(f(geom)), beSome(f(dtg)), beSome(f(indexedAttr)))
-        options.head.strategies.map(_.secondary) must contain(beSome(not(geom)), beSome(not(geom, indexedAttr)))
-        options.head.strategies.map(_.secondary) must contain(beNone)
+        strategies.map(_.primary) must contain(beSome(f(geom)), beSome(f(dtg)), beSome(f(indexedAttr)))
+        strategies.flatMap(_.secondary) must haveLength(2)
+        val first = strategies.find(_.secondary.isEmpty).get
+        strategies.filter(_ != first).map(_.secondary) must
+            contain(beSome(beAnInstanceOf[Not]), beSome(beAnInstanceOf[And]))
+        val second = strategies.find(_.secondary.exists(_.isInstanceOf[Not])).get
+        second.secondary.get.asInstanceOf[Not].getFilter mustEqual first.primary.get
+        val third = strategies.find(s => s != first && s != second).get
+        forall(third.secondary.get.asInstanceOf[And].getChildren.asScala)(_ must beAnInstanceOf[Not])
+        third.secondary.get.asInstanceOf[And].getChildren.asScala.map(_.asInstanceOf[Not].getFilter) must
+            containTheSameElementsAs(Seq(first.primary.get, second.primary.get))
       }
     }
 
     "support indexed date attributes" >> {
       val sft = SimpleFeatureTypes.createType("dtgIndex", "dtg:Date:index=full,*geom:Point:srid=4326")
       sft.setIndices(GeoMesaFeatureIndexFactory.indices(sft))
-      val splitter = new FilterSplitter(sft, GeoMesaFeatureIndexFactory.create(null, sft, sft.getIndices), None)
+      val splitter = new FilterSplitter(sft, GeoMesaFeatureIndexFactory.create(null, sft, sft.getIndices))
       val filter = f("dtg TEQUALS 2014-01-01T12:30:00.000Z")
       val options = splitter.getQueryOptions(filter)
-      options must haveLength(2)
-      foreach(options)(_.strategies must haveLength(1))
-      val strategies = options.map(_.strategies.head)
-      strategies.map(_.index.name) must containTheSameElementsAs(Seq(AttributeIndex.name, Z3Index.name))
-      foreach(strategies) { strategy =>
-        strategy.primary must beSome(filter)
-        strategy.secondary must beNone
-      }
+      options must haveLength(1)
+      options.head.strategies must haveLength(1)
+      val strategy = options.head.strategies.head
+      strategy.index.name mustEqual AttributeIndex.name
+      strategy.primary must beSome(filter)
+      strategy.secondary must beNone
     }
 
     "provide only one option on OR queries of high cardinality indexed attributes" >> {
@@ -507,7 +518,7 @@ class QueryFilterSplitterTest extends Specification {
         val z2QueryFilters = options.find(_.strategies.head.index.name == Z2Index.name).get.strategies.head
         z2QueryFilters.primary must beSome(f(bbox))
         z2QueryFilters.secondary must beSome(beAnInstanceOf[And])
-        val z2secondary = z2QueryFilters.secondary.get.asInstanceOf[And].getChildren.toSeq
+        val z2secondary = z2QueryFilters.secondary.get.asInstanceOf[And].getChildren.asScala
         z2secondary must haveLength(2)
         z2secondary must contain(beAnInstanceOf[Or], beAnInstanceOf[During])
         compareOr(z2secondary.find(_.isInstanceOf[Or]), decomposeOr(f(attrPart)): _*)
@@ -536,6 +547,59 @@ class QueryFilterSplitterTest extends Specification {
       options.head.strategies.head.index.name mustEqual Z2Index.name
       compareOr(options.head.strategies.head.primary, bbox1, bbox2)
       options.head.strategies.head.secondary must beSome // note: filter is too complex to compare explicitly...
+    }
+
+    "handle ORs between indexed attribute fields" >> {
+      val spec =
+        "attr1:Long:cardinality=high:index=true,attr2:Long:cardinality=high:index=true," +
+            "name:String:cardinality=high:index=true,dtg:Date,*geom:Point:srid=4326"
+      val sft = SimpleFeatureTypes.createType("multiAttr", spec)
+      sft.setIndices(GeoMesaFeatureIndexFactory.indices(sft))
+      val splitter = new FilterSplitter(sft, GeoMesaFeatureIndexFactory.create(null, sft, sft.getIndices))
+      val filter = f("(attr1=1 OR attr2=2 OR name='3') and dtg during 2020-01-01T00:00:00.000Z/2020-01-02T00:00:00.000Z")
+      foreach(Seq("0", "10")) { threshold =>
+        FilterSplitter.ExpandReduceThreshold.threadLocalValue.set(threshold)
+        try {
+          val options = splitter.getQueryOptions(filter)
+          options must haveLength(2)
+          options.map(_.strategies.map(_.index.name)) must
+              containTheSameElementsAs(Seq(Seq(Z3Index.name), Seq.fill(3)(AttributeIndex.name)))
+        } finally {
+          FilterSplitter.ExpandReduceThreshold.threadLocalValue.remove()
+        }
+      }
+
+      "use expand reduce processing when configured via system prop" >> {
+        val spec =
+          "attr1:Long:cardinality=high:index=true,attr2:Long:cardinality=high:index=true," +
+              "name:String:cardinality=high:index=true,dtg:Date,*geom:Point:srid=4326"
+        val sft = SimpleFeatureTypes.createType("multiAttr", spec)
+        sft.setIndices(GeoMesaFeatureIndexFactory.indices(sft))
+        val splitter = new FilterSplitter(sft, GeoMesaFeatureIndexFactory.create(null, sft, sft.getIndices))
+        val dtg1 = "dtg during 2020-01-01T00:00:00.000Z/2020-01-02T00:00:00.000Z"
+        val dtg2 = "dtg during 2020-01-03T00:00:00.000Z/2020-01-04T00:00:00.000Z"
+        val filter = f(s"((attr1=1 OR attr2=2) and $dtg1) OR ((attr1=3 OR attr2=4) and $dtg2)")
+
+        // initial option ignores the complex filter and gives us a z3 dtg-only filter
+        val options = splitter.getQueryOptions(filter)
+        options must haveLength(1)
+        options.head.strategies must haveLength(1)
+        options.head.strategies.head.index.name mustEqual Z3Index.name
+        options.head.strategies.head.primary must beSome(beEqualTo(or(dtg1, dtg2)))
+
+        // with the threshold set, we get 4 high-cardinality attribute filters instead
+        FilterSplitter.ExpandReduceThreshold.threadLocalValue.set("99")
+        try {
+          val options = splitter.getQueryOptions(filter)
+          options must haveLength(1)
+          options.head.strategies must haveLength(4)
+          foreach(options.head.strategies)(_.index.name mustEqual AttributeIndex.name)
+          options.head.strategies.map(_.primary.orNull) must
+              containTheSameElementsAs(Seq(f("attr1=1"), f("attr1=3"), f("attr2=2"), f("attr2=4")))
+        } finally {
+          FilterSplitter.ExpandReduceThreshold.threadLocalValue.remove()
+        }
+      }
     }
   }
 }

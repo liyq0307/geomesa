@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,16 +8,20 @@
 
 package org.locationtech.geomesa.accumulo.tools.ingest
 
-import java.io.File
-import java.util.concurrent.atomic.AtomicInteger
-
+import com.beust.jcommander.ParameterException
 import com.typesafe.config.{ConfigFactory, ConfigRenderOptions}
+import org.apache.commons.io.IOUtils
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.MiniCluster
+import org.locationtech.geomesa.accumulo.AccumuloContainer
 import org.locationtech.geomesa.accumulo.tools.{AccumuloDataStoreCommand, AccumuloRunner}
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
+import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.geomesa.utils.io.fs.LocalDelegate.StdInHandle
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.{BufferedInputStream, ByteArrayInputStream, File}
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(classOf[JUnitRunner])
 class IngestCommandTest extends Specification {
@@ -26,11 +30,11 @@ class IngestCommandTest extends Specification {
 
   def baseArgs: Array[String] = Array(
     "ingest",
-    "--instance",      MiniCluster.cluster.getInstanceName,
-    "--zookeepers",    MiniCluster.cluster.getZooKeepers,
-    "--user",          MiniCluster.Users.root.name,
-    "--password",      MiniCluster.Users.root.password,
-    "--catalog",       s"${MiniCluster.namespace}.${getClass.getSimpleName}${sftCounter.getAndIncrement()}",
+    "--instance",      AccumuloContainer.instanceName,
+    "--zookeepers",    AccumuloContainer.zookeepers,
+    "--user",          AccumuloContainer.user,
+    "--password",      AccumuloContainer.password,
+    "--catalog",       s"gm.${getClass.getSimpleName}${sftCounter.getAndIncrement()}",
     "--compact-stats", "false"
   )
 
@@ -75,6 +79,107 @@ class IngestCommandTest extends Specification {
         } finally {
           ds.delete()
         }
+      }
+    }
+
+    "require sft or sft name to be specified during ingest from stdin with type inference" in {
+      val dataFile = WithClose(getClass.getClassLoader.getResourceAsStream("examples/example1.csv")) { in =>
+        IOUtils.toByteArray(in)
+      }
+      val input = new BufferedInputStream(new ByteArrayInputStream(dataFile))
+
+      val args = baseArgs ++ Array("--force", "-")
+
+      val command = AccumuloRunner.parseCommand(args).asInstanceOf[AccumuloDataStoreCommand]
+
+      StdInHandle.SystemIns.set(input)
+      try {
+        command.execute() must throwA[ParameterException].like { case e =>
+          e.getMessage mustEqual
+              "SimpleFeatureType name not specified. Please ensure the -f or --feature-name flag is set."
+        }
+      } finally {
+        StdInHandle.SystemIns.remove()
+      }
+    }
+
+    "ingest from stdin if no sft and converter are specified" in {
+      val dataFile = WithClose(getClass.getClassLoader.getResourceAsStream("examples/example1.csv")) { in =>
+        IOUtils.toByteArray(in)
+      }
+      val input = new BufferedInputStream(new ByteArrayInputStream(dataFile))
+
+      val sftName = "test"
+
+      val args = baseArgs ++ Array("--force", "-f", sftName, "-")
+
+      val command = AccumuloRunner.parseCommand(args).asInstanceOf[AccumuloDataStoreCommand]
+
+      StdInHandle.SystemIns.set(input)
+      try {
+        command.execute()
+      } finally {
+        StdInHandle.SystemIns.remove()
+      }
+
+      command.withDataStore { ds =>
+        try {
+          val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures.features).toList
+          features.size mustEqual 3
+          features.map(_.getAttribute(1)) must containTheSameElementsAs(Seq("Hermione", "Harry", "Severus"))
+        } finally {
+          ds.delete()
+        }
+      }
+    }
+
+    "ingest from stdin" in {
+      val confFile = new File(getClass.getClassLoader.getResource("examples/example1-csv.conf").getFile)
+      val dataFile = WithClose(getClass.getClassLoader.getResourceAsStream("examples/example1.csv")) { in =>
+        IOUtils.toByteArray(in)
+      }
+      val input = new BufferedInputStream(new ByteArrayInputStream(dataFile))
+
+      val args = baseArgs ++ Array("--converter", confFile.getPath, "-s", confFile.getPath, "-")
+
+      val command = AccumuloRunner.parseCommand(args).asInstanceOf[AccumuloDataStoreCommand]
+
+      StdInHandle.SystemIns.set(input)
+      try {
+        command.execute()
+      } finally {
+        StdInHandle.SystemIns.remove()
+      }
+
+      command.withDataStore { ds =>
+        try {
+          val features = SelfClosingIterator(ds.getFeatureSource("renegades").getFeatures.features).toList
+          features.size mustEqual 3
+          features.map(_.getAttribute("name")) must containTheSameElementsAs(Seq("Hermione", "Harry", "Severus"))
+        } finally {
+          ds.delete()
+        }
+      }
+    }
+
+    "fail to ingest from stdin if no sft is specified" in {
+      val confFile = new File(getClass.getClassLoader.getResource("examples/example1-csv.conf").getFile)
+      val dataFile = WithClose(getClass.getClassLoader.getResourceAsStream("examples/example1.csv")) { in =>
+        IOUtils.toByteArray(in)
+      }
+      val input = new BufferedInputStream(new ByteArrayInputStream(dataFile))
+
+      val args = baseArgs ++ Array("--converter", confFile.getPath, "-")
+
+      val command = AccumuloRunner.parseCommand(args).asInstanceOf[AccumuloDataStoreCommand]
+
+      StdInHandle.SystemIns.set(input)
+      try {
+        command.execute() must throwA[ParameterException].like {
+          case e => e.getMessage mustEqual "SimpleFeatureType name and/or specification argument is required"
+        }
+      } finally {
+          StdInHandle.SystemIns.remove()
       }
     }
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,19 @@
 
 package org.locationtech.geomesa.tools
 
-import java.util
-import java.util.regex.Pattern
-
 import com.beust.jcommander.{Parameter, ParameterException}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.convert.Modes.ErrorMode
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.tools.DistributedRunParam.RunModes
-import org.locationtech.geomesa.tools.DistributedRunParam.RunModes.RunMode
 import org.locationtech.geomesa.tools.utils.ParameterConverters.{ErrorModeConverter, FilterConverter, HintConverter}
+import org.locationtech.geomesa.tools.utils.ParameterValidators.PositiveInteger
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
-import org.opengis.filter.Filter
+
+import java.util
+import java.util.regex.Pattern
 
 /**
   * Shared parameters as individual traits
@@ -148,7 +148,7 @@ trait ConverterConfigParam {
   @Parameter(names = Array("-C", "--converter"), description = "GeoMesa converter specification as a config string, file name, or name of an available converter")
   var config: String = _
 
-  @Parameter(names = Array("--converter-error-mode"), description = "Override the converter error mode - 'skip-bad-records' or 'raise-errors'", converter = classOf[ErrorModeConverter])
+  @Parameter(names = Array("--converter-error-mode"), description = "Override the converter error mode - 'log-errors' or 'raise-errors'", converter = classOf[ErrorModeConverter])
   var errorMode: ErrorMode = _
 }
 
@@ -220,7 +220,7 @@ trait IndicesParam {
 
   @throws[ParameterException]
   def loadIndices[DS <: GeoMesaDataStore[DS]](ds: DS, typeName: String, mode: IndexMode): Seq[GeoMesaFeatureIndex[_, _]] =
-    indexNames.asScala.map(IndexParam.loadIndex(ds, typeName, _, mode))
+    indexNames.asScala.map(IndexParam.loadIndex(ds, typeName, _, mode)).toSeq
 }
 
 trait DistributedRunParam {
@@ -228,7 +228,7 @@ trait DistributedRunParam {
   @Parameter(names = Array("--run-mode"), description = "Run locally or on a cluster", required = false)
   var runMode: String = _
 
-  lazy val mode: Option[RunMode] = {
+  lazy val mode: Option[RunModes.RunMode] = {
     Option(runMode).map {
       case m if m.equalsIgnoreCase(RunModes.Local.toString) => RunModes.Local
       case m if m.equalsIgnoreCase(RunModes.Distributed.toString) => RunModes.Distributed
@@ -270,4 +270,18 @@ trait DistributedCombineParam {
 trait OutputPathParam {
   @Parameter(names = Array("--output"), description = "Path to use for writing output", required = true)
   var outputPath: String = _
+}
+
+trait TempPathParam {
+  @Parameter(names = Array("--temp-path"), description = "Path to temp dir for writing output. " +
+      "Note that this may be useful when using s3 since it is slow as a sink", required = false)
+  var tempPath: String = _
+}
+
+trait NumReducersParam {
+  @Parameter(
+    names = Array("--num-reducers"),
+    description = "Number of reducers to use when sorting or merging (for distributed jobs)",
+    validateWith = Array(classOf[PositiveInteger]))
+  var reducers: java.lang.Integer = _
 }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,6 @@
 
 package org.locationtech.geomesa.arrow.io
 
-import java.io.{Closeable, OutputStream}
-import java.nio.channels.Channels
-import java.util.Collections
-
 import org.apache.arrow.vector._
 import org.apache.arrow.vector.complex.StructVector
 import org.apache.arrow.vector.dictionary.Dictionary
@@ -19,6 +15,7 @@ import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvid
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.ipc.message.IpcOption
 import org.apache.arrow.vector.types.pojo.{ArrowType, DictionaryEncoding, Field}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.arrow.ArrowAllocator
 import org.locationtech.geomesa.arrow.vector.ArrowAttributeWriter
 import org.locationtech.geomesa.arrow.vector.ArrowAttributeWriter.ArrowDictionaryWriter
@@ -26,7 +23,10 @@ import org.locationtech.geomesa.arrow.vector.ArrowDictionary.ArrowDictionaryBuil
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, WithClose}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.io.{Closeable, OutputStream}
+import java.nio.channels.Channels
+import java.util.Collections
 
 /**
  * Writes an arrow file of simple features. Dictionaries will be built up as features are observed.
@@ -43,10 +43,13 @@ class DictionaryBuildingWriter(
     dictionaries: Seq[String],
     encoding: SimpleFeatureEncoding,
     ipcOpts: IpcOption,
-    maxSize: Int = Short.MaxValue
+    maxSize: Int = Short.MaxValue,
+    flattenStruct: Boolean = false
   ) extends Closeable {
 
-  private val allocator = ArrowAllocator("dictionary-builder")
+  import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
+
+  private val allocator = ArrowAllocator(s"dictionary-builder:${sft.getTypeName}")
 
   private val underlying = {
     val struct = StructVector.empty(sft.getTypeName, allocator)
@@ -61,7 +64,13 @@ class DictionaryBuildingWriter(
 
   private val root = {
     val fields = Collections.singletonList[Field](underlying.getField)
-    new VectorSchemaRoot(fields, Collections.singletonList[FieldVector](underlying), 0)
+
+    val potentialRoot = new VectorSchemaRoot(fields, Collections.singletonList[FieldVector](underlying), 0)
+    if(flattenStruct){
+      new VectorSchemaRoot(potentialRoot.getVector(sft.getTypeName))
+    } else {
+      potentialRoot
+    }
   }
 
   private var index = 0
@@ -106,7 +115,12 @@ class DictionaryBuildingWriter(
 
     val dictionaries = attributeWriters.collect { case w: ArrowDictionaryWriter =>
       val name = s"dict-${w.dictionary.encoding.getId}"
-      val descriptor = SimpleFeatureTypes.renameDescriptor(sft.getDescriptor(w.vector.getField.getName), name)
+      val original = sft.getDescriptor(w.vector.getField.getName)
+      val descriptor = if (original.isList) {
+        SimpleFeatureTypes.createDescriptor(s"$name:${original.getListType().getSimpleName}")
+      } else {
+        SimpleFeatureTypes.renameDescriptor(original, name)
+      }
       val writer = ArrowAttributeWriter(sft, descriptor, None, encoding, allocator)
 
       var i = 0

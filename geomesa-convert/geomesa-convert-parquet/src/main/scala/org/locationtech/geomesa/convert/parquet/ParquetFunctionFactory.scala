@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,12 +10,11 @@ package org.locationtech.geomesa.convert.parquet
 
 import org.apache.avro.generic.GenericRecord
 import org.geotools.geometry.jts.JTSFactoryFinder
-import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert.avro.AvroPath
 import org.locationtech.geomesa.convert2.transforms.Expression.LiteralString
 import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
 import org.locationtech.geomesa.convert2.transforms.{Expression, TransformerFunction, TransformerFunctionFactory}
-import org.locationtech.geomesa.parquet.io.{SimpleFeatureParquetSchema, SimpleFeatureReadSupport}
+import org.locationtech.geomesa.fs.storage.parquet.io.{SimpleFeatureParquetSchema, SimpleFeatureReadSupport}
 import org.locationtech.jts.geom._
 
 class ParquetFunctionFactory extends TransformerFunctionFactory {
@@ -45,7 +44,7 @@ class ParquetFunctionFactory extends TransformerFunctionFactory {
 
     import SimpleFeatureParquetSchema.{GeometryColumnX, GeometryColumnY}
 
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
+    override def apply(args: Array[AnyRef]): AnyRef = {
       path.eval(args(0).asInstanceOf[GenericRecord]).collect {
         case r: GenericRecord => eval(r.get(GeometryColumnX).asInstanceOf[U], r.get(GeometryColumnY).asInstanceOf[U])
       }.orNull

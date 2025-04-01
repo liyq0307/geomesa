@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,21 +8,20 @@
 
 package org.locationtech.geomesa.tools.utils
 
-import java.util.Date
-
-import com.beust.jcommander.ParameterException
 import com.beust.jcommander.converters.BaseConverter
+import com.beust.jcommander.{IValueValidator, ParameterException}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.convert.Modes.ErrorMode
-import org.locationtech.geomesa.tools.export.formats.ExportFormat
+import org.locationtech.geomesa.tools.`export`.ExportFormat
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
-import org.locationtech.geomesa.utils.text.DurationParsing
 import org.locationtech.geomesa.utils.text.Suffixes.Memory
-import org.opengis.filter.Filter
+import org.locationtech.geomesa.utils.text.{DurationParsing, TextTools}
 
+import java.util.Date
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Success, Try}
 
 object ParameterConverters {
 
@@ -61,13 +60,9 @@ object ParameterConverters {
 
   class ExportFormatConverter(name: String) extends BaseConverter[ExportFormat](name) {
     override def convert(value: String): ExportFormat = {
-      try {
-        ExportFormat(value).getOrElse {
-          throw new ParameterException(s"Invalid format '$value'. Valid values are " +
-            ExportFormat.Formats.flatMap(f => f.extensions +: f.name).distinct.mkString("'", "', '", "'"))
-        }
-      } catch {
-        case NonFatal(e) => throw new ParameterException(getErrorString(value, s"format: $e"))
+      ExportFormat(value).getOrElse {
+        val valid = ExportFormat.Formats.flatMap(f => f.extensions :+ f.name).distinct
+        throw new ParameterException(getErrorString(value, s"an export format. Valid formats are: ${TextTools.wordList(valid)}"))
       }
     }
   }
@@ -80,6 +75,20 @@ object ParameterConverters {
           throw new IllegalArgumentException("key-value pairs must be separated by a single '='")
         }
         (value.substring(0, i), value.substring(i + 1))
+      } catch {
+        case NonFatal(e) => throw new ParameterException(getErrorString(value, s"format: $e"))
+      }
+    }
+  }
+
+  class DateConverter(name: String) extends BaseConverter[Date](name) {
+    override def convert(value: String): Date = {
+      try {
+        val date = FastConverter.convert(value, classOf[Date])
+        if (date == null) {
+          throw new IllegalArgumentException(s"Could not convert $value to date")
+        }
+        date
       } catch {
         case NonFatal(e) => throw new ParameterException(getErrorString(value, s"format: $e"))
       }
@@ -107,9 +116,9 @@ object ParameterConverters {
 
   class ErrorModeConverter(name: String) extends BaseConverter[ErrorMode](name) {
     override def convert(value: String): ErrorMode = {
-      ErrorMode.values.find(_.toString.equalsIgnoreCase(value)).getOrElse {
-        throw new ParameterException(s"Invalid error mode '$value'. Valid values are " +
-            ErrorMode.values.map(_.toString).mkString("'", "', '", "'"))
+      Try(ErrorMode(value)) match {
+        case Success(m) => m
+        case Failure(e) => throw new ParameterException(e.getMessage)
       }
     }
   }
@@ -121,5 +130,10 @@ object ParameterConverters {
         case Failure(e) => throw new ParameterException(s"Invalid byte string '$value'", e)
       }
     }
+  }
+
+  class BytesValidator extends IValueValidator[String] {
+    override def validate(name: String, value: String): Unit =
+      Memory.bytes(value).failed.foreach(e => throw new ParameterException(s"Invalid byte string '$value'", e))
   }
 }

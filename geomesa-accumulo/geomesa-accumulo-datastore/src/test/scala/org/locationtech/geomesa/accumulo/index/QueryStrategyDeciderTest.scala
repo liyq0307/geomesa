@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,8 @@
 
 package org.locationtech.geomesa.accumulo.index
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.filter.{And, Filter}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -24,11 +25,9 @@ import org.locationtech.geomesa.index.index.z2.Z2Index
 import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.index.planning.QueryPlanner.CostEvaluation
 import org.locationtech.geomesa.index.utils.{ExplainNull, Explainer}
-import org.opengis.filter.{And, Filter}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
 import scala.util.Random
 
 //Expand the test - https://geomesa.atlassian.net/browse/GEOMESA-308
@@ -69,7 +68,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
   "Cost-based strategy decisions" should {
 
     def getStrategies(filter: Filter, transforms: Option[Array[String]], explain: Explainer): Seq[FilterStrategy] = {
-      val query = transforms.map(new Query(sftName, filter, _)).getOrElse(new Query(sftName, filter))
+      val query = transforms.map(new Query(sftName, filter, _: _*)).getOrElse(new Query(sftName, filter))
       query.getHints.put(QueryHints.COST_EVALUATION, CostEvaluation.Stats)
       ds.getQueryPlan(query, explainer = explain).map(_.filter)
     }
@@ -104,7 +103,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
       getAttributeJoinStrategy("bbox(geom,-75,45,-65,55) AND dtg DURING 2016-03-01T00:00:00.000Z/2016-03-07T00:00:00.000Z AND " +
           "ageJoinIndex = 35", Some(Array("geom", "dtg", "ageJoinIndex")))
       getAttributeJoinStrategy("bbox(geom,-75,45,-65,55) AND dtg DURING 2016-03-01T00:00:00.000Z/2016-03-07T00:00:00.000Z AND " +
-          "nameHighCardinality > 'name990'")
+          "nameHighCardinality > 'name990'", Some(Array("nameHighCardinality", "geom", "dtg")))
       getAttributeJoinStrategy("bbox(geom,-75,45,-65,55) AND dtg DURING 2016-03-01T00:00:00.000Z/2016-03-07T00:00:00.000Z AND " +
           "nameHighCardinality IN ('name990', 'name991', 'name992', 'name993', 'name994')")
       getRecordStrategy("bbox(geom,-75,45,-65,55) AND dtg DURING 2016-03-01T00:00:00.000Z/2016-03-07T00:00:00.000Z AND " +
@@ -114,23 +113,23 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
     "select strategies that should result in zero rows scanned" >> {
       getZ2Strategy("bbox(geom,-75,0,-74.99,0.01) AND nameHighCardinality IN ('name990', 'name991', 'name992', 'name993', 'name994')")
       getAttributeJoinStrategy("bbox(geom,-75,45,-65,55) AND dtg DURING 2016-03-01T00:00:00.000Z/2016-03-07T00:00:00.000Z AND " +
-          "nameHighCardinality > 'zzz'")
+          "nameHighCardinality > 'zzz'", Some(Array("nameHighCardinality", "geom", "dtg")))
       getAttributeJoinStrategy("bbox(geom,-75,45,-65,55) AND dtg DURING 2016-03-01T00:00:00.000Z/2016-03-07T00:00:00.000Z AND " +
-          "nameHighCardinality > 'zzz' AND IN('name001', 'name002', 'name003')")
+          "nameHighCardinality > 'zzz' AND IN('name001', 'name002', 'name003')", Some(Array("nameHighCardinality", "geom", "dtg")))
     }
   }
 
   "Index-based strategy decisions" should {
 
-    def getStrategies(filter: Filter, explain: Explainer = ExplainNull): Seq[FilterStrategy] = {
+    def getStrategies(filter: Filter, transforms: Array[String] = null, explain: Explainer = ExplainNull): Seq[FilterStrategy] = {
       // default behavior for this test is to use the index-based query costs
-      val query = new Query(sftName, filter)
+      val query = new Query(sftName, filter, transforms: _*)
       query.getHints.put(QueryHints.COST_EVALUATION, CostEvaluation.Index)
       ds.getQueryPlan(query, explainer = explain).map(_.filter)
     }
 
     def getStrategy(filter: String, expected: NamedIndex, explain: Explainer = ExplainNull) = {
-      val strategies = getStrategies(ECQL.toFilter(filter), explain)
+      val strategies = getStrategies(ECQL.toFilter(filter), null, explain)
       forall(strategies)(_.index.name mustEqual expected.name)
     }
 
@@ -189,10 +188,10 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
         val weightFilter = ff.equals(ff.literal(21.12D), ff.property("weightNoIndex"))
 
         val primary = Some(FastFilterFactory.optimize(sft, nameFilter))
-        val secondary = FastFilterFactory.optimize(sft, ff.and(Seq(heightFilter, weightFilter, ageFilter)))
+        val secondary = FastFilterFactory.optimize(sft, ff.and(java.util.Arrays.asList(heightFilter, weightFilter, ageFilter)))
 
         "when best is first" >> {
-          val strats = getStrategies(ff.and(Seq(nameFilter, heightFilter, weightFilter, ageFilter)))
+          val strats = getStrategies(ff.and(java.util.Arrays.asList(nameFilter, heightFilter, weightFilter, ageFilter)))
           strats must haveLength(1)
           strats.head.index.name mustEqual JoinIndex.name
           strats.head.primary mustEqual primary
@@ -200,7 +199,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
         }
 
         "when best is in the middle" >> {
-          val strats = getStrategies(ff.and(Seq(ageFilter, nameFilter, heightFilter, weightFilter)))
+          val strats = getStrategies(ff.and(java.util.Arrays.asList(ageFilter, nameFilter, heightFilter, weightFilter)))
           strats must haveLength(1)
           strats.head.index.name mustEqual JoinIndex.name
           strats.head.primary mustEqual primary
@@ -208,7 +207,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
         }
 
         "when best is last" >> {
-          val strats = getStrategies(ff.and(Seq(ageFilter, heightFilter, weightFilter, nameFilter)))
+          val strats = getStrategies(ff.and(java.util.Arrays.asList(ageFilter, heightFilter, weightFilter, nameFilter)))
           strats must haveLength(1)
           strats.head.index.name mustEqual JoinIndex.name
           strats.head.primary mustEqual primary
@@ -217,11 +216,11 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
 
         "use best indexed attribute if like and retain all children for > 2 filters" >> {
           val like = ff.like(ff.property("nameHighCardinality"), "baddy")
-          val strats = getStrategies(ff.and(Seq(like, heightFilter, weightFilter, ageFilter)))
+          val strats = getStrategies(ff.and(java.util.Arrays.asList(like, heightFilter, weightFilter, ageFilter)))
           strats must haveLength(1)
           strats.head.index.name mustEqual AttributeIndex.name
           strats.head.primary must beSome(FastFilterFactory.optimize(sft, heightFilter))
-          strats.head.secondary must beSome(FastFilterFactory.optimize(sft, ff.and(Seq(like, weightFilter, ageFilter))))
+          strats.head.secondary must beSome(FastFilterFactory.optimize(sft, ff.and(java.util.Arrays.asList(like, weightFilter, ageFilter))))
         }
       }
     }
@@ -406,7 +405,7 @@ class QueryStrategyDeciderTest extends Specification with TestWithFeatureType {
         val inQuery = "(nameHighCardinality IN ('a','b','c','d','e'))"
 
         forall(Seq(orQuery, inQuery)) { filter =>
-          val strats = getStrategies(ECQL.toFilter(s"$filter $st"))
+          val strats = getStrategies(ECQL.toFilter(s"$filter $st"), Array("nameHighCardinality", "geom", "dtg"))
           strats must haveLength(1)
           strats.head.index.name mustEqual JoinIndex.name
           strats.head.primary must beSome

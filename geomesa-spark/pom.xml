@@ -1,21 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
-        <artifactId>geomesa_2.11</artifactId>
+        <artifactId>geomesa_2.12</artifactId>
         <groupId>org.locationtech.geomesa</groupId>
-        <version>3.0.0-SNAPSHOT</version>
+        <version>5.3.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
     <name>GeoMesa Spark</name>
-    <artifactId>geomesa-spark_2.11</artifactId>
+    <artifactId>geomesa-spark_2.12</artifactId>
     <packaging>pom</packaging>
 
     <modules>
         <module>geomesa-spark-converter</module>
         <module>geomesa-spark-core</module>
         <module>geomesa-spark-jts</module>
+        <module>geomesa-spark-jupyter-leaflet</module>
         <module>geomesa-spark-sql</module>
+        <module>geomesa-spark-test</module>
+        <module>geomesa-spark-test-with-sedona</module>
         <module>geomesa_pyspark</module>
     </modules>
 

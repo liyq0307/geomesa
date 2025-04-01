@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,12 +9,12 @@
 package org.locationtech.geomesa.tools.stats
 
 import com.beust.jcommander.{Parameter, ParameterException}
-import org.geotools.data.DataStore
+import org.geotools.api.data.{DataStore, FileDataStore}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.index.stats.HasGeoMesaStats
 import org.locationtech.geomesa.tools.stats.StatsTopKCommand.StatsTopKParams
-import org.locationtech.geomesa.tools.{Command, DataStoreCommand}
+import org.locationtech.geomesa.tools.{Command, DataStoreCommand, ProvidedTypeNameParam}
 import org.locationtech.geomesa.utils.stats.{Stat, TopK}
-import org.opengis.filter.Filter
 
 trait StatsTopKCommand[DS <: DataStore with HasGeoMesaStats] extends DataStoreCommand[DS] {
 
@@ -24,6 +24,11 @@ trait StatsTopKCommand[DS <: DataStore with HasGeoMesaStats] extends DataStoreCo
   override def execute(): Unit = withDataStore(topK)
 
   protected def topK(ds: DS): Unit = {
+    for {
+      p <- Option(params).collect { case p: ProvidedTypeNameParam => p }
+      f <- Option(ds).collect { case f: FileDataStore => f }
+    } { p.featureName = f.getSchema.getTypeName }
+
     val sft = ds.getSchema(params.featureName)
     if (sft == null) {
       throw new ParameterException(s"Schema '${params.featureName}' does not exist")

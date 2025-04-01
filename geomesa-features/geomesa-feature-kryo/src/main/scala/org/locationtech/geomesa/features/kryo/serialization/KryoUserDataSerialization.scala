@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,13 @@
 
 package org.locationtech.geomesa.features.kryo.serialization
 
-import java.util.{Date, UUID}
-
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.scalalogging.LazyLogging
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.features.serialization.HintKeySerialization
 import org.locationtech.jts.geom.{Geometry, LineString, Point, Polygon}
 
+import java.util.{Date, UUID}
 import scala.util.control.NonFatal
 
 object KryoUserDataSerialization extends LazyLogging {
@@ -43,32 +42,51 @@ object KryoUserDataSerialization extends LazyLogging {
     classOf[Hints.Key]         -> "$h"
   )
 
-  private val baseClassLookups: Map[String, Class[_]] = baseClassMappings.filterNot(_._1.isPrimitive).map(_.swap)
+  private val baseClassLookups: Map[String, Class[_]] = {
+    val m1 = baseClassMappings.filterNot(_._1.isPrimitive).map(_.swap)
+    // support hints generated with geotools versions <= 20
+    val m2 = m1 + ("org.geotools.factory.Hints$Key" -> classOf[Hints.Key])
+    m2
+  }
 
   private implicit val ordering: Ordering[(AnyRef, AnyRef)] = Ordering.by(_._1.toString)
 
-  def serialize(out: Output, javaMap: java.util.Map[_ <: AnyRef, _ <: AnyRef]): Unit = {
+  def serialize(out: Output, javaMap: java.util.Map[_ <: AnyRef, _ <: AnyRef]): Unit =
+    serialize(out, javaMap, withoutFidHints = false, writeAscii = false)
+
+  def serialize(out: Output, javaMap: java.util.Map[_ <: AnyRef, _ <: AnyRef], withoutFidHints: Boolean): Unit =
+    serialize(out, javaMap, withoutFidHints, writeAscii = false)
+
+  def serializeAscii(out: Output, javaMap: java.util.Map[_ <: AnyRef, _ <: AnyRef]): Unit =
+    serialize(out, javaMap, withoutFidHints = true, writeAscii = true)
+
+  private def serialize(
+      out: Output,
+      javaMap: java.util.Map[_ <: AnyRef, _ <: AnyRef],
+      withoutFidHints: Boolean,
+      writeAscii: Boolean): Unit = {
     import scala.collection.JavaConverters._
 
     // write in sorted order to keep consistent output
     val toWrite = scala.collection.mutable.SortedSet.empty[(AnyRef, AnyRef)]
 
-    javaMap.asScala.foreach { case (k, v) =>
-      if (k != null && !k.isInstanceOf[Hints.Key]) { toWrite += k -> v } else {
-        logger.warn(s"Skipping serialization of entry: $k -> $v")
-      }
+    javaMap.asScala.foreach {
+      case (k, v) if k != null && !k.isInstanceOf[Hints.Key] => toWrite += k -> v
+      case (Hints.USE_PROVIDED_FID, _) if withoutFidHints => // no-op
+      case (Hints.PROVIDED_FID, _) if withoutFidHints => // no-op
+      case (k, v) => logger.warn(s"Skipping serialization of entry: $k -> $v")
     }
 
     out.writeInt(toWrite.size) // don't use positive optimized version for back compatibility
 
     toWrite.foreach { case (key, value) =>
       out.writeString(baseClassMappings.getOrElse(key.getClass, key.getClass.getName))
-      write(out, key)
+      write(out, key, writeAscii)
       if (value == null) {
         out.writeString(nullMapping)
       } else {
         out.writeString(baseClassMappings.getOrElse(value.getClass, value.getClass.getName))
-        write(out, value)
+        write(out, value, writeAscii)
       }
     }
   }
@@ -110,8 +128,8 @@ object KryoUserDataSerialization extends LazyLogging {
     }
   }
 
-  private def write(out: Output, value: AnyRef): Unit = value match {
-    case v: String                 => out.writeString(v)
+  private def write(out: Output, value: AnyRef, writeAscii: Boolean = false): Unit = value match {
+    case v: String                 => if (writeAscii) { out.writeAscii(v) } else { out.writeString(v) }
     case v: java.lang.Integer      => out.writeInt(v)
     case v: java.lang.Long         => out.writeLong(v)
     case v: java.lang.Float        => out.writeFloat(v)

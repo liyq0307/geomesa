@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,24 +8,24 @@
 
 package org.locationtech.geomesa.arrow.vector
 
-import java.io.Closeable
-import java.util.{Collections, Date}
-
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.complex.{ListVector, StructVector}
 import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.pojo.{ArrowType, FieldType}
 import org.apache.arrow.vector.{BigIntVector, FieldVector}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.arrow.ArrowAllocator
 import org.locationtech.geomesa.arrow.features.ArrowSimpleFeature
+import org.locationtech.geomesa.arrow.jts.GeometryFields
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding.Encoding
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding.Encoding.Encoding
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.{CloseQuietly, CloseWithLogging}
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
+import java.io.Closeable
+import java.util.{Collections, Date}
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
@@ -132,16 +132,16 @@ object SimpleFeatureVector {
   val DescriptorKey   = "descriptor"
   val OptionsKey      = "options"
 
-  case class SimpleFeatureEncoding(fids: Option[Encoding], geometry: Encoding, date: Encoding)
+  case class SimpleFeatureEncoding(fids: Option[Encoding], geometry: Encoding, date: Encoding, flipAxisOrder: Boolean)
 
   object SimpleFeatureEncoding {
 
-    val Min: SimpleFeatureEncoding = SimpleFeatureEncoding(Some(Encoding.Min), Encoding.Min, Encoding.Min)
-    val Max: SimpleFeatureEncoding = SimpleFeatureEncoding(Some(Encoding.Max), Encoding.Max, Encoding.Max)
+    val Min: SimpleFeatureEncoding = SimpleFeatureEncoding(Some(Encoding.Min), Encoding.Min, Encoding.Min, flipAxisOrder = false)
+    val Max: SimpleFeatureEncoding = SimpleFeatureEncoding(Some(Encoding.Max), Encoding.Max, Encoding.Max, flipAxisOrder = false)
 
-    def min(includeFids: Boolean, proxyFids: Boolean = false): SimpleFeatureEncoding = {
+    def min(includeFids: Boolean, proxyFids: Boolean = false, flipAxisOrder: Boolean = false): SimpleFeatureEncoding = {
       val fids = if (includeFids) { Some(if (proxyFids) { Encoding.Min } else { Encoding.Max }) } else { None }
-      SimpleFeatureEncoding(fids, Encoding.Min, Encoding.Min)
+      SimpleFeatureEncoding(fids, Encoding.Min, Encoding.Min, flipAxisOrder)
     }
 
     object Encoding extends Enumeration {
@@ -165,7 +165,7 @@ object SimpleFeatureVector {
       dictionaries: Map[String, ArrowDictionary],
       encoding: SimpleFeatureEncoding = SimpleFeatureEncoding.Min,
       capacity: Int = DefaultCapacity): SimpleFeatureVector = {
-    val allocator = ArrowAllocator("simple-feature-vector")
+    val allocator = ArrowAllocator(s"simple-feature-vector:${sft.getTypeName}")
     try {
       val metadata = Collections.singletonMap(OptionsKey, SimpleFeatureTypes.encodeUserData(sft))
       val fieldType = new FieldType(true, ArrowType.Struct.INSTANCE, null, metadata)
@@ -245,7 +245,7 @@ object SimpleFeatureVector {
       val isLong = dateVector.exists(_.isInstanceOf[BigIntVector])
       if (isLong) { Encoding.Max } else { Encoding.Min }
     }
-    val encoding = SimpleFeatureEncoding(fidEncoding, geomPrecision, datePrecision)
+    val encoding = SimpleFeatureEncoding(fidEncoding, geomPrecision, datePrecision, flipAxisOrder = false)
 
     (sft, encoding)
   }
@@ -270,9 +270,9 @@ object SimpleFeatureVector {
                                 (implicit ct: ClassTag[T]): Option[FieldVector] = {
     import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
 
-    import scala.collection.JavaConversions._
+    import scala.collection.JavaConverters._
 
-    sft.getAttributeDescriptors.flatMap {
+    sft.getAttributeDescriptors.asScala.flatMap {
       case d if d.isList && ct.runtimeClass.isAssignableFrom(d.getListType()) =>
         Option(vector.getChild(d.getLocalName).asInstanceOf[ListVector]).map(_.getDataVector)
       case d if d.isMap && ct.runtimeClass.isAssignableFrom(d.getMapTypes()._1) =>

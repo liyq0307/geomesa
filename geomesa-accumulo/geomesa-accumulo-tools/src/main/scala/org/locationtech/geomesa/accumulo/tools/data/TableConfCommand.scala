@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,24 +8,22 @@
 
 package org.locationtech.geomesa.accumulo.tools.data
 
-import java.util.regex.Pattern
-
-import com.beust.jcommander.{JCommander, Parameter, Parameters}
+import com.beust.jcommander.{Parameter, Parameters}
 import org.apache.accumulo.core.client.TableNotFoundException
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.accumulo.data.AccumuloDataStore
 import org.locationtech.geomesa.accumulo.tools.{AccumuloDataStoreCommand, AccumuloDataStoreParams}
-import org.locationtech.geomesa.tools.{Command, CommandWithSubCommands, RequiredTypeNameParam, Runner}
-import org.opengis.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.tools.{Command, CommandWithSubCommands, RequiredTypeNameParam}
 
-import scala.collection.JavaConversions._
+import java.util.regex.Pattern
+import scala.collection.JavaConverters._
 
-class TableConfCommand(val runner: Runner, val jc: JCommander) extends CommandWithSubCommands {
+class TableConfCommand extends CommandWithSubCommands {
 
   import TableConfCommand._
 
   override val name = "configure-table"
   override val params = new TableConfParams()
-
   override val subCommands: Seq[Command] = Seq(new TableConfListCommand, new TableConfUpdateCommand)
 }
 
@@ -90,7 +88,7 @@ object TableConfCommand {
 
   def getProperties(ds: AccumuloDataStore, table: String): Map[(String, String), String] = {
     try {
-      ds.connector.tableOperations.getProperties(table).map(e => ((table, e.getKey), e.getValue)).toMap
+      ds.connector.tableOperations.getProperties(table).asScala.map(e => ((table, e.getKey), e.getValue)).toMap
     } catch {
       case e: TableNotFoundException =>
         throw new RuntimeException(s"Error: table $table does not exist: ${e.getMessage}", e)
@@ -98,7 +96,7 @@ object TableConfCommand {
   }
 
   def getTableNames(ds: AccumuloDataStore, sft: SimpleFeatureType, index: String): Seq[String] = {
-    val tables = ds.manager.indices(sft).filter(_.name.equalsIgnoreCase(index)).flatMap(_.getTableNames(None))
+    val tables = ds.manager.indices(sft).filter(_.name.equalsIgnoreCase(index)).flatMap(_.getTableNames())
     if (tables.isEmpty) {
       throw new IllegalArgumentException(s"Index '$index' does not exist for schema '${sft.getTypeName}'. " +
           s"Available indices: ${ds.manager.indices(sft).map(_.name).distinct.mkString(", ")}")

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -11,9 +11,9 @@ package org.locationtech.geomesa.spark
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.geotools.data.{DataStore, Query}
+import org.geotools.api.data.{DataStore, Query}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.utils.io.WithStore
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 /**
   * Provider trait for loading spatial RDDs, generally backed by GeoTools data store implementations

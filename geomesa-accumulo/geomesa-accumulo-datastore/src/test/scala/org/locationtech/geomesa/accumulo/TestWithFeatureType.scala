@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,7 @@
 
 package org.locationtech.geomesa.accumulo
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 

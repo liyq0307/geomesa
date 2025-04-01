@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,36 +10,51 @@ package org.locationtech.geomesa.fs.data
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileContext, Path}
-import org.geotools.data.Query
+import org.apache.hadoop.fs.{FileContext, FileSystem, Path}
+import org.geotools.api.data.Query
+import org.geotools.api.feature.`type`.Name
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.geotools.data.store.{ContentDataStore, ContentEntry, ContentFeatureSource}
+import org.locationtech.geomesa.fs.data.FileSystemDataStore.FileSystemDataStoreConfig
 import org.locationtech.geomesa.fs.storage.api._
 import org.locationtech.geomesa.fs.storage.common.StorageKeys
 import org.locationtech.geomesa.fs.storage.common.metadata.FileBasedMetadata
+import org.locationtech.geomesa.fs.storage.common.utils.PathCache
 import org.locationtech.geomesa.index.stats.RunnableStats.UnoptimizedRunnableStats
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, HasGeoMesaStats}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.index.GeoMesaSchemaValidator
 import org.locationtech.geomesa.utils.io.CloseQuietly
-import org.opengis.feature.`type`.Name
-import org.opengis.feature.simple.SimpleFeatureType
 
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
-class FileSystemDataStore(
-    fc: FileContext,
-    conf: Configuration,
-    root: Path,
-    readThreads: Int,
-    writeTimeout: Duration,
-    defaultEncoding: Option[String],
-    namespace: Option[String]
-  ) extends ContentDataStore with HasGeoMesaStats with LazyLogging {
+/**
+ * File system data store
+ *
+ * @param fs file system - note, this is expected to be a shared resource, and is not cleaned up on data store dispose
+ * @param config config
+ */
+class FileSystemDataStore(fs: FileSystem, config: FileSystemDataStoreConfig)
+    extends ContentDataStore with HasGeoMesaStats with LazyLogging {
 
-  namespace.foreach(setNamespaceURI)
+  // noinspection ScalaUnusedSymbol
+  @deprecated("Use FileSystem instead of FileContext")
+  def this(
+      fc: FileContext,
+      conf: Configuration,
+      root: Path,
+      readThreads: Int,
+      writeTimeout: Duration,
+      defaultEncoding: Option[String],
+      namespace: Option[String]) = {
+    this(FileSystem.get(root.toUri, conf),
+      FileSystemDataStoreConfig(conf, root, readThreads, writeTimeout, None, defaultEncoding, namespace))
+  }
 
-  private val manager = FileSystemStorageManager(fc, conf, root, namespace)
+  config.namespace.foreach(setNamespaceURI)
+
+  private val manager = FileSystemStorageManager(fs, config.conf, config.root, config.namespace)
 
   override val stats: GeoMesaStats = new UnoptimizedRunnableStats(this)
 
@@ -49,14 +64,17 @@ class FileSystemDataStore(
     names
   }
 
-  override def createSchema(sft: SimpleFeatureType): Unit = {
+  override def createSchema(original: SimpleFeatureType): Unit = {
     import org.locationtech.geomesa.fs.storage.common.RichSimpleFeatureType
 
-    manager.storage(sft.getTypeName) match {
+    manager.storage(original.getTypeName) match {
       case Some(s) =>
         logger.warn(s"Schema already exists: ${SimpleFeatureTypes.encodeType(s.metadata.sft, includeUserData = true)}")
 
       case None =>
+        // copy the feature type so that we don't affect it when removing user data, below
+        val sft = SimpleFeatureTypes.copy(original)
+
         GeoMesaSchemaValidator.validate(sft)
 
         // remove the configs in the user data as they're persisted separately
@@ -64,7 +82,7 @@ class FileSystemDataStore(
         val scheme = sft.removeScheme().getOrElse {
           throw new IllegalArgumentException("Partition scheme must be specified in the SimpleFeatureType user data")
         }
-        val encoding = sft.removeEncoding().orElse(defaultEncoding).getOrElse {
+        val encoding = sft.removeEncoding().orElse(config.defaultEncoding).getOrElse {
           throw new IllegalArgumentException("Encoding type must be specified in either " +
               "the SimpleFeatureType user data or the data store parameters")
         }
@@ -76,19 +94,25 @@ class FileSystemDataStore(
           }
           deprecated.getOrElse(true)
         }
+        val fileSize = sft.removeTargetFileSize()
 
         val path = manager.defaultPath(sft.getTypeName)
-        val context = FileSystemContext(fc, conf, path, namespace)
+        val context = FileSystemContext(fs, config.conf, path, config.namespace)
 
-        val metadata = StorageMetadataFactory.create(context, meta, Metadata(sft, encoding, scheme, leafStorage))
+        val metadata =
+          StorageMetadataFactory.create(context, meta, Metadata(sft, encoding, scheme, leafStorage, fileSize))
         try { manager.register(path, FileSystemStorageFactory(context, metadata)) } catch {
           case NonFatal(e) => CloseQuietly(metadata).foreach(e.addSuppressed); throw e
         }
+        PathCache.register(fs, config.root)
+        PathCache.register(fs, path)
     }
   }
 
-  override def createFeatureSource(entry: ContentEntry): ContentFeatureSource =
-    new FileSystemFeatureStore(storage(entry.getTypeName), entry, Query.ALL, readThreads, writeTimeout)
+  override def createFeatureSource(entry: ContentEntry): ContentFeatureSource = {
+    val storage = this.storage(entry.getTypeName)
+    new FileSystemFeatureStore(storage, entry, Query.ALL, config.readThreads, config.writeTimeout, config.queryTimeout)
+  }
 
   /**
     * Get a handle on the underlying storage instance for a given simple feature type
@@ -101,3 +125,14 @@ class FileSystemDataStore(
   }
 }
 
+object FileSystemDataStore {
+  case class FileSystemDataStoreConfig(
+    conf: Configuration,
+    root: Path,
+    readThreads: Int,
+    writeTimeout: Duration,
+    queryTimeout: Option[Duration],
+    defaultEncoding: Option[String],
+    namespace: Option[String],
+  )
+}

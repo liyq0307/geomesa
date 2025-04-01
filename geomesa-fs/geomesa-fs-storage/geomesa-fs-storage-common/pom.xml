@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
-        <artifactId>geomesa-fs-storage_2.11</artifactId>
+        <artifactId>geomesa-fs-storage_2.12</artifactId>
         <groupId>org.locationtech.geomesa</groupId>
-        <version>3.0.0-SNAPSHOT</version>
+        <version>5.3.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
-    <artifactId>geomesa-fs-storage-common_2.11</artifactId>
+    <artifactId>geomesa-fs-storage-common_2.12</artifactId>
     <name>GeoMesa FileSystem Storage Common</name>
 
     <dependencies>
@@ -66,14 +66,33 @@
             <artifactId>hadoop-mapreduce-client-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-aws</artifactId>
+        </dependency>
+        <!-- aws v1 for hadoop 3.3 and earlier -->
+        <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-s3</artifactId>
-            <version>${aws.sdk.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- aws v2 for hadoop 3.4 and later -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3-transfer-manager</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk.crt</groupId>
+            <artifactId>aws-crt</artifactId>
             <scope>provided</scope>
         </dependency>
 
         <!-- test dependencies -->
-
         <dependency>
             <groupId>org.specs2</groupId>
             <artifactId>specs2-core_${scala.binary.version}</artifactId>
@@ -87,9 +106,16 @@
             <artifactId>specs2-mock_${scala.binary.version}</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <version>1.4.192</version>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

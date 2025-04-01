@@ -1,18 +1,19 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.kafka.tools.export
-
-import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue, TimeUnit}
+package org.locationtech.geomesa.kafka.tools.`export`
 
 import com.beust.jcommander.{ParameterException, Parameters}
-import org.geotools.data.{FeatureEvent, FeatureListener, Query}
+import org.geotools.api.data.{FeatureEvent, FeatureListener, Query}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.features.TransformSimpleFeature
+import org.locationtech.geomesa.features.exporters.FeatureExporter
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
 import org.locationtech.geomesa.kafka.tools.ConsumerDataStoreParams
 import org.locationtech.geomesa.kafka.tools.KafkaDataStoreCommand.KafkaDistributedCommand
@@ -20,12 +21,10 @@ import org.locationtech.geomesa.kafka.tools.export.KafkaExportCommand._
 import org.locationtech.geomesa.kafka.utils.KafkaFeatureEvent.KafkaFeatureChanged
 import org.locationtech.geomesa.tools.export.ExportCommand
 import org.locationtech.geomesa.tools.export.ExportCommand.ExportParams
-import org.locationtech.geomesa.tools.export.formats.FeatureExporter
 import org.locationtech.geomesa.tools.{Command, RequiredTypeNameParam}
 import org.locationtech.geomesa.utils.geotools.Transform.Transforms
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
+import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue, TimeUnit}
 import scala.util.control.NonFatal
 
 class KafkaExportCommand extends ExportCommand[KafkaDataStore] with KafkaDistributedCommand {
@@ -36,10 +35,14 @@ class KafkaExportCommand extends ExportCommand[KafkaDataStore] with KafkaDistrib
 
   private val queue: BlockingQueue[SimpleFeature] = new LinkedBlockingQueue[SimpleFeature]
 
-  override protected def export(ds: KafkaDataStore, query: Query, exporter: FeatureExporter): Option[Long] = {
+  override protected def export(
+      ds: KafkaDataStore,
+      query: Query,
+      exporter: FeatureExporter,
+      writeEmptyFiles: Boolean): Option[Long] = {
     val sft = ds.getSchema(params.featureName)
     if (sft == null) {
-      throw new ParameterException(s"Type ${params.featureName} does not exist at path ${params.zkPath}")
+      throw new ParameterException(s"Type ${params.featureName} does not exist in ${ds.config.catalog}")
     }
 
     val filter = Option(query.getFilter).filter(_ != Filter.INCLUDE)
@@ -72,10 +75,9 @@ class KafkaExportCommand extends ExportCommand[KafkaDataStore] with KafkaDistrib
     fs.addFeatureListener(listener)
 
     try {
-      exporter.start(query.getHints.getReturnSft)
       query.getHints.getMaxFeatures match {
-        case None    => exportContinuously(exporter, features)
-        case Some(m) => exportWithMax(exporter, features, m)
+        case None    => exportContinuously(query.getHints.getReturnSft, exporter, features, writeEmptyFiles)
+        case Some(m) => exportWithMax(query.getHints.getReturnSft, exporter, features, writeEmptyFiles, m)
       }
     } catch {
       case NonFatal(e) =>
@@ -85,13 +87,22 @@ class KafkaExportCommand extends ExportCommand[KafkaDataStore] with KafkaDistrib
     }
   }
 
-  private def exportContinuously(exporter: FeatureExporter, features: Iterator[SimpleFeature]): Option[Long] = {
+  private def exportContinuously(
+      sft: SimpleFeatureType,
+      exporter: FeatureExporter,
+      features: Iterator[SimpleFeature],
+      writeEmptyFiles: Boolean): Option[Long] = {
     // try to close the exporter when user cancels to finish off whatever the export was
     sys.addShutdownHook(exporter.close())
     var count = 0L
+    var started = if (writeEmptyFiles) { exporter.start(sft); true } else { false }
     while (true) {
       // hasNext may return false one time, and then true the next if more data is read from kafka
       if (features.hasNext) {
+        if (!started) {
+          exporter.start(sft)
+          started = true
+        }
         exporter.export(features).foreach(count += _)
       } else {
         Thread.sleep(1000)
@@ -100,12 +111,21 @@ class KafkaExportCommand extends ExportCommand[KafkaDataStore] with KafkaDistrib
     Some(count)
   }
 
-  private def exportWithMax(exporter: FeatureExporter, features: Iterator[SimpleFeature], max: Int): Option[Long] = {
-    // noinspection LoopVariableNotUpdated
+  private def exportWithMax(
+      sft: SimpleFeatureType,
+      exporter: FeatureExporter,
+      features: Iterator[SimpleFeature],
+      writeEmptyFiles: Boolean,
+      max: Int): Option[Long] = {
     var count = 0L
+    var started = if (writeEmptyFiles) { exporter.start(sft); true } else { false }
     while (count < max) {
       // hasNext may return false one time, and then true the next if more data is read from kafka
       if (features.hasNext) {
+        if (!started) {
+          exporter.start(sft)
+          started = true
+        }
         // note: side effect in map - do count here in case exporter doesn't report counts
         val batch = features.take(max - count.toInt).map { f => count += 1; f }
         exporter.export(batch)

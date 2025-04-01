@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,25 +8,25 @@
 
 package org.locationtech.geomesa.arrow.filter
 
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter._
+import org.geotools.api.filter.expression.PropertyName
+import org.geotools.api.filter.spatial.BBOX
+import org.geotools.api.filter.temporal.During
+import org.geotools.api.temporal.Period
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.locationtech.geomesa.arrow.features.ArrowSimpleFeature
-import org.locationtech.geomesa.arrow.vector.ArrowAttributeReader.{ArrowDateReader, ArrowLineStringReader, ArrowPointReader}
-import org.locationtech.geomesa.arrow.vector.{ArrowDictionary, ArrowDictionaryReader, GeometryVector}
+import org.locationtech.geomesa.arrow.jts.GeometryVector
+import org.locationtech.geomesa.arrow.vector.ArrowAttributeReader._
+import org.locationtech.geomesa.arrow.vector.ArrowDictionary
 import org.locationtech.geomesa.filter.checkOrderUnsafe
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
 import org.locationtech.geomesa.utils.geotools.CRS_EPSG_4326
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.jts.geom.{Coordinate, Polygon}
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter._
-import org.opengis.filter.expression.PropertyName
-import org.opengis.filter.spatial.BBOX
-import org.opengis.filter.temporal.During
-import org.opengis.temporal.Period
 
+import java.util.Date
 import scala.util.control.NonFatal
 
 /**
@@ -34,11 +34,12 @@ import scala.util.control.NonFatal
   */
 object ArrowFilterOptimizer extends LazyLogging {
 
+  import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
   import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
-  import scala.collection.JavaConversions._
+  import scala.collection.JavaConverters._
 
-  private val ff: FilterFactory2 = FastFilterFactory.factory
+  private val ff: FilterFactory = FastFilterFactory.factory
 
   def rewrite(filter: Filter, sft: SimpleFeatureType, dictionaries: Map[String, ArrowDictionary]): Filter = {
     val bound = FastFilterFactory.optimize(sft, filter)
@@ -57,8 +58,8 @@ object ArrowFilterOptimizer extends LazyLogging {
         case f: During            => rewriteDuring(f, sft)
         case f: PropertyIsBetween => rewriteBetween(f, sft)
         case f: PropertyIsEqualTo => rewritePropertyIsEqualTo(f, sft, dictionaries)
-        case a: And               => ff.and(a.getChildren.map(rewriteFilter(_, sft, dictionaries)))
-        case o: Or                => ff.or(o.getChildren.map(rewriteFilter(_, sft, dictionaries)))
+        case a: And               => ff.and(a.getChildren.asScala.map(rewriteFilter(_, sft, dictionaries)).asJava)
+        case o: Or                => ff.or(o.getChildren.asScala.map(rewriteFilter(_, sft, dictionaries)).asJava)
         case f: Not               => ff.not(rewriteFilter(f.getFilter, sft, dictionaries))
         case _                    => filter
       }
@@ -110,7 +111,11 @@ object ArrowFilterOptimizer extends LazyLogging {
       case Some(dictionary) =>
         val attrIndex = sft.indexOf(props.name)
         val numericValue = dictionary.index(props.literal.evaluate(null))
-        ArrowDictionaryEquals(attrIndex, numericValue)
+        if (sft.getDescriptor(attrIndex).isList) {
+          ArrowListDictionaryEquals(attrIndex, numericValue)
+        } else {
+          ArrowDictionaryEquals(attrIndex, numericValue)
+        }
     }
   }
 
@@ -189,6 +194,14 @@ object ArrowFilterOptimizer extends LazyLogging {
     override def evaluate(o: AnyRef): Boolean = {
       val arrow = o.asInstanceOf[ArrowSimpleFeature]
       arrow.getReader(i).asInstanceOf[ArrowDictionaryReader].getEncoded(arrow.getIndex) == value
+    }
+  }
+
+  case class ArrowListDictionaryEquals(i: Int, value: Int) extends Filter {
+    override def accept(visitor: FilterVisitor, extraData: AnyRef): AnyRef = extraData
+    override def evaluate(o: AnyRef): Boolean = {
+      val arrow = o.asInstanceOf[ArrowSimpleFeature]
+      arrow.getReader(i).asInstanceOf[ArrowListDictionaryReader].getEncoded(arrow.getIndex).contains(value)
     }
   }
 }

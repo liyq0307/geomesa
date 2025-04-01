@@ -60,12 +60,16 @@ Argument                 Description
 
 Generate an Avro schema based on a ``SimpleFeatureType``.
 
-======================== ==================================================
-Argument                 Description
-======================== ==================================================
-``-s, --spec *``         The ``SimpleFeatureType`` specification to create
-``-f, --feature-name``   The name of the schema to create
-======================== ==================================================
+============================ ==================================================
+Argument                     Description
+============================ ==================================================
+``-s, --spec *``             The ``SimpleFeatureType`` specification to create
+``-f, --feature-name``       The name of the schema to create
+``--use-native-collections`` Encode list and map type attributes as native Avro
+                             records
+``--kafka-compatible``       Exclude the feature ID, which aligns with the
+                             schema used for GeoMesa Kafka topics
+============================ ==================================================
 
 See :ref:`cli_create_schema` for details on specifying a ``SimpleFeatureType``.
 
@@ -108,6 +112,7 @@ This command will list, add and delete partitioned tables used by GeoMesa. It ha
 
 * ``list`` - list the partitions for a given schema
 * ``add`` - create new partitions
+* ``adopt`` - adopt an existing table as a partition
 * ``delete`` - delete existing partitions
 * ``name`` - display the partition name associated with an attribute (i.e. date)
 
@@ -143,6 +148,26 @@ Argument                 Description
 ======================== =============================================================
 
 To determine the appropriate partition name, use the ``name`` sub-command.
+
+``adopt``
+^^^^^^^^^
+
+The ``adopt`` sub-command will add an existing table as a partition. The new table must have the same
+schema as the existing feature type. This command is useful to migrate from a non-partitioned
+feature type to a partitioned one - the old (non-partitioned) tables can be adopted into the new feature type.
+
+======================== =============================================================
+Argument                 Description
+======================== =============================================================
+``--partition *``        The name of the partition to adopt. Name must be unique
+                         across all partitions for the feature type
+``--table *``            The name of the index table(s) to adopt. Each index in the
+                         feature type (e.g. ``z3``, ``attr``, etc) must have a
+                         corresponding table specified
+``--value *``            A value used to specify the bounds of the partition, for
+                         example a date partition might use
+                         ``2024-01-01T00:00:00.000Z/2024-02-01T00:00:00.000Z``
+======================== =============================================================
 
 ``name``
 ^^^^^^^^
@@ -203,6 +228,7 @@ Argument                 Description
 ``--enable-stats``       Enable or disable stats for the feature type
 ``--add-keyword``        Add a new keyword to the feature type user data
 ``--remove-keyword``     Delete an existing keyword from the feature type user data
+``--add-user-data``      Add or update an entry in the feature type user data
 ``--rename-tables``      When renaming the feature type, update index tables to match
 ``--no-backup``          Disable backing up the schema before the update
 ======================== ==============================================================
@@ -226,5 +252,15 @@ The ``--add-keyword`` and ``--remove-keyword`` parameters can be used to add and
 user data of the schema. When adding a layer in GeoServer, the 'Keywords' section of the layer configuration page
 will be automatically populated with the user data keywords.
 
-Note that multiple attributes and/or keywords can be added/removed/renamed at once by specifying the parameters
-multiple times.
+The ``--add-user-data`` parameter can be used to add or update any user data key. See :ref:`index_config` for
+some examples of configurable values. Entries can be specified as ``<key>:<value>``.
+
+.. warning::
+
+  Be careful changing user data values. Incorrect values can make a schema unreadable. If this happens,
+  the original configuration can usually be restored from a backup table that is created automatically before
+  the update operation.
+
+Note that multiple attributes, user data, and/or keywords can be added/removed/renamed at once by specifying the
+parameters multiple times.
+

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,22 +8,22 @@
 
 package org.locationtech.geomesa.index.index.s2
 
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.curve.S2SFC
 import org.locationtech.geomesa.filter.{FilterHelper, FilterValues}
 import org.locationtech.geomesa.index.api
 import org.locationtech.geomesa.index.api.IndexKeySpace.IndexKeySpaceFactory
-import org.locationtech.geomesa.index.api.ShardStrategy.{NoShardStrategy, ZShardStrategy}
+import org.locationtech.geomesa.index.api.ShardStrategy.{NoShardStrategy, Z2ShardStrategy}
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.conf.QueryHints.LOOSE_BBOX
 import org.locationtech.geomesa.index.conf.QueryProperties
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.geotools.{GeometryUtils, WholeWorldPolygon}
-import org.locationtech.geomesa.utils.index.ByteArrays
+import org.locationtech.geomesa.utils.index.{ByteArrays, VisibilityLevel}
 import org.locationtech.jts.geom.{Geometry, Point}
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 
 import scala.util.control.NonFatal
 
@@ -33,6 +33,8 @@ import scala.util.control.NonFatal
   */
 class S2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, geomField: String)
   extends IndexKeySpace[S2IndexValues, Long] {
+
+  import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
   require(classOf[Point].isAssignableFrom(sft.getDescriptor(geomField).getType.getBinding),
     s"Expected field $geomField to have a point binding, but instead it has: " +
@@ -148,8 +150,8 @@ class S2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, g
     * @return
     */
   override def getRanges(values: S2IndexValues, multiplier: Int): Iterator[ScanRange[Long]] = {
-    val S2IndexValues(_, _, xy) = values
-    if (xy.isEmpty) {
+    val S2IndexValues(_, geoms, xy) = values
+    if (geoms.disjoint) {
       Iterator.empty
     } else {
       // note: `target` will always be Some, as ScanRangesTarget has a default value
@@ -196,14 +198,14 @@ class S2IndexKeySpace(val sft: SimpleFeatureType, val sharding: ShardStrategy, g
                              config: Option[GeoMesaDataStoreFactory.GeoMesaDataStoreConfig],
                              hints: Hints): Boolean = {
     // if the user has requested strict bounding boxes, we apply the full filter
-    // if the spatial predicate is rectangular (e.g. a bbox), the index is fine enough that we
-    // don't need to apply the filter on top of it. this may cause some minor errors at extremely
-    // fine resolutions, but the performance is worth it
-    // if we have a complicated geometry predicate, we need to pass it through to be evaluated
-    val looseBBox = Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.queries.looseBBox))
-    lazy val simpleGeoms = values.toSeq.flatMap(_.geometries.values).forall(GeometryUtils.isRectangular)
-
-    !looseBBox || !simpleGeoms
+    !Option(hints.get(LOOSE_BBOX)).map(Boolean.unbox).getOrElse(config.forall(_.queries.looseBBox)) ||
+      // if the spatial predicate is rectangular (e.g. a bbox), the index is fine enough that we
+      // don't need to apply the filter on top of it. this may cause some minor errors at extremely
+      // fine resolutions, but the performance is worth it
+      // if we have a complicated geometry predicate, we need to pass it through to be evaluated
+      values.exists(_.geometries.values.exists(g => !GeometryUtils.isRectangular(g))) ||
+      // for attribute-level vis, we need to re-evaluate the filter to account for visibility of the row key
+      (sft.getVisibilityLevel == VisibilityLevel.Attribute && values.exists(_.geometries.nonEmpty))
   }
 
 }
@@ -215,7 +217,7 @@ object S2IndexKeySpace extends IndexKeySpaceFactory[S2IndexValues, Long] {
       classOf[Point].isAssignableFrom(sft.getDescriptor(attributes.head).getType.getBinding)
 
   override def apply(sft: SimpleFeatureType, attributes: Seq[String], tier: Boolean): S2IndexKeySpace = {
-    val shards = if (tier) { NoShardStrategy } else { ZShardStrategy(sft) }
+    val shards = if (tier) { NoShardStrategy } else { Z2ShardStrategy(sft) }
     new S2IndexKeySpace(sft, shards, attributes.head)
   }
 }

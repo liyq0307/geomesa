@@ -1,346 +1,321 @@
+.. _geomesa_metrics:
+
 GeoMesa Metrics
 ===============
 
-.. warning::
-
-  GeoMesa Metrics is deprecated and will be removed in a future version.
-
-GeoMesa provides integration with the `DropWizard
-Metrics <http://metrics.dropwizard.io/>`__ library for real-time
+GeoMesa provides integration with the `DropWizard Metrics <https://metrics.dropwizard.io/>`__ library for real-time
 reporting with the ``geomesa-metrics`` module.
 
-Instrumentation of GeoServer
-----------------------------
-
-GeoMesa metrics provides a servlet filter that will instrument GeoServer
-requests.
-
-Installation
-------------
-
-Copy the following jars into geoserver's ``WEB-INF/lib`` directory:
-
--  geomesa-metrics-.jar
--  metrics-core-3.1.2.jar
--  metrics-graphite-3.1.2.jar
--  metrics-ganglia-3.1.2.jar
-
-Also copy the following jars if not already present:
-
--  scala-library-2.11.7.jar
--  scala-logging\_2.11-3.1.0.jar
--  scala-reflect-2.11.7.jar
--  config-1.2.1.jar
--  joda-time-2.3.jar
-
-
-Ganglia Reporting
-~~~~~~~~~~~~~~~~~
-
-To enable ganglia reporters, also copy the following jars:
-
--  gmetric4j-1.0.7.jar
--  oncrpc-1.0.7.jar
-
-Delimited File Reporting
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-To enable TSV/CSV reporters, also copy the following jars:
-
--  commons-csv-1.0.jar
+Reporters are available for `CloudWatch <https://aws.amazon.com/cloudwatch/>`__,
+`Prometheus <https://prometheus.io/>`__, `Graphite <https://graphiteapp.org/>`__,
+and `SLF4J <https://www.slf4j.org/>`__.
 
 Configuration
 -------------
 
-To configure instrumentation, add the metrics filter to GeoServer's
-``WEB-INF/web.xml``:
+Reporters are configured via TypeSafe Config. All reporters share a few common properties:
 
-.. code-block:: xml
+====================== ===============================================================================================
+Configuration Property Description
+====================== ===============================================================================================
+``rate-units``         The Java TimeUnit_ used to report rates, e.g ``seconds``, ``minutes``, etc. For example, for a
+                       requests meter, you can configure it to show requests per second or requests per hour
+``duration-units``     The Java TimeUnit_ used to report durations, e.g. ``seconds``, ``milliseconds``, etc. For
+                       example, for a request timer, you can configure it to show the time taken in seconds or
+                       milliseconds
+``units``              A fallback to use if ``rate-units`` and/or ``duration-units`` are not specified, which can
+                       simplify the configuration
+``interval``           How often the reporter should run, e.g. ``60 seconds`` or ``10 minutes``. For example, a
+                       logging reporter will write a log message once per interval
+====================== ===============================================================================================
 
-    <filter>
-      <filter-name>metricsFilter</filter-name>
-      <filter-class>org.locationtech.geomesa.metrics.servlet.AggregatedMetricsFilter</filter-class>
-      <!-- name used for registering metrics - can also be specified in the config, but this takes priority -->
-      <init-param>
-        <param-name>name-prefix</param-name>
-        <param-value>geoserver</param-value>
-      </init-param>
-      <!-- can embed configuration directly, otherwise will load default
-           configurations and look under 'geomesa.metrics.servlet' -->
-      <init-param>
-        <param-name>config</param-name>
-        <param-value>
-        {
-          // name used for registering metrics - init-param takes precedence
-          name-prefix = "geoserver"
-          // will only instrument matching urls
-          // example string matched against: '/geoserver/&lt;workspace&gt;/ows'
-          url-patterns = [ "(?i).*/(ows|wfs|wms)" ]
-          // match request mappings based on just the workspace:layer name, or the whole url
-          // if you are instrumenting non-wfs/wms requests, layer names will never match
-          map-by-layer = true
-          // mappings of urls to metric groups, based on regexes
-          // any urls not mapped will end up under 'other'
-          request-mappings = [
-            {
-              name = "qs"
-              regex = ".*:AccumuloQuickStart"
-            }
-          ]
-          // metrics reporters - see configuration details below
-          reporters = {
-            console = {
-              type = "console"
-              rate-units = "MINUTES"
-              duration-units = "MILLISECONDS"
-              interval = 10
-            }
-          }
-        }
-        </param-value>
-      </init-param>
-    </filter>
+.. _TimeUnit: https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/TimeUnit.html
 
-    <filter-mapping>
-      <filter-name>metricsFilter</filter-name>
-      <url-pattern>/*</url-pattern>
-    </filter-mapping>
-
-Session Tracking
+Logging Reporter
 ----------------
 
-The metrics servlet doesn't track active user sessions by default.
-GeoServer mostly doesn't create sessions for OWS requests, and blatantly
-warns you against doing so. However, if you are willing to incur the
-cost of session management, you may enable session tracking in the
-metrics servlet.
+GeoMesa includes a logging reporter using SLF4J.
 
-Update the configuration for the metrics servlet (either in
-``application.conf`` or ``web.xml``) with the following attribute:
+====================== ===============================================================================================
+Configuration Property Description
+====================== ===============================================================================================
+``type``               Must be ``slf4j``
+``logger``             The name of the logger to use, e.g. ``org.locationtech.geomesa.metrics``
+``level``              The level to write out log messages at, e.g. ``info``, ``debug``, etc
+====================== ===============================================================================================
 
-.. code-block:: javascript
-
-    // how often to update metrics for expired sessions, in seconds
-    // if set to &lt; 1, sessions will not be tracked
-    // use in conjunction with the session listener defined below
-    session-removal-interval = 60
-
-Add the following listener to GeoServer's ``WEB-INF/web.xml``:
-
-.. warning::
-
-    Failure to add this listener when session tracking is
-    enabled will cause incorrect metrics reports and eventually lead to
-    out-of-memory errors
-
-.. code-block:: xml
-
-    <!-- listener for sessions events
-         if you enable session tracking and this is not defined, sessions will never
-         be expired from the metrics cache and you will eventually run out of memory -->
-    <listener>
-      <listener-class>org.locationtech.geomesa.metrics.servlet.SessionMetricsListener</listener-class>
-    </listener>
-
-In order to suppress GeoServer's warnings about session creation,
-comment out the following filter in GeoServer's ``WEB-INF/web.xml``:
-
-.. code-block:: xml
-
-    <!--
-    <filter>
-      <filter-name>SessionDebugger</filter-name>
-      <filter-class>org.geoserver.filters.SessionDebugFilter</filter-class>
-    </filter>
-    -->
-    ...
-    <!--
-    <filter-mapping>
-      <filter-name>SessionDebugger</filter-name>
-      <url-pattern>/*</url-pattern>
-    </filter-mapping>
-    -->
-
-Configuration of Reporters
---------------------------
-
-Use ``org.locationtech.geomesa.metrics.config.MetricsConfig.reporters``
-to configure reporters via TypeSafe Config. Reporters should be defined
-as objects under the path ``geomesa.metrics.reporters``:
+Example configuration:
 
 ::
 
-    geomesa = {
-      metrics = {
-        reporters = {
-          console = {
-            type     = "console"
-            units    = "MILLISECONDS"
-            interval = 60
-          }
-          slf4j = {
-            type     = "slf4j"
-            units    = "MILLISECONDS"
-            interval = 60
-            logger   = "org.locationtech.geomesa"
-            level    = "debug"
-          }
-          delimited-text = {
-            type      = "delimited-text"
-            units     = "MILLISECONDS"
-            interval  = 60
-            tabs      = true
-            aggregate = true
-            output    = ${java.io.tmpdir}/"geoserver-metrics"
-          }
-          graphite = {
-            type     = "graphite"
-            units    = "MILLISECONDS"
-            interval = 60
-            url      = "graphite.example.com:80"
-            prefix   = "org.locationtech.geomesa"
-          }
-          ganglia = {
-            type            = "ganglia"
-            units           = "MILLISECONDS"
-            interval        = 60
-            group           = "ganglia.example.com"
-            port            = 8649
-            addressing-mode = "MULTICAST"
-            ttl             = 1
-            ganglia311      = true
-          }
-          accumulo = {
-            type       = "accumulo"
-            units      = "MILLISECONDS"
-            interval   = -1
-            instanceId = "mycloud"
-            zookeepers = "zoo1,zoo2,zoo3"
-            user       = "myuser"
-            password   = "mypassword"
-            tableName  = "geomesa_metrics"
-          }      
+  {
+    type     = "slf4j"
+    units    = "milliseconds"
+    interval = "60 seconds"
+    logger   = "org.locationtech.geomesa.metrics"
+    level    = "debug"
+  }
+
+CloudWatch Reporter
+-------------------
+
+The CloudWatch reporter can be included by adding a dependency on
+``org.locationtech.geomesa:geomesa-metrics-cloudwatch``.  The CloudWatch reporter uses the default credentials
+and region specified in your AWS profile config.
+
+====================== ===============================================================================================
+Configuration Property Description
+====================== ===============================================================================================
+``type``               Must be ``cloudwatch``
+``namespace``          The CloudWatch namespace to use
+``raw-counts``         Boolean - report the raw value of count metrics instead of reporting only the count difference
+                       since the last report
+``zero-values``        Boolean - POSTs to CloudWatch all values. Otherwise, the reporter does not POST values which
+                       are zero in order to save costs
+====================== ===============================================================================================
+
+Example configuration:
+
+::
+
+  {
+    type        = "cloudwatch"
+    units       = "milliseconds"
+    interval    = "60 seconds"
+    namespace   = "mynamespace"
+    raw-counts  = false
+    zero-values = false
+  }
+
+Prometheus Reporter
+-------------------
+
+The Prometheus reporter can be included by adding a dependency on
+``org.locationtech.geomesa:geomesa-metrics-prometheus``.  The Prometheus reporter supports normal Prometheus scraping
+as well as the Prometheus Pushgateway. Note that the unit and interval configurations described above do not apply
+to Prometheus reporters.
+
+Prometheus Scraping
+^^^^^^^^^^^^^^^^^^^
+
+The standard Prometheus reporter will expose an HTTP endpoint to be scraped by Prometheus.
+
+====================== ===============================================================================================
+Configuration Property Description
+====================== ===============================================================================================
+``type``               Must be ``prometheus``
+``port``               The port used to expose metrics
+``suffix``             A suffix to append to all metric names
+====================== ===============================================================================================
+
+Example configuration:
+
+::
+
+  {
+    type = "prometheus"
+    port = "9090"
+  }
+
+Prometheus Pushgateway
+^^^^^^^^^^^^^^^^^^^^^^
+
+For short-lived jobs, metrics can be sent to a Prometheus Pushgateway instead of being exposed for scraping.
+
+====================== ===============================================================================================
+Configuration Property Description
+====================== ===============================================================================================
+``type``               Must be ``prometheus-pushgateway``
+``gateway``            The Pushgateway host
+``job-name``           The name of the batch job being run
+``suffix``             A suffix to append to all metric names
+====================== ===============================================================================================
+
+Example configuration:
+
+::
+
+  {
+    type     = "prometheus-pushgateway"
+    gateway  = "http://pushgateway:8080/"
+    job-name = "my-job"
+  }
+
+Graphite Reporter
+-----------------
+
+The Graphite reporter can be included by adding a dependency on
+``org.locationtech.geomesa:geomesa-metrics-graphite``.
+
+====================== ===============================================================================================
+Configuration Property Description
+====================== ===============================================================================================
+``type``               Must be ``graphite``
+``url``                The connection string to the Graphite instance
+``prefix``             Prefix prepended to all metric names
+``ssl``                Boolean to enable or disable SSL connections
+====================== ===============================================================================================
+
+Example configuration:
+
+::
+
+  {
+    type           = "graphite"
+    url            = "localhost:9000"
+    ssl            = false
+    prefix         = "example"
+    rate-units     = "seconds"
+    duration-units = "milliseconds"
+    interval       = "10 seconds"
+  }
+
+If SSL is enabled, standard Java system properties can be used to control key stores and trust stores, i.e.
+``javax.net.ssl.keyStore``, etc.
+
+Extensions
+----------
+
+Additional reporters can be added at runtime by implementing
+``org.locationtech.geomesa.metrics.core.ReporterFactory`` and registering the new class as a
+`service provider <https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html>`__.
+
+Micrometer Metrics
+==================
+
+GeoMesa also has initial support for `Micrometer <https://docs.micrometer.io/micrometer/reference/>`__ metrics. Metric
+implementations can be configured at runtime through `Typesafe Config <https://github.com/lightbend/config/tree/main>`__:
+
+
+.. tabs::
+
+    .. code-tab:: java
+
+        org.locationtech.geomesa.metrics.micrometer.MicrometerSetup.configure();
+
+    .. code-tab:: scala
+
+        org.locationtech.geomesa.metrics.micrometer.MicrometerSetup.configure()
+
+Configuration should be under the key ``geomesa.metrics``, and takes the following config:
+
+::
+
+    geomesa.metrics = {
+      registries = {}
+      instrumentations = {
+        # jvm classloader metrics
+        classloader = {
+            enabled = false
+            tags = {}
+        }
+        # jvm memory usage metrics
+        memory = {
+          enabled = false
+          tags = {}
+        }
+         # jvm garbage collection metrics
+        gc = {
+          enabled = false
+          tags = {}
+        }
+         # jvm processor usage metrics
+        processor = {
+          enabled = false
+          tags = {}
+        }
+        # jvm thread usage metrics
+        threads = {
+          enabled = false
+          tags = {}
+        }
+        # apache commons-pool/dbcp metrics
+        commons-pool = {
+          enabled = false
+          tags = {}
         }
       }
     }
 
-Standard Configuration
-----------------------
+Apache Commons DBCP2
+--------------------
 
-The following fields are common among all reporters:
+GeoMesa provides a metrics-enabled DataSource that can be used in place of an Apache DBCP2 ``BasicDataSource`` for connection
+pooling. First, ensure that ``commons-pool`` metrics are enabled (above), then use the data source as follows:
 
-+----------------------+-----------+---------------------------------------------------------------------------------------------------------------+
-| Field                | Type      | Description                                                                                                   |
-+======================+===========+===============================================================================================================+
-| ``rate-units``       | String    | The type of units used to report the rate of a metric. Corresponds to ``java.util.concurrent.TimeUnit``       |
-+----------------------+-----------+---------------------------------------------------------------------------------------------------------------+
-| ``duration-units``   | String    | The type of units used to report the duration of a metric. Corresponds to ``java.util.concurrent.TimeUnit``   |
-+----------------------+-----------+---------------------------------------------------------------------------------------------------------------+
-| ``units``            | String    | If rate or duration units are not specified, this will be used instead.                                       |
-+----------------------+-----------+---------------------------------------------------------------------------------------------------------------+
-| ``interval``         | Integer   | How often the reporter will run, in seconds. If less than 1, reporter will not run automatically.             |
-+----------------------+-----------+---------------------------------------------------------------------------------------------------------------+
-| ``type``             | String    | The type of reporter. Types are documented below.                                                             |
-+----------------------+-----------+---------------------------------------------------------------------------------------------------------------+
+.. tabs::
 
-Console Reporter
-~~~~~~~~~~~~~~~~
+    .. code-tab:: java
 
-Writes metrics to the console.
+        import org.locationtech.geomesa.metrics.micrometer.dbcp2.MetricsDataSource;
 
-+------------+----------+-----------------------+
-| Field      | Type     | Description           |
-+============+==========+=======================+
-| ``type``   | String   | Must be ``console``   |
-+------------+----------+-----------------------+
+        MetricsDataSource dataSource = new MetricsDataSource();
 
-Slf4j Reporter
-~~~~~~~~~~~~~~
+        dataSource.setUrl("jdbc:postgresql://postgres/postgres");
+        dataSource.setUsername("postgres");
+        dataSource.setPassword("postgres");
 
-Writes metrics using an slf4j logger.
+        // set pooling parameters as desired
+        dataSource.setMaxTotal(10);
 
-+--------------+----------+---------------------------------------------------------------------------------------------------------------------------------+
-| Field        | Type     | Description                                                                                                                     |
-+==============+==========+=================================================================================================================================+
-| ``type``     | String   | Must be ``slf4j``                                                                                                               |
-+--------------+----------+---------------------------------------------------------------------------------------------------------------------------------+
-| ``logger``   | String   | The name of the logger that will be used for logging.                                                                           |
-+--------------+----------+---------------------------------------------------------------------------------------------------------------------------------+
-| ``level``    | String   | (optional) Level to use for logger messages. One of ``trace``, ``debug``, ``info``, ``warn``, ``error``. Default is ``debug``   |
-+--------------+----------+---------------------------------------------------------------------------------------------------------------------------------+
+        // allows micrometer to instrument this data source
+        dataSource.registerJmx();
 
-Delimited Text Reporter
-~~~~~~~~~~~~~~~~~~~~~~~
+    .. code-tab:: scala
 
-Writes metrics to tab or comma-delimited files.
+        import org.locationtech.geomesa.metrics.micrometer.dbcp2.MetricsDataSource
 
-+-----------------+-----------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| Field           | Type      | Description                                                                                                                                                   |
-+=================+===========+===============================================================================================================================================================+
-| ``type``        | String    | Must be ``delimited-text``                                                                                                                                    |
-+-----------------+-----------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``output``      | String    | The path to output metrics to. Will be passed into ``new java.io.File(output)``                                                                               |
-+-----------------+-----------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``aggregate``   | Boolean   | (optional) Aggregate output files by type. If true, there will be one file per metric type; if false there will be one file per metric. Default is ``true``   |
-+-----------------+-----------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``tabs``        | Boolean   | (optional) If true, delimit entries with tabs, else delimit entries with commas. Default is ``true``                                                          |
-+-----------------+-----------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+
+        val dataSource = new MetricsDataSource()
 
-Graphite Reporter
-~~~~~~~~~~~~~~~~~
+        dataSource.setUrl("jdbc:postgresql://postgres/postgres")
+        dataSource.setUsername("postgres")
+        dataSource.setPassword("postgres")
 
-Writes metrics to Graphite.
+        // set pooling parameters as desired
+        dataSource.setMaxTotal(10)
 
-+--------------+----------+--------------------------------------------------------------------+
-| Field        | Type     | Description                                                        |
-+==============+==========+====================================================================+
-| ``type``     | String   | Must be ``graphite``                                               |
-+--------------+----------+--------------------------------------------------------------------+
-| ``url``      | String   | The URL to the graphite server, in the form of ``<host>:<port>``   |
-+--------------+----------+--------------------------------------------------------------------+
-| ``prefix``   | String   | (optional) The graphite prefix to use                              |
-+--------------+----------+--------------------------------------------------------------------+
+        // allows micrometer to instrument this data source
+        dataSource.registerJmx()
 
-Ganglia Reporter
-~~~~~~~~~~~~~~~~
+Registries
+----------
 
-Writes metrics to Ganglia.
+The following registries are supported:
 
-+-----------------------+-----------+----------------------------------------------------------------------------------+
-| Field                 | Type      | Description                                                                      |
-+=======================+===========+==================================================================================+
-| ``type``              | String    | Must be ``ganglia``                                                              |
-+-----------------------+-----------+----------------------------------------------------------------------------------+
-| ``group``             | String    | The group (url) used for connecting to the ganglia server                        |
-+-----------------------+-----------+----------------------------------------------------------------------------------+
-| ``port``              | Int       | The port used for connecting to the ganglia server                               |
-+-----------------------+-----------+----------------------------------------------------------------------------------+
-| ``ttl``               | Int       | Time-to-live for broadcast packets, in the range of 0-255                        |
-+-----------------------+-----------+----------------------------------------------------------------------------------+
-| ``addressing-mode``   | String    | (optional) Addressing mode to use. Must be one of ``unicast`` or ``multicast``   |
-+-----------------------+-----------+----------------------------------------------------------------------------------+
-| ``ganglia311``        | Boolean   | (optional) To use protocol version 3.1 (true) or 3.0 (false). Default is 3.1     |
-+-----------------------+-----------+----------------------------------------------------------------------------------+
+Prometheus
+^^^^^^^^^^
 
-Accumulo Reporter
-~~~~~~~~~~~~~~~~~
+::
 
-Writes metrics to Accumulo.
+    # note: the top-level key here is only for uniqueness - it can be any string
+    "prometheus" = {
+      type = "prometheus"
+      enabled = true
+      # use prometheus "standard" names - see https://docs.micrometer.io/micrometer/reference/implementations/prometheus.html#_the_prometheus_rename_filter
+      rename = false
+      common-tags = { "application" = "my-app" }
+      port = 9090
+      # additional config can also be done via sys props - see https://prometheus.github.io/client_java/config/config/
+      properties = {}
+      # omit if not using pushgateway
+      push-gateway = {
+        host = "localhost:9091"
+        job = "my-job"
+        scheme = "http"
+        format = "PROMETHEUS_PROTOBUF" # or PROMETHEUS_TEXT
+      }
+    }
 
-+--------------------+----------+------------------------------------------------------------+
-| Field              | Type     | Description                                                |
-+====================+==========+============================================================+
-| ``type``           | String   | Must be ``accumulo``                                       |
-+--------------------+----------+------------------------------------------------------------+
-| ``instanceId``     | String   | The instance ID for the accumulo cluster                   |
-+--------------------+----------+------------------------------------------------------------+
-| ``zookeepers``     | String   | The zookeeper connection string for the accumulo cluster   |
-+--------------------+----------+------------------------------------------------------------+
-| ``user``           | String   | The accumulo user to connect with                          |
-+--------------------+----------+------------------------------------------------------------+
-| ``password``       | String   | The password for the accumulo user                         |
-+--------------------+----------+------------------------------------------------------------+
-| ``tableName``      | String   | The table metrics will be written to                       |
-+--------------------+----------+------------------------------------------------------------+
-| ``visibilities``   | String   | (optional) Visibilities applied to written data            |
-+--------------------+----------+------------------------------------------------------------+
+Cloudwatch
+^^^^^^^^^^
+
+::
+
+    # note: the top-level key here is only for uniqueness - it can be any string
+    "cloudwatch" = {
+      type = "cloudwatch"
+      enabled = true
+      namespace = "geomesa"
+      # properties for the cloudwatch client
+      properties = {}
+    }

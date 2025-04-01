@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,38 +8,36 @@
 
 package org.locationtech.geomesa.lambda
 
-import java.io.ByteArrayInputStream
-import java.util.Date
-
-import com.typesafe.scalalogging.LazyLogging
 import org.apache.arrow.memory.{BufferAllocator, RootAllocator}
-import org.geotools.data.{DataStoreFinder, DataUtilities, Query, Transaction}
+import org.geotools.api.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
+import org.geotools.data.DataUtilities
 import org.geotools.util.factory.Hints
+import org.junit.runner.RunWith
 import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.index.iterators.StatsScan
-import org.locationtech.geomesa.lambda.LambdaTestRunnerTest.LambdaTest
 import org.locationtech.geomesa.lambda.data.LambdaDataStore
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.stats.{EnumerationStat, Stat}
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 import org.specs2.matcher.MatchResult
+import org.specs2.runner.JUnitRunner
 
-class LambdaDataStoreTest extends LambdaTest with LazyLogging {
+import java.io.ByteArrayInputStream
+import java.util.Date
 
-  import scala.collection.JavaConversions._
+@RunWith(classOf[JUnitRunner])
+class LambdaDataStoreTest extends LambdaContainerTest {
+
+  import scala.collection.JavaConverters._
   import scala.concurrent.duration._
 
   sequential
-
-  step {
-    logger.info("LambdaDataStoreTest starting")
-  }
 
   implicit val allocator: BufferAllocator = new RootAllocator(Long.MaxValue)
 
@@ -50,7 +48,7 @@ class LambdaDataStoreTest extends LambdaTest with LazyLogging {
   )
 
   def testTransforms(ds: LambdaDataStore, transform: SimpleFeatureType): MatchResult[Any] = {
-    val query = new Query(sft.getTypeName, Filter.INCLUDE, transform.getAttributeDescriptors.map(_.getLocalName).toArray)
+    val query = new Query(sft.getTypeName, Filter.INCLUDE, transform.getAttributeDescriptors.asScala.map(_.getLocalName).toSeq: _*)
     // note: need to copy the features as the same object is re-used in the iterator
     val iter = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT))
     val result = iter.map(DataUtilities.encodeFeature).toSeq
@@ -109,24 +107,45 @@ class LambdaDataStoreTest extends LambdaTest with LazyLogging {
 
   "LambdaDataStore" should {
     "write and read features" in {
-      val ds = DataStoreFinder.getDataStore(dsParams).asInstanceOf[LambdaDataStore]
+      readAndWriteTest()
+    }
+  }
+
+
+  def readAndWriteTest(): MatchResult[Any] = {
+    foreach(Seq(None, Some("my-lambda-topic"))) { customTopic =>
+      def dsParams(extras: (String, String)*): java.util.Map[String, _] = {
+        val catalog = s"${getClass.getSimpleName}${customTopic.getOrElse("").replaceAll("[^A-Za-z0-9]", "_")}"
+        (this.dsParams ++ Map("lambda.accumulo.catalog" -> catalog) ++ extras.toMap).asJava
+      }
+
+      clock.tick = 0
+
+      val sft = SimpleFeatureTypes.mutable(SimpleFeatureTypes.copy(this.sft))
+      customTopic.foreach(sft.getUserData.put(LambdaDataStore.TopicKey, _))
+
+      val ds = DataStoreFinder.getDataStore(dsParams()).asInstanceOf[LambdaDataStore]
       ds must not(beNull)
 
       try {
         ds.createSchema(sft)
-        ds.getSchema(sft.getTypeName) mustEqual sft
+        SimpleFeatureTypes.compare(ds.getSchema(sft.getTypeName), sft) mustEqual 0
+
+        customTopic.foreach { topic =>
+          LambdaDataStore.topic(ds.getSchema(sft.getTypeName), "") mustEqual topic
+        }
 
         // check namespaces
-        val ns = DataStoreFinder.getDataStore(dsParams ++ Map("namespace" -> "ns0")).getSchema(sft.getTypeName).getName
+        val ns = DataStoreFinder.getDataStore(dsParams("namespace" -> "ns0")).getSchema(sft.getTypeName).getName
         ns.getNamespaceURI mustEqual "ns0"
         ns.getLocalPart mustEqual sft.getTypeName
 
         // note: instantiate after creating the schema so it's not cached as missing
-        val readOnly = DataStoreFinder.getDataStore(dsParams ++ Map("expiry" -> "Inf")).asInstanceOf[LambdaDataStore]
+        val readOnly = DataStoreFinder.getDataStore(dsParams("expiry" -> "Inf")).asInstanceOf[LambdaDataStore]
         readOnly must not(beNull)
 
         try {
-          readOnly.getSchema(sft.getTypeName) mustEqual sft
+          SimpleFeatureTypes.compare(readOnly.getSchema(sft.getTypeName), sft) mustEqual 0
 
           WithClose(ds.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
             features.foreach { feature =>
@@ -137,10 +156,10 @@ class LambdaDataStoreTest extends LambdaTest with LazyLogging {
 
           // test queries against the transient store
           forall(Seq(ds, readOnly)) { store =>
-            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read()).toSeq must
-                containTheSameElementsAs(features))
+            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read().iterator()).toSeq must
+              containTheSameElementsAs(features))
             SelfClosingIterator(store.getFeatureReader(new Query(sft.getTypeName), Transaction.AUTO_COMMIT)).toSeq must
-                containTheSameElementsAs(features)
+              containTheSameElementsAs(features)
           }
           testTransforms(ds, SimpleFeatureTypes.createType("lambda", "*geom:Point:srid=4326"))
           testBin(ds)
@@ -152,10 +171,10 @@ class LambdaDataStoreTest extends LambdaTest with LazyLogging {
           ds.persist(sft.getTypeName)
           // test mixed queries against both stores
           forall(Seq(ds, readOnly)) { store =>
-            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read()).toSeq must
-                beEqualTo(features.drop(1)))
+            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read().iterator()).toSeq must
+              beEqualTo(features.drop(1)))
             SelfClosingIterator(store.getFeatureReader(new Query(sft.getTypeName), Transaction.AUTO_COMMIT)).toSeq must
-                containTheSameElementsAs(features)
+              containTheSameElementsAs(features)
           }
           testTransforms(ds, SimpleFeatureTypes.createType("lambda", "*geom:Point:srid=4326"))
           testBin(ds)
@@ -164,10 +183,10 @@ class LambdaDataStoreTest extends LambdaTest with LazyLogging {
 
           // test query_persistent/query_transient hints
           forall(Seq((features.take(1), QueryHints.LAMBDA_QUERY_TRANSIENT, "LAMBDA_QUERY_TRANSIENT"),
-                     (features.drop(1) , QueryHints.LAMBDA_QUERY_PERSISTENT, "LAMBDA_QUERY_PERSISTENT"))) {
+            (features.drop(1) , QueryHints.LAMBDA_QUERY_PERSISTENT, "LAMBDA_QUERY_PERSISTENT"))) {
             case (feature, hint, string) =>
               val hints = Seq((hint, java.lang.Boolean.FALSE),
-                (Hints.VIRTUAL_TABLE_PARAMETERS, Map(string -> "false"): java.util.Map[String, String]))
+                (Hints.VIRTUAL_TABLE_PARAMETERS, Map(string -> "false").asJava))
               forall(hints) { case (k, v) =>
                 val query = new Query(sft.getTypeName)
                 query.getHints.put(k, v)
@@ -180,14 +199,35 @@ class LambdaDataStoreTest extends LambdaTest with LazyLogging {
           ds.persist(sft.getTypeName)
           // test queries against the persistent store
           forall(Seq(ds, readOnly)) { store =>
-            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read()) must beEmpty)
+            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read().iterator()) must beEmpty)
             SelfClosingIterator(store.getFeatureReader(new Query(sft.getTypeName), Transaction.AUTO_COMMIT)).toSeq must
-                containTheSameElementsAs(features)
+              containTheSameElementsAs(features)
           }
           testTransforms(ds, SimpleFeatureTypes.createType("lambda", "*geom:Point:srid=4326"))
           testBin(ds)
           testArrow(ds)
           testStats(ds)
+
+          // write an update feature to the already persisted features and verify no duplicates are returned
+          val update = ScalaSimpleFeature.create(sft, "0", "n0", "2017-06-15T00:00:01.000Z", "POINT (45 50.1)")
+          WithClose(ds.getFeatureWriterAppend(sft.getTypeName, Transaction.AUTO_COMMIT)) { writer =>
+            FeatureUtils.write(writer, update, useProvidedFid = true)
+          }
+          forall(Seq(ds, readOnly)) { store =>
+            eventually(40, 100.millis)(
+              SelfClosingIterator(store.getFeatureReader(new Query(sft.getTypeName), Transaction.AUTO_COMMIT)).toSeq must
+                containTheSameElementsAs(Seq(update, features.last))
+            )
+          }
+
+          // verify the update is persisted
+          clock.tick = 252
+          ds.persist(sft.getTypeName)
+          forall(Seq(ds, readOnly)) { store =>
+            eventually(40, 100.millis)(SelfClosingIterator(store.transients.get(sft.getTypeName).read().iterator()) must beEmpty)
+            SelfClosingIterator(store.getFeatureReader(new Query(sft.getTypeName), Transaction.AUTO_COMMIT)).toSeq must
+              containTheSameElementsAs(Seq(update, features.last))
+          }
         } finally {
           readOnly.dispose()
         }

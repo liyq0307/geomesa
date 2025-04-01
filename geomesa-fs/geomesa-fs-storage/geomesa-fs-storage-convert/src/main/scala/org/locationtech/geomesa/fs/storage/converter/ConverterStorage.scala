@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,6 +9,8 @@
 package org.locationtech.geomesa.fs.storage.converter
 
 import org.apache.hadoop.fs.Path
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.fs.storage.api.FileSystemStorage.FileSystemWriter
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{StorageFile, StorageFilePath}
@@ -17,10 +19,12 @@ import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
 import org.locationtech.geomesa.fs.storage.common.observer.FileSystemObserver
 import org.locationtech.geomesa.fs.storage.common.utils.PathCache
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
+import org.locationtech.geomesa.fs.storage.converter.pathfilter.PathFiltering
 
-class ConverterStorage(context: FileSystemContext, metadata: StorageMetadata, converter: SimpleFeatureConverter)
+class ConverterStorage(context: FileSystemContext,
+                       metadata: StorageMetadata,
+                       converter: SimpleFeatureConverter,
+                       pathFiltering: Option[PathFiltering])
     extends AbstractFileSystemStorage(context, metadata, "") {
 
   // TODO close converter...
@@ -36,20 +40,20 @@ class ConverterStorage(context: FileSystemContext, metadata: StorageMetadata, co
   override protected def createReader(
       filter: Option[Filter],
       transform: Option[(String, SimpleFeatureType)]): FileSystemPathReader = {
-    new ConverterFileSystemReader(context.fc, converter, filter, transform)
+    new ConverterFileSystemReader(context.fs, converter, filter, transform, pathFiltering)
   }
 
   override def getFilePaths(partition: String): Seq[StorageFilePath] = {
     val path = new Path(context.root, partition)
     if (metadata.leafStorage) { Seq(StorageFilePath(StorageFile(path.getName, 0L), path)) } else {
-      PathCache.list(context.fc, path).map(p => StorageFilePath(StorageFile(p.getPath.getName, 0L), p.getPath)).toList
+      PathCache.list(context.fs, path).map(p => StorageFilePath(StorageFile(p.getPath.getName, 0L), p.getPath)).toList
     }
   }
 
   override def getWriter(partition: String): FileSystemWriter =
     throw new UnsupportedOperationException("Converter storage does not support feature writing")
 
-  override def compact(partition: Option[String], threads: Int): Unit =
+  override def compact(partition: Option[String], fileSize: Option[Long], threads: Int): Unit =
     throw new UnsupportedOperationException("Converter storage does not support compactions")
 }
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -7,8 +7,6 @@
  ***********************************************************************/
 
 package org.locationtech.geomesa.hbase.jobs
-
-import java.nio.charset.StandardCharsets
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.Configuration
@@ -21,16 +19,17 @@ import org.apache.hadoop.hbase.{HBaseConfiguration, HConstants, TableName}
 import org.apache.hadoop.io.Writable
 import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.hbase.data.{HBaseConnectionPool, HBaseDataStore, HBaseIndexAdapter}
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api.{MultiRowKeyValue, SingleRowKeyValue, WritableFeature, WriteConverter}
 import org.locationtech.geomesa.index.conf.partition.TablePartition
 import org.locationtech.geomesa.jobs.GeoMesaConfigurator
-import org.locationtech.geomesa.jobs.mapreduce.GeoMesaOutputFormat
+import org.locationtech.geomesa.jobs.mapreduce.GeoMesaOutputFormat.OutputCounters
 import org.locationtech.geomesa.utils.index.IndexMode
 import org.locationtech.geomesa.utils.io.WithStore
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
+import java.nio.charset.StandardCharsets
 import scala.util.control.NonFatal
 
 /**
@@ -60,9 +59,9 @@ class HBaseIndexFileMapper extends Mapper[Writable, SimpleFeature, ImmutableByte
       }
     }
 
-    features = context.getCounter(GeoMesaOutputFormat.Counters.Group, GeoMesaOutputFormat.Counters.Written)
-    entries = context.getCounter(GeoMesaOutputFormat.Counters.Group, "entries")
-    failed = context.getCounter(GeoMesaOutputFormat.Counters.Group, GeoMesaOutputFormat.Counters.Failed)
+    features = context.getCounter(OutputCounters.Group, OutputCounters.Written)
+    entries = context.getCounter(OutputCounters.Group, "entries")
+    failed = context.getCounter(OutputCounters.Group, OutputCounters.Failed)
   }
 
   override def cleanup(context: HBaseIndexFileMapper.MapContext): Unit = {}
@@ -141,10 +140,8 @@ object HBaseIndexFileMapper {
       require(sft != null, s"Schema $typeName does not exist, please create it first")
       require(!TablePartition.partitioned(sft), "Writing to partitioned tables is not currently supported")
       val idx = ds.manager.index(sft, index, IndexMode.Write)
-      val tableName = idx.getTableNames(None) match {
-        case Seq(t) => TableName.valueOf(t) // should always be writing to a single table here
-        case tables => throw new IllegalStateException(s"Expected a single table but got: ${tables.mkString(", ")}")
-      }
+      // should always be writing to a single table here
+      val tableName = TableName.valueOf(idx.getTableName())
       val table = ds.connection.getTable(tableName)
 
       GeoMesaConfigurator.setDataStoreOutParams(job.getConfiguration, params)

@@ -1,20 +1,20 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.index.index.s3
+package org.locationtech.geomesa.index.index
+package s3
 
-import org.locationtech.geomesa.index.api.ShardStrategy.ZShardStrategy
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.index.api.ShardStrategy.Z3ShardStrategy
 import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, IndexKeySpace}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
-import org.locationtech.geomesa.index.index.ConfiguredIndex
 import org.locationtech.geomesa.index.strategies.SpatioTemporalFilterStrategy
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
-import org.opengis.feature.simple.SimpleFeatureType
 
 class S3Index protected (
     ds: GeoMesaDataStore[_],
@@ -24,13 +24,14 @@ class S3Index protected (
     dtg: String,
     mode: IndexMode
   ) extends GeoMesaFeatureIndex[S3IndexValues, S3IndexKey](ds, sft, S3Index.name, version, Seq(geom, dtg), mode)
-      with SpatioTemporalFilterStrategy[S3IndexValues, S3IndexKey] {
+      with SpatioTemporalFilterStrategy[S3IndexValues, S3IndexKey]
+      with SpatioTemporalIndex[S3IndexValues, S3IndexKey] {
 
   def this(ds: GeoMesaDataStore[_], sft: SimpleFeatureType, geomField: String, dtgField: String, mode: IndexMode) =
     this(ds, sft, S3Index.version, geomField, dtgField, mode)
 
   override val keySpace: IndexKeySpace[S3IndexValues, S3IndexKey] =
-    new S3IndexKeySpace(sft, ZShardStrategy(sft), geom, dtg)
+    new S3IndexKeySpace(sft, Z3ShardStrategy(sft), geom, dtg)
 
   override def tieredKeySpace: Option[IndexKeySpace[_, _]] = None
 }

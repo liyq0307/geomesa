@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,7 +9,8 @@
 package org.locationtech.geomesa.index.index
 
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.{Query, Transaction}
+import org.geotools.api.data.{Query, Transaction}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.util.Converters
 import org.geotools.util.factory.Hints
@@ -36,7 +37,9 @@ import scala.util.Random
 class AttributeIndexTest extends Specification with LazyLogging {
 
   val typeName = "attr-idx-test"
-  val spec = "name:String:index=true,age:Int:index=true,height:Float:index=true,dtg:Date,*geom:Point:srid=4326"
+  val spec =
+    "name:String,age:Int,height:Float,dtg:Date,*geom:Point:srid=4326;" +
+      "geomesa.indices.enabled='attr:name:geom:dtg,attr:age:geom:dtg,attr:height:geom:dtg'"
 
   val sft = SimpleFeatureTypes.createType(typeName, spec)
 
@@ -300,7 +303,7 @@ class AttributeIndexTest extends Specification with LazyLogging {
       if (time > 500L) {
         logger.warn(s"Attribute query processing took ${time}ms for large OR query")
       }
-      time must beLessThan(10000L)
+      time must beLessThan(10000L) // note: scoverage causes this test to slow down a lot and sometimes fail
     }
 
     "de-prioritize not-null queries" in {
@@ -327,6 +330,50 @@ class AttributeIndexTest extends Specification with LazyLogging {
       agePlans.head.filter.index must beAnInstanceOf[AttributeIndex]
       agePlans.head.filter.primary must beSome(FastFilterFactory.toFilter(sft, "age = 21"))
       agePlans.head.filter.secondary must beSome(notNull)
+    }
+
+    "handle secondary date equality filters" in {
+      val spec = "name:String,age:Int,height:Float,dtg:Date,*geom:Point:srid=4326;" +
+          "geomesa.indices.enabled='attr:name:dtg'"
+      val sft = SimpleFeatureTypes.createType(typeName, spec)
+      val features = this.features.map(ScalaSimpleFeature.copy(sft, _))
+
+      val ds = new TestGeoMesaDataStore(true)
+      ds.createSchema(sft)
+      WithClose(ds.getFeatureWriterAppend(typeName, Transaction.AUTO_COMMIT)) { writer =>
+        features.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
+      }
+
+      val filters = Seq(
+        "dtg = '2014-01-01T12:00:00.000Z'",
+        "dtg tequals 2014-01-01T12:00:00.000Z",
+        "dtg during 2014-01-01T11:59:59.999Z/2014-01-01T12:00:00.001Z",
+        "dtg between '2014-01-01T12:00:00.000Z' and '2014-01-01T12:00:00.000Z'",
+        "dtg >= '2014-01-01T12:00:00.000Z' and dtg < '2014-01-01T12:00:00.001Z'"
+      )
+      foreach(filters) { filter =>
+        val query = new Query(typeName, ECQL.toFilter(s"name = 'bob' and $filter"))
+        SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT)).toList mustEqual
+            features.slice(2, 3)
+      }
+    }
+
+    "handle filter.EXCLUDE with query hint" in {
+      val ds = new TestGeoMesaDataStore(true)
+      ds.createSchema(sft)
+
+      WithClose(ds.getFeatureWriterAppend(typeName, Transaction.AUTO_COMMIT)) { writer =>
+        features.foreach(FeatureUtils.write(writer, _, useProvidedFid = true))
+      }
+
+      val query = new Query(typeName, Filter.EXCLUDE)
+      query.getHints.put(QueryHints.QUERY_INDEX, "attr")
+
+      foreach(ds.getQueryPlan(query))(_.ranges must beEmpty)
+
+      val results = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT)).map(_.getID).toList
+
+      results must beEmpty
     }
   }
 }

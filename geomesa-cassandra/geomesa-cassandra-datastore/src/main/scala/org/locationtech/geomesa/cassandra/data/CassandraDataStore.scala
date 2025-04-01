@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2020 IBM
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2025 IBM
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,7 +10,8 @@
 package org.locationtech.geomesa.cassandra.data
 
 import com.datastax.driver.core._
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.cassandra.data.CassandraDataStoreFactory.CassandraDataStoreConfig
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
@@ -19,13 +20,14 @@ import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index}
 import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, MetadataStringSerializer}
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, RunnableStats}
-import org.locationtech.geomesa.index.utils.{Explainer, LocalLocking}
+import org.locationtech.geomesa.index.utils.DistributedLocking.LocalLocking
+import org.locationtech.geomesa.index.utils.Explainer
+import org.locationtech.geomesa.utils.concurrent.CachedThreadPool
 import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.AttributeOptions
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.geomesa.utils.stats.IndexCoverage
-import org.opengis.feature.simple.SimpleFeatureType
 
 class CassandraDataStore(val session: Session, config: CassandraDataStoreConfig)
     extends GeoMesaDataStore[CassandraDataStore](config) with LocalLocking {
@@ -45,10 +47,8 @@ class CassandraDataStore(val session: Session, config: CassandraDataStoreConfig)
     super.getQueryPlan(query, index, explainer).asInstanceOf[Seq[CassandraQueryPlan]]
 
   override def delete(): Unit = {
-    val tables = getTypeNames.flatMap(getAllIndexTableNames)
-    (tables.distinct :+ config.catalog).par.foreach { table =>
-      session.execute(s"drop table $table")
-    }
+    val tables = getTypeNames.flatMap(getAllIndexTableNames).distinct :+ config.catalog
+    tables.toList.map(t => CachedThreadPool.submit(() => session.execute(s"drop table $t"))).foreach(_.get)
   }
 
   override protected def preSchemaUpdate(sft: SimpleFeatureType, previous: SimpleFeatureType): Unit = {

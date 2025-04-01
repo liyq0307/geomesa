@@ -3,7 +3,7 @@
 Avro Converter
 ==============
 
-The Avro converter handles data written by `Apache Avro <http://avro.apache.org/>`__. To use the Avro converter,
+The Avro converter handles data written by `Apache Avro <https://avro.apache.org/>`__. To use the Avro converter,
 specify ``type = "avro"`` in your converter definition.
 
 Configuration
@@ -178,7 +178,6 @@ The following converter config would be sufficient to parse the Avro::
     {
       type        = "avro"
       schema-file = "/tmp/schema.avsc"
-      sft         = "testsft"
       id-field    = "uuid()"
       fields = [
         { name = "tobj", transform = "avroPath($1, '/content$type=DataObj')" },

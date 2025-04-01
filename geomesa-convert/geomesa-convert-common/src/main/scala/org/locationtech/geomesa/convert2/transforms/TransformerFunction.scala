@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,12 @@
 
 package org.locationtech.geomesa.convert2.transforms
 
+import org.locationtech.geomesa.convert.EvaluationContext
+import org.locationtech.geomesa.convert.EvaluationContext.ContextDependent
+
 import java.util.ServiceLoader
 
-import org.locationtech.geomesa.convert.EvaluationContext
-
-trait TransformerFunction {
+trait TransformerFunction extends ContextDependent[TransformerFunction] {
 
   /**
     * The unique names used to reference this function
@@ -24,13 +25,12 @@ trait TransformerFunction {
   def names: Seq[String]
 
   /**
-    * Evaluate the function
-    *
-    * @param args arguments
-    * @param ctx evalution context
-    * @return
-    */
-  def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any
+   * Evaluate the expression against an input row
+   *
+   * @param args arguments
+   * @return
+   */
+  def apply(args: Array[AnyRef]): AnyRef
 
   /**
     * Returns an uninitialized instance of this function
@@ -68,16 +68,19 @@ object TransformerFunction {
 
   def apply(n: String*)(f: Array[Any] => Any): TransformerFunction = {
     new NamedTransformerFunction(n) {
-      override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = f(args)
+      override def apply(args: Array[AnyRef]): AnyRef = f(args.asInstanceOf[Array[Any]]).asInstanceOf[AnyRef]
     }
   }
 
   def pure(n: String*)(f: Array[Any] => Any): TransformerFunction = {
     new NamedTransformerFunction(n, pure = true) {
-      override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = f(args)
+      override def apply(args: Array[AnyRef]): AnyRef = f(args.asInstanceOf[Array[Any]]).asInstanceOf[AnyRef]
     }
   }
 
   abstract class NamedTransformerFunction(override val names: Seq[String], override val pure: Boolean = false)
-      extends TransformerFunction
+      extends TransformerFunction {
+    override def withContext(ec: EvaluationContext): TransformerFunction = this
+    override def apply(args: Array[AnyRef]): AnyRef
+  }
 }

@@ -1,33 +1,155 @@
-name: CI
+name: build-and-test
 
-on: [push, pull_request]
+on:
+  workflow_call:
+    inputs:
+      scala-version:
+        required: false
+        type: string
+        default: "2.12"
+      # splitting up the tests in the accumulo-datastore module reduces the overall CI build time
+      # tests are defined here as an input b/c 'matrix' doesn't have access to most other contexts (like env)
+      accumulo-test-splits-1:
+        required: false
+        type: string
+        default: >-
+          AccumuloDataStoreTest,
+          AccumuloDataStoreQueryTest,
+          AccumuloDataStoreStatsTest,
+          AttributeIndexStrategyTest,
+          AccumuloDataStoreAlterSchemaTest,
+          ArrowBatchIteratorTest,
+          MultiIteratorTest,
+          AccumuloDataStoreTransformsTest,
+          ArrowDictionaryTest,
+          VisibilitiesTest
+      accumulo-test-splits-2:
+        required: false
+        type: string
+        default: >-
+          AccumuloDataStoreAttributeVisibilityTest,
+          AttributeIndexFilteringIteratorTest,
+          AccumuloPartitioningTest,
+          AccumuloFeatureReaderTest,
+          AccumuloDataStoreAtomicWriteTest,
+          AttributeIndexValuesTest,
+          TubeSelectProcessTest,
+          AccumuloDataStoreColumnGroupsTest,
+          ZIntervalTest,
+          S2IndexTest,
+          AccumuloFeatureWriterTest,
+          KryoLazyStatsIteratorTest,
+          AccumuloDataStoreSortTest,
+          AccumuloDataStoreUuidTest,
+          AccumuloDataStoreAuthTest,
+          LiveAccumuloDataStoreTest,
+          DensityIteratorTest,
+          S3IndexTest
+
+permissions:  # added using https://github.com/step-security/secure-repo
+  contents: read
+
+env:
+  MAVEN_CLI_OPTS: -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dlicense.skip=true --batch-mode
 
 jobs:
-  build-and-test:
+  compile:
     runs-on: ubuntu-latest
-
     steps:
-    
-      - uses: actions/checkout@v2
-      - name: Set up JDK 1.8
-        uses: actions/setup-java@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
         with:
-          java-version: 1.8
-      - uses: actions/cache@v1
+          distribution: 'temurin'
+          java-version: '11'
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-                ${{ runner.os }}-maven-
+          key: ${{ hashFiles('**/pom.xml') }}-compile-${{ inputs.scala-version }}
+          path: |
+            ~/.m2/repository/
+            build/zinc-0.3.15/
+      - name: Set Scala version
+        run: ./build/scripts/change-scala-version.sh ${{ inputs.scala-version }}
       - name: Build with Maven
-        run: ./build/mvn clean install -Pbigtable -DskipTests -T4
-      - name: Unit Tests
-        run: mvn -o surefire:test -Pbigtable -Dtest.fork.count=1 -Dmaven.test.jvmargs="-Xmx4g -XX:-UseGCOverheadLimit"
-      - name: HBase Test
-        run: mvn -o surefire:test -pl geomesa-hbase/geomesa-hbase-datastore -Phbase1 -Dtest.fork.count=1 -Dmaven.test.jvmargs="-Xmx4g -XX:-UseGCOverheadLimit" 
-      - name: Integration Test
-        run: mvn failsafe:integration-test -Pbigtable -Dtest.fork.count=1 -Dmaven.test.jvmargs="-Xmx4g -XX:-UseGCOverheadLimit"
-      - name: Remove geomesa artifacts
+        run: ./build/mvn clean install $MAVEN_CLI_OPTS -DskipTests -T4
+      - name: Collect artifacts
         run: |
-          find . -name '*.tar.gz' -exec rm {} \;
-          rm -rf $HOME/.m2/repository/org/locationtech/geomesa
+          mv ~/.m2/repository/org/locationtech/geomesa m2-geomesa
+          tar -czf classes.tgz $(find . -path '*/target/classes' -o -path '*/target/test-classes' -type d | tr '\n' ' ')
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: classes-and-jars-${{ inputs.scala-version }}
+          retention-days: 1
+          path: |
+            m2-geomesa
+            classes.tgz
+      - name: Remove geomesa artifacts
+        if: success() || failure()
+        run: rm -rf ~/.m2/repository/org/locationtech/geomesa
+  unit-tests:
+    name: unit-tests (${{ matrix.tests.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        tests:
+          - name: accumulo-ds-1
+            selector: -pl :geomesa-accumulo-datastore_${{ inputs.scala-version }} -Dtest="${{ inputs.accumulo-test-splits-1 }}"
+          - name: accumulo-ds-2
+            selector: -pl :geomesa-accumulo-datastore_${{ inputs.scala-version }} -Dtest="${{ inputs.accumulo-test-splits-2 }}"
+          - name: accumulo-ds-3
+            selector: -pl :geomesa-accumulo-datastore_${{ inputs.scala-version }} -Dtest.excludes="${{ inputs.accumulo-test-splits-1 }}, ${{ inputs.accumulo-test-splits-2 }}"
+          - name: accumulo-other
+            selector: -f geomesa-accumulo -pl -:geomesa-accumulo-datastore_${{ inputs.scala-version }}
+          - name: arrow
+            selector: -f geomesa-arrow
+          - name: cassandra
+            selector: -f geomesa-cassandra
+          - name: convert
+            selector: -f geomesa-convert
+          - name: cqengine
+            selector: -f geomesa-memory
+          - name: features
+            selector: -f geomesa-features
+          - name: fs
+            selector: -f geomesa-fs
+          - name: gt
+            selector: -f geomesa-gt
+          - name: hbase
+            selector: -f geomesa-hbase
+          - name: kafka
+            selector: -f geomesa-kafka
+          - name: lambda
+            selector: -f geomesa-lambda
+          - name: metrics
+            selector: -f geomesa-metrics
+          - name: process
+            selector: -f geomesa-process
+          - name: redis
+            selector: -f geomesa-redis
+          - name: spark
+            selector: -f geomesa-spark
+          - name: utils
+            selector: -f geomesa-utils-parent
+          - name: others
+            selector: -pl geomesa-filter,geomesa-index-api,geomesa-jobs,geomesa-security,geomesa-tools,geomesa-z3
+    needs: compile
+    uses: ./.github/workflows/unit-tests.yml
+    with:
+      test-name: ${{ matrix.tests.name }}
+      module-selector: ${{ matrix.tests.selector }}
+      scala-version: ${{ inputs.scala-version }}
+  integration-tests:
+    needs: compile
+    uses: ./.github/workflows/integration-tests.yml
+    with:
+      scala-version: ${{ inputs.scala-version }}
+  javadocs:
+    needs: compile
+    uses: ./.github/workflows/javadocs.yml
+    with:
+      scala-version: ${{ inputs.scala-version }}
+  dash:
+    needs: compile
+    uses: ./.github/workflows/dash.yml
+    with:
+      scala-version: ${{ inputs.scala-version }}

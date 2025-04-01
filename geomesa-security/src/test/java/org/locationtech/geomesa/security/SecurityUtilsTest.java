@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,12 @@
 
 package org.locationtech.geomesa.security;
 
+import org.geotools.api.feature.simple.SimpleFeature;
+import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.junit.Assert;
 import org.junit.Test;
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes;
-import org.opengis.feature.simple.SimpleFeature;
-import org.opengis.feature.simple.SimpleFeatureType;
 
 public class SecurityUtilsTest {
 
@@ -68,7 +68,7 @@ public class SecurityUtilsTest {
     private SimpleFeature buildFeature() {
         SimpleFeatureType sft = SimpleFeatureTypes.createType("test", "name:String,geom:Point:srid=4326");
         SimpleFeatureBuilder builder = new SimpleFeatureBuilder(sft);
-        builder.addAll(new Object[]{"foo"});
+        builder.addAll("foo");
         return builder.buildFeature("1");
     }
 }

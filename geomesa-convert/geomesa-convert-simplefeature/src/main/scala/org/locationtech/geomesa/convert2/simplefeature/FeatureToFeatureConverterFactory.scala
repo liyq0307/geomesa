@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,16 +10,18 @@ package org.locationtech.geomesa.convert2.simplefeature
 
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicField, BasicOptions}
 import org.locationtech.geomesa.convert2.AbstractConverterFactory._
 import org.locationtech.geomesa.convert2.simplefeature.FeatureToFeatureConverterFactory.{FeatureToFeatureConfig, FeatureToFeatureConfigConvert}
 import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.convert2.{AbstractConverterFactory, ConverterConfig, SimpleFeatureConverter, SimpleFeatureConverterFactory}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypeLoader
-import org.opengis.feature.simple.SimpleFeatureType
-import pureconfig.ConfigObjectCursor
 import pureconfig.error.ConfigReaderFailures
+import pureconfig.{ConfigObjectCursor, ConfigSource}
 
+import java.io.InputStream
+import scala.util.{Failure, Try}
 import scala.util.control.NonFatal
 
 class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory with LazyLogging {
@@ -38,10 +40,10 @@ class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory wit
   override def apply(sft: SimpleFeatureType, conf: Config): Option[SimpleFeatureConverter] = {
     if (!conf.hasPath("type") || !conf.getString("type").equalsIgnoreCase(TypeToProcess)) { None } else {
       val (config, fields, opts) = try {
-        val c = AbstractConverterFactory.standardDefaults(conf, logger)
-        val config = pureconfig.loadConfigOrThrow[FeatureToFeatureConfig](c)
-        val fields = pureconfig.loadConfigOrThrow[Seq[BasicField]](c)
-        val opts = pureconfig.loadConfigOrThrow[BasicOptions](c)
+        val c = ConfigSource.fromConfig(AbstractConverterFactory.standardDefaults(conf, logger))
+        val config = c.loadOrThrow[FeatureToFeatureConfig]
+        val fields = c.loadOrThrow[Seq[BasicField]]
+        val opts = c.loadOrThrow[BasicOptions]
         (config, fields, opts)
       } catch {
         case NonFatal(e) => throw new IllegalArgumentException(s"Invalid configuration: ${e.getMessage}")
@@ -56,11 +58,11 @@ class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory wit
         config.copy(idField = Some(Expression.Column(inputSft.getAttributeCount)))
       }
 
-      // add transform expressions to look up the attribute attribute
+      // add transform expressions to look up the attribute
       val columns = fields.map { field =>
         field.transforms match {
           case None => field.copy(transforms = Some(Expression.Column(inputSft.indexOf(field.name))))
-          case Some(Expression.FieldLookup(n)) => field.copy(transforms = Some(Expression.Column(inputSft.indexOf(n))))
+          case Some(Expression.FieldLookup(n, _)) => field.copy(transforms = Some(Expression.Column(inputSft.indexOf(n))))
           case _ => field
         }
       }
@@ -81,6 +83,11 @@ class FeatureToFeatureConverterFactory extends SimpleFeatureConverterFactory wit
       Some(new FeatureToFeatureConverter(sft, id, columns ++ defaults, opts))
     }
   }
+
+  override def infer(
+      is: InputStream,
+      sft: Option[SimpleFeatureType],
+      hints: Map[String, AnyRef]): Try[(SimpleFeatureType, Config)] = Failure(new NotImplementedError())
 }
 
 object FeatureToFeatureConverterFactory {

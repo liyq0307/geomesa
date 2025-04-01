@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,12 @@
 
 package org.locationtech.geomesa.index.conf.splitter
 
-import java.nio.charset.StandardCharsets
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.curve.BinnedTime
 import org.locationtech.geomesa.curve.TimePeriod.TimePeriod
 import org.locationtech.geomesa.index.conf.TableSplitter
+import org.locationtech.geomesa.index.conf.splitter.SplitPatternParser.SplitPattern
 import org.locationtech.geomesa.index.index.attribute.{AttributeIndex, AttributeIndexKey}
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index}
@@ -23,8 +22,9 @@ import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.text.{DateParsing, KVPairParser}
-import org.opengis.feature.simple.SimpleFeatureType
 
+import java.nio.charset.StandardCharsets
+import java.util.Date
 import scala.util.Try
 
 /**
@@ -65,6 +65,8 @@ object DefaultSplitter {
     val Z3MinDateOption = s"${Z3Index.name}.min"
     val Z3MaxDateOption = s"${Z3Index.name}.max"
 
+    private val ZeroByteString = new String(ByteArrays.ZeroByteArray, StandardCharsets.UTF_8)
+
     /**
       * Creates splits suitable for a feature ID index. If nothing is specified, will assume a hex distribution.
       *
@@ -80,11 +82,11 @@ object DefaultSplitter {
     def idSplits(options: Map[String, String]): Seq[String] = {
       val patterns = {
         val configured = DefaultSplitter.patterns(s"${IdIndex.name}.pattern", options)
-        if (configured.hasNext) { configured } else {
+        if (configured.nonEmpty) { configured } else {
           Iterator("[0]", "[4]", "[8]", "[c]") // 4 splits assuming hex layout
         }
       }
-      patterns.flatMap(SplitPatternParser.parse).map(stringPatternSplits).reduceLeft(_ ++ _)
+      patterns.toSeq.flatMap(p => SplitPatternParser.parse(p).range)
     }
 
     /**
@@ -102,21 +104,29 @@ object DefaultSplitter {
       * @return
       */
     def attributeSplits(name: String, binding: Class[_], options: Map[String, String]): Seq[String] = {
-      val patterns = DefaultSplitter.patterns(s"${AttributeIndex.name}.$name.pattern", options)
-      val ranges = patterns.flatMap(SplitPatternParser.parse)
-      val splits = if (classOf[Number].isAssignableFrom(binding)) {
-        try {
-          ranges.map(numberPatternSplits(_, binding))
-        } catch {
-          case e: NumberFormatException =>
-            throw new IllegalArgumentException(s"Trying to create splits for attribute '$name' " +
-                s"of type ${binding.getName}, but splits could not be parsed as a number: " +
-                patterns.mkString(" "), e)
-        }
-      } else {
-        ranges.map(stringPatternSplits)
+      val patterns = DefaultSplitter.patternPairs(s"${AttributeIndex.name}.$name.", "pattern", "date-range", options)
+      val ranges = patterns.map { case (pattern, datePattern) =>
+        (SplitPatternParser.parse(pattern), datePattern.map(SplitPatternParser.parse))
       }
-      splits.reduceLeftOption(_ ++ _).getOrElse(Seq.empty)
+      val getSplits: SplitPattern => Seq[String] =
+        if (classOf[Number].isAssignableFrom(binding)) {
+          pattern =>
+            try { numberPatternSplits(pattern, binding) } catch {
+              case e: NumberFormatException =>
+                throw new IllegalArgumentException(s"Trying to create splits for attribute '$name' " +
+                    s"of type ${binding.getName}, but splits could not be parsed as a number: " +
+                    patterns.mkString(" "), e)
+            }
+        } else {
+          pattern => pattern.range
+        }
+      ranges.flatMap { case (primary, secondary) =>
+        val splits = getSplits(primary)
+        secondary match {
+          case None => splits
+          case Some(s) => for { a <- splits; b <- s.range } yield { a + ZeroByteString + b }
+        }
+      }
     }
 
     /**
@@ -234,42 +244,37 @@ object DefaultSplitter {
   private def z2Bytes(options: Map[String, String]): Array[Array[Byte]] =
     Parser.z2Splits(options).map(ByteArrays.toBytes).toArray
 
-  private def patterns(base: String, options: Map[String, String]): Iterator[String] = {
+  private def patterns(base: String, options: Map[String, String]): Seq[String] = {
     val keys = Iterator.single(base) ++ Iterator.range(2, Int.MaxValue).map(i => s"$base$i")
-    keys.map(options.get(_).orNull).takeWhile(_ != null)
+    keys.map(options.get(_).orNull).takeWhile(_ != null).toSeq
   }
 
-  private def stringPatternSplits(range: (String, String)): Seq[String] = {
-    (0 until range._1.length).map(i => rangeSplits(range._1.charAt(i), range._2.charAt(i))).reduceLeft {
-      (left, right) => for (a <- left; b <- right) yield { a + b }
+  private def patternPairs(
+      prefix: String,
+      primary: String,
+      secondary: String,
+      options: Map[String, String]): Seq[(String, Option[String])] = {
+    val firstKey = s"$prefix$primary"
+    val secondKey = s"$prefix$secondary"
+    val transforms: Iterator[String => String] =
+      Iterator.single[String => String](b => b) ++ Iterator.range(2, Int.MaxValue).map(i => b => s"$b$i")
+    val patterns = transforms.map { transform =>
+      options.get(transform(firstKey)) match {
+        case None => null
+        case Some(pattern) => (pattern, options.get(transform(secondKey)))
+      }
     }
+    patterns.takeWhile(_ != null).toSeq
   }
 
   @throws(classOf[NumberFormatException])
-  private def numberPatternSplits(range: (String, String), binding: Class[_]): Seq[String] = {
-    // recursive function to create all number permutations
-    def add(result: Seq[String], value: String, remaining: Seq[(Int, Int)]): Seq[String] = {
-      if (remaining.isEmpty) { Seq(value) } else {
-        val (start, end) = remaining.head
-        result ++ (start to end).flatMap(i => add(result, value + i, remaining.tail))
-      }
+  private def numberPatternSplits(pattern: SplitPattern, binding: Class[_]): Seq[String] = {
+    pattern.range.map { r =>
+      // validate numeric value
+      Integer.parseInt(r)
+      AttributeIndexKey.encodeForQuery(r, binding)
     }
-
-    val remaining = (0 until range._1.length).map { i =>
-      (Integer.parseInt(range._1(i).toString), Integer.parseInt(range._2(i).toString))
-    }
-    val splits = add(Seq.empty, "", remaining)
-    splits.map(AttributeIndexKey.encodeForQuery(_, binding))
   }
-
-  /**
-    * Splits from one char to a second (inclusive)
-    *
-    * @param from from
-    * @param to to
-    * @return
-    */
-  private def rangeSplits(from: Char, to: Char): Seq[String] = Seq.range(from, to + 1).map(_.toChar.toString)
 
   /**
     * Create splits based on individual bits. Will create 2^^(bits) splits.

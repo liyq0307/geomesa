@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,13 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.util.Collections
-
 import org.apache.hadoop.hbase.TableName
 import org.apache.hadoop.hbase.client._
 import org.apache.hadoop.hbase.filter.FilterList
 import org.apache.hadoop.hbase.security.visibility.Authorizations
 import org.apache.hadoop.hbase.zookeeper.ZKConfig
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.hbase.aggregators.HBaseVersionAggregator
 import org.locationtech.geomesa.hbase.data.HBaseConnectionPool.ConnectionWrapper
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreFactory.HBaseDataStoreConfig
@@ -28,14 +27,15 @@ import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, MetadataStringSerializer}
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, RunnableStats}
 import org.locationtech.geomesa.index.utils._
+import org.locationtech.geomesa.security.AuthorizationsProvider
 import org.locationtech.geomesa.utils.concurrent.CachedThreadPool
 import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.AttributeOptions
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.stats.IndexCoverage
 import org.locationtech.geomesa.utils.zk.ZookeeperLocking
-import org.opengis.feature.simple.SimpleFeatureType
 
+import java.util.Collections
 import scala.util.control.NonFatal
 
 class HBaseDataStore(con: ConnectionWrapper, override val config: HBaseDataStoreConfig)
@@ -74,7 +74,7 @@ class HBaseDataStore(con: ConnectionWrapper, override val config: HBaseDataStore
     // just check the first table available
     val versions = getTypeNames.iterator.map(getSchema).flatMap { sft =>
       manager.indices(sft).iterator.flatMap { index =>
-        index.getTableNames(None).flatMap { table =>
+        index.getTableNames().flatMap { table =>
           try {
             val name = TableName.valueOf(table)
             if (connection.getAdmin.tableExists(name)) {
@@ -161,15 +161,21 @@ class HBaseDataStore(con: ConnectionWrapper, override val config: HBaseDataStore
     }
   }
 
-  private def authOpt: Option[Authorizations] =
-    config.authProvider.map { provider =>
-      val auths = provider.getAuthorizations
+  private def authOpt: Option[Authorizations] = {
+    Option(config.authProvider.getAuthorizations).map { auths =>
       // HBase seems to treat and empty collection as no auths
       // which forces it to default to the user's full set of auths
       new Authorizations(if (auths.isEmpty) { HBaseDataStore.EmptyAuths } else { auths })
     }
+  }
 }
 
 object HBaseDataStore {
+
   val EmptyAuths: java.util.List[String] = Collections.singletonList("")
+
+  object NoAuthsProvider extends AuthorizationsProvider {
+    override def getAuthorizations: java.util.List[String] = null
+    override def configure(params: java.util.Map[String, _]): Unit = {}
+  }
 }

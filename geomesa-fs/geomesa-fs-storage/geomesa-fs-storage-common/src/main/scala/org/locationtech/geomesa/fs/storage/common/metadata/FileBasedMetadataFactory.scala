@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.fs.storage.common.metadata
 
-import java.util.concurrent.ConcurrentHashMap
-
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.hadoop.fs.Options.CreateOpts
-import org.apache.hadoop.fs.{CreateFlag, FileContext, Path}
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.locationtech.geomesa.fs.storage.api._
+import org.locationtech.geomesa.fs.storage.common.metadata.FileBasedMetadata.Config
 import org.locationtech.geomesa.fs.storage.common.utils.PathCache
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.stats.MethodProfiling
+
+import java.util.concurrent.ConcurrentHashMap
 
 class FileBasedMetadataFactory extends StorageMetadataFactory {
 
@@ -36,7 +36,7 @@ class FileBasedMetadataFactory extends StorageMetadataFactory {
   override def load(context: FileSystemContext): Option[FileBasedMetadata] = {
     val json = MetadataJson.readMetadata(context)
     // note: do this after loading the json to allow for old metadata transition
-    val cached = FileBasedMetadataFactory.cached(context)
+    val cached = FileBasedMetadataFactory.cached(context, json.getOrElse(FileBasedMetadata.LegacyOptions).options)
     json match {
       case Some(m) if m.name.equalsIgnoreCase(name) =>
         cached.orElse(throw new IllegalArgumentException(s"Could not load metadata at root '${context.root.toUri}'"))
@@ -44,7 +44,7 @@ class FileBasedMetadataFactory extends StorageMetadataFactory {
       case None if cached.isDefined =>
         // a file-based metadata impl exists, but was created with an older version
         // create a config file pointing to it, and register that
-        MetadataJson.writeMetadata(context, FileBasedMetadata.DefaultOptions)
+        MetadataJson.writeMetadata(context, FileBasedMetadata.LegacyOptions)
         cached
 
       case _ => None
@@ -52,14 +52,14 @@ class FileBasedMetadataFactory extends StorageMetadataFactory {
   }
 
   override def create(context: FileSystemContext, config: Map[String, String], meta: Metadata): FileBasedMetadata = {
-    val Metadata(_, encoding, _, leaf) = meta
     val sft = namespaced(meta.sft, context.namespace)
     // load the partition scheme first in case it fails
-    val scheme = PartitionSchemeFactory.load(sft, meta.scheme)
-    MetadataJson.writeMetadata(context, NamedOptions(name, config))
-    FileBasedMetadataFactory.write(context.fc, context.root, meta)
+    PartitionSchemeFactory.load(sft, meta.scheme)
+    val renderer = config.get(Config.RenderKey).map(MetadataConverter.apply).getOrElse(RenderCompact)
+    MetadataJson.writeMetadata(context, NamedOptions(name, config + (Config.RenderKey -> renderer.name)))
+    FileBasedMetadataFactory.write(context.fs, context.root, meta)
     val directory = new Path(context.root, FileBasedMetadataFactory.MetadataDirectory)
-    val metadata = new FileBasedMetadata(context.fc, directory, sft, encoding, scheme, leaf)
+    val metadata = new FileBasedMetadata(context.fs, directory, sft, meta, renderer)
     FileBasedMetadataFactory.cache.put(FileBasedMetadataFactory.key(context), metadata)
     metadata
   }
@@ -67,25 +67,24 @@ class FileBasedMetadataFactory extends StorageMetadataFactory {
 
 object FileBasedMetadataFactory extends MethodProfiling with LazyLogging {
 
-  private val MetadataDirectory = "metadata"
-  private val StoragePath = s"$MetadataDirectory/storage.json"
+  val MetadataDirectory = "metadata"
+  val StoragePath = s"$MetadataDirectory/storage.json"
 
   private val cache = new ConcurrentHashMap[String, FileBasedMetadata]()
 
   private def key(context: FileSystemContext): String =
     context.namespace.map(ns => s"$ns:${context.root.toUri}").getOrElse(context.root.toUri.toString)
 
-  private def cached(context: FileSystemContext): Option[FileBasedMetadata] = {
+  private def cached(context: FileSystemContext, config: Map[String, String]): Option[FileBasedMetadata] = {
     val loader = new java.util.function.Function[String, FileBasedMetadata]() {
       override def apply(ignored: String): FileBasedMetadata = {
         val file = new Path(context.root, StoragePath)
-        if (!PathCache.exists(context.fc, file)) { null } else {
+        if (!PathCache.exists(context.fs, file)) { null } else {
           val directory = new Path(context.root, MetadataDirectory)
-          val meta = WithClose(context.fc.open(file))(MetadataSerialization.deserialize)
-          val leaf = meta.leafStorage
+          val meta = WithClose(context.fs.open(file))(MetadataSerialization.deserialize)
           val sft = namespaced(meta.sft, context.namespace)
-          val scheme = PartitionSchemeFactory.load(sft, meta.scheme)
-          new FileBasedMetadata(context.fc, directory, sft, meta.encoding, scheme, leaf)
+          val renderer = config.get(Config.RenderKey).map(MetadataConverter.apply).getOrElse(RenderPretty)
+          new FileBasedMetadata(context.fs, directory, sft, meta, renderer)
         }
       }
     }
@@ -95,20 +94,17 @@ object FileBasedMetadataFactory extends MethodProfiling with LazyLogging {
   /**
     * Write basic metadata to disk. This should be done once, when the storage is created
     *
-    * @param fc file context
+    * @param fs file system
     * @param root root path
     * @param metadata simple feature type, file encoding, partition scheme, etc
     */
-  private def write(fc: FileContext, root: Path, metadata: Metadata): Unit = {
+  private [metadata] def write(fs: FileSystem, root: Path, metadata: Metadata): Unit = {
     val file = new Path(root, StoragePath)
-    if (PathCache.exists(fc, file, reload = true)) {
-      throw new IllegalArgumentException(s"Metadata file already exists at path '$file'")
-    }
-    WithClose(fc.create(file, java.util.EnumSet.of(CreateFlag.CREATE), CreateOpts.createParent)) { out =>
+    WithClose(fs.create(file, true)) { out =>
       MetadataSerialization.serialize(out, metadata)
       out.hflush()
       out.hsync()
     }
-    PathCache.register(fc, file)
+    PathCache.register(fs, file)
   }
 }

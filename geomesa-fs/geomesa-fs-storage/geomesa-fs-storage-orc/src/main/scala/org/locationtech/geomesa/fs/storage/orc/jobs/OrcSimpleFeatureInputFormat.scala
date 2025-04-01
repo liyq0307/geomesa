@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -7,8 +7,6 @@
  ***********************************************************************/
 
 package org.locationtech.geomesa.fs.storage.orc.jobs
-
-import java.util
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
@@ -18,7 +16,9 @@ import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat, FileSplit}
 import org.apache.orc.mapred.OrcStruct
 import org.apache.orc.mapreduce.OrcMapreduceRecordReader
 import org.apache.orc.{OrcConf, OrcFile}
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, TransformSimpleFeature}
 import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration
 import org.locationtech.geomesa.fs.storage.orc.OrcFileSystemReader
@@ -26,8 +26,8 @@ import org.locationtech.geomesa.fs.storage.orc.OrcFileSystemReader.OrcReadOption
 import org.locationtech.geomesa.fs.storage.orc.jobs.OrcSimpleFeatureInputFormat.{OrcSimpleFeatureInputFormatBase, OrcSimpleFeatureRecordReaderBase}
 import org.locationtech.geomesa.fs.storage.orc.utils.OrcInputFormatReader
 import org.locationtech.geomesa.index.planning.QueryRunner
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
+
+import java.util
 
 /**
   * Input format for orc files
@@ -74,7 +74,7 @@ object OrcSimpleFeatureInputFormat {
     import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 
     StorageConfiguration.setSft(conf, sft)
-    val q = QueryRunner.configureDefaultQuery(sft, new Query(sft.getTypeName, filter, transforms))
+    val q = QueryRunner.configureDefaultQuery(sft, new Query(sft.getTypeName, filter, transforms: _*))
     Option(q.getFilter).filter(_ != Filter.INCLUDE).foreach(StorageConfiguration.setFilter(conf, _))
     q.getHints.getTransform.foreach(StorageConfiguration.setTransforms(conf, _))
     // replicates orc input format strategy of always recursively listing directories

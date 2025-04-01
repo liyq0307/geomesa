@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,12 @@
 
 package org.locationtech.geomesa.index.stats
 
-import java.time.{Instant, ZoneOffset, ZonedDateTime}
-import java.util.Date
-import java.util.concurrent.ConcurrentHashMap
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.DataStore
+import org.geotools.api.data.DataStore
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter._
 import org.geotools.filter.text.ecql.ECQL
+import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.curve.BinnedTime
 import org.locationtech.geomesa.curve.TimePeriod.TimePeriod
 import org.locationtech.geomesa.filter.visitor.QueryPlanFilterVisitor
@@ -22,10 +21,11 @@ import org.locationtech.geomesa.filter.{Bounds, FilterHelper}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, HasGeoMesaMetadata, MetadataSerializer, TableBasedMetadata}
 import org.locationtech.geomesa.index.stats.GeoMesaStats.{GeoMesaStatWriter, StatUpdater}
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
-import org.locationtech.geomesa.utils.stats.{EnumerationStat, _}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter._
+import org.locationtech.geomesa.utils.stats._
 
+import java.time.{Instant, ZoneOffset, ZonedDateTime}
+import java.util.Date
+import java.util.concurrent.ConcurrentHashMap
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
@@ -41,16 +41,16 @@ abstract class MetadataBackedStats(ds: DataStore, metadata: GeoMesaMetadata[Stat
 
   override val writer: GeoMesaStatWriter = new MetadataStatWriter()
 
-  override def getCount(sft: SimpleFeatureType, filter: Filter, exact: Boolean): Option[Long] = {
+  override def getCount(sft: SimpleFeatureType, filter: Filter, exact: Boolean, queryHints: Hints): Option[Long] = {
     if (exact) {
-      query[CountStat](sft, filter, Stat.Count()).map(_.count)
+      query[CountStat](sft, filter, Stat.Count(), queryHints).map(_.count)
     } else if (filter == Filter.INCLUDE) {
       // note: compared to the 'read' method, we want to return empty counts (indicating no features)
       try { metadata.read(sft.getTypeName, countKey()).collect { case s: CountStat => s.count } } catch {
         case NonFatal(e) => logger.error("Error reading existing stats:", e); None
       }
     } else {
-      estimateCount(sft, filter.accept(new QueryPlanFilterVisitor(sft), null).asInstanceOf[Filter])
+      estimateCount(sft, QueryPlanFilterVisitor(sft, filter))
     }
   }
 
@@ -257,24 +257,24 @@ abstract class MetadataBackedStats(ds: DataStore, metadata: GeoMesaMetadata[Stat
 
     // calculate histograms for all indexed attributes and geom/date
     val histograms = (stAttributes ++ indexedAttributes).distinct.map { attribute =>
-        val binding = sft.getDescriptor(attribute).getType.getBinding
-      // calculate the endpoints for the histogram
-      // the histogram will expand as needed, but this is a starting point
-      val (lower, upper, cardinality) = {
-        val mm = bounds(attribute)
-        val (min, max) = mm match {
-          case None => defaultBounds(binding)
-          // max has to be greater than min for the histogram bounds
-          case Some(b) if b.min == b.max => Histogram.buffer(b.min)
-          case Some(b) => b.bounds
-        }
-        (min, max, mm.map(_.cardinality).getOrElse(0L))
-      }
+      val minMax = bounds(attribute)
+      val cardinality = minMax.map(_.cardinality).getOrElse(0L)
       // estimate 10k entries per bin, but cap at 10k bins (~29k on disk)
       val size = if (attribute == sft.getGeomField) { MaxHistogramSize } else {
         math.min(MaxHistogramSize, math.max(DefaultHistogramSize, cardinality / 10000).toInt)
       }
-      Stat.Histogram[Any](attribute, size, lower, upper)(ClassTag[Any](binding))
+      val binding = sft.getDescriptor(attribute).getType.getBinding
+      implicit val ct = ClassTag[Any](binding)
+      // calculate the endpoints for the histogram
+      // the histogram will expand as needed, but this is a starting point
+      val (lower, upper) = minMax match {
+        case None => defaultBounds(binding)
+        // max has to be greater than min for the histogram bounds
+        case Some(b) if Histogram.equivalent(b.min, b.max, size) => Histogram.buffer(b.min)
+        case Some(b) => b.bounds
+      }
+
+      Stat.Histogram[Any](attribute, size, lower, upper)
     }
 
     val z3Histogram = for {

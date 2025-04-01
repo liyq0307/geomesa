@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,7 +16,6 @@ import org.locationtech.geomesa.index.utils.AbstractBatchScan
 import org.locationtech.geomesa.index.utils.ThreadManagement.{LowLevelScanner, ManagedScan, Timeout}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.concurrent.CachedThreadPool
-import org.opengis.filter.Filter
 
 private class HBaseBatchScan(connection: Connection, table: TableName, ranges: Seq[Scan], threads: Int, buffer: Int)
     extends AbstractBatchScan[Scan, Result](ranges, threads, buffer, HBaseBatchScan.Sentinel) {
@@ -81,17 +80,8 @@ object HBaseBatchScan {
     val scanner = new HBaseBatchScan(connection, table, ranges, threads, BufferSize)
     timeout match {
       case None => scanner.start()
-      case Some(t) => new ManagedScanIterator(t, new HBaseScanner(scanner), plan)
+      case Some(t) => new ManagedScan(new HBaseScanner(scanner), t, plan)
     }
-  }
-
-  private class ManagedScanIterator(
-      override val timeout: Timeout,
-      override protected val underlying: HBaseScanner,
-      plan: HBaseQueryPlan
-    ) extends ManagedScan[Result] {
-    override protected def typeName: String = plan.filter.index.sft.getTypeName
-    override protected def filter: Option[Filter] = plan.filter.filter
   }
 
   private class HBaseScanner(scanner: HBaseBatchScan) extends LowLevelScanner[Result] {

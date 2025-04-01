@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,9 +9,14 @@
 package org.locationtech.geomesa.process.analytic
 
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.Query
+import org.geotools.api.data.{Query, SimpleFeatureSource}
+import org.geotools.api.feature.Feature
+import org.geotools.api.feature.`type`.AttributeDescriptor
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
+import org.geotools.api.util.ProgressListener
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureSource}
+import org.geotools.data.simple.SimpleFeatureCollection
 import org.geotools.feature.simple.{SimpleFeatureBuilder, SimpleFeatureTypeBuilder}
 import org.geotools.feature.visitor.{AbstractCalcResult, CalcResult}
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
@@ -25,11 +30,6 @@ import org.locationtech.geomesa.process.GeoMesaProcess
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
 import org.locationtech.geomesa.utils.stats.{EnumerationStat, Stat}
-import org.opengis.feature.Feature
-import org.opengis.feature.`type`.AttributeDescriptor
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
-import org.opengis.util.ProgressListener
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -161,7 +161,7 @@ class AttributeVisitor(val features: SimpleFeatureCollection,
                        val filter: Option[Filter],
                        histogram: Boolean) extends GeoMesaProcessVisitor with LazyLogging {
 
-  import scala.collection.JavaConversions._
+  import scala.collection.JavaConverters._
 
   private val attribute    = attributeDescriptor.getLocalName
   private val uniqueValues = mutable.Map.empty[Any, Long].withDefaultValue(0)
@@ -188,7 +188,7 @@ class AttributeVisitor(val features: SimpleFeatureCollection,
   private def addMultiValue(f: SimpleFeature): Unit = {
     val values = getAttribute[java.util.Collection[_]](f)
     if (values != null) {
-      values.foreach(uniqueValues(_) += 1)
+      values.asScala.foreach(uniqueValues(_) += 1)
     }
   }
 

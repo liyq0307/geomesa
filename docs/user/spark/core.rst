@@ -14,7 +14,7 @@ against a GeoMesa data store:
 
     // DataStore params to a hypothetical GeoMesa Accumulo table
     val dsParams = Map(
-      "accumulo.instance.id"   -> "instance",
+      "accumulo.instance.name" -> "instance",
       "accumulo.zookeepers"    -> "zoo1,zoo2,zoo3",
       "accumulo.user"          -> "user",
       "accumulo.password"      -> "*****",
@@ -32,7 +32,7 @@ against a GeoMesa data store:
     val resultRDD = spatialRDDProvider.rdd(new Configuration, sc, dsParams, query)
 
     resultRDD.collect
-    // Array[org.opengis.feature.simple.SimpleFeature] = Array(
+    // Array[org.geotools.api.feature.simple.SimpleFeature] = Array(
     //    ScalaSimpleFeature:4, ScalaSimpleFeature:5, ScalaSimpleFeature:6,
     //    ScalaSimpleFeature:7, ScalaSimpleFeature:9)
 
@@ -52,7 +52,7 @@ to the ``spark-submit`` command via the ``--jars`` option:
 
 .. code-block:: bash
 
-    --jars file://path/to/geomesa-accumulo-spark-runtime-accumulo2_2.11-$VERSION.jar
+    --jars file://path/to/geomesa-accumulo-spark-runtime-accumulo21_${VERSION}.jar
 
 or passed to Spark via the appropriate mechanism in notebook servers such as
 Jupyter (see :doc:`jupyter`) or Zeppelin.
@@ -140,6 +140,11 @@ To save features, use the ``save()`` method:
 
     GeoMesaSpark(params).save(rdd, params, "gdelt")
 
+.. warning::
+
+  The ``save()`` method executes an appending write, and does not currently support updating existing features.
+  Reusing feature IDs is a logical error, and may produce inconsistencies in your data.
+
 Note that some providers may be read-only.
 
 See :doc:`./providers` for details on specific provider implementations.
@@ -149,7 +154,7 @@ GeoJSON Output
 ^^^^^^^^^^^^^^
 
 The ``geomesa-spark-core`` module provides a means of exporting an ``RDD[SimpleFeature]`` to a
-`GeoJSON <http://geojson.org/>`__ string. This allows for quick visualization of the data in many front-end mapping
+`GeoJSON <https://geojson.org/>`__ string. This allows for quick visualization of the data in many front-end mapping
 libraries that support GeoJSON input such as Leaflet or Open Layers.
 
 To convert an RDD, import the implicit conversion and invoke the ``asGeoJSONString`` method.

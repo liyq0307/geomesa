@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,30 +8,29 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.io._
-import java.nio.charset.StandardCharsets
-
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.hbase.TableName
 import org.apache.hadoop.hbase.client.{Put, Scan}
-import org.geotools.data.simple.SimpleFeatureSource
-import org.geotools.data.{DataStoreFinder, DataUtilities, Query, Transaction}
+import org.geotools.api.data.{DataStoreFinder, Query, SimpleFeatureSource, Transaction}
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.data.DataUtilities
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.hbase.HBaseSystemProperties.TableAvailabilityTimeout
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreParams.{ConnectionParam, HBaseCatalogParam}
 import org.locationtech.geomesa.hbase.utils.HBaseVersions
 import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io._
+import java.nio.charset.StandardCharsets
 
 @RunWith(classOf[JUnitRunner])
 class HBaseBackCompatibilityTest extends Specification with LazyLogging  {
@@ -125,7 +124,7 @@ class HBaseBackCompatibilityTest extends Specification with LazyLogging  {
       foreach(addQueries) { query =>
         val filter = ECQL.toFilter(query)
         foreach(transforms) { transform =>
-          doQuery(fs, new Query(name, filter, transform), Seq(featureToAdd))
+          doQuery(fs, new Query(name, filter, transform: _*), Seq(featureToAdd))
         }
       }
 
@@ -141,7 +140,7 @@ class HBaseBackCompatibilityTest extends Specification with LazyLogging  {
       foreach(addQueries) { query =>
         val filter = ECQL.toFilter(query)
         foreach(transforms) { transform =>
-          doQuery(fs, new Query(name, filter, transform), Seq.empty)
+          doQuery(fs, new Query(name, filter, transform: _*), Seq.empty)
         }
       }
 
@@ -150,7 +149,7 @@ class HBaseBackCompatibilityTest extends Specification with LazyLogging  {
         val filter = ECQL.toFilter(q)
         logger.debug(s"Running query $q")
         foreach(transforms) { transform =>
-          doQuery(fs, new Query(name, filter, transform), results.map(features.apply))
+          doQuery(fs, new Query(name, filter, transform: _*), results.map(features.apply))
         }
         doArrowQuery(fs, new Query(name, filter)) must containTheSameElementsAs(results)
       }
@@ -187,7 +186,7 @@ class HBaseBackCompatibilityTest extends Specification with LazyLogging  {
     }
 
     val transformed = {
-      val subtype = DataUtilities.createSubType(sft, query.getPropertyNames)
+      val subtype = DataUtilities.createSubType(sft, query.getPropertyNames: _*)
       // note: we have to copy the SimpleFeatureImpl as its `equals` method checks for the implementing class
       expected.map(e => ScalaSimpleFeature.copy(DataUtilities.reType(subtype, e)))
     }

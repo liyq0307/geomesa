@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,17 +8,17 @@
 
 package org.locationtech.geomesa.fs.storage.common
 
-import java.util.concurrent._
-
 import com.typesafe.scalalogging.StrictLogging
 import org.apache.hadoop.fs.Path
+import org.geotools.api.feature.simple.SimpleFeature
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{StorageFileAction, StorageFilePath}
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
 import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.concurrent.PhaserUtils
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.SimpleFeature
 
+import java.util.concurrent._
 import scala.util.control.NonFatal
 
 /**
@@ -99,6 +99,8 @@ object FileSystemThreadedReader extends StrictLogging {
       }
 
       try {
+        var child = new Phaser(phaser) // ensure that we don't register too many parties on this phaser
+        var parties = 0 // track registered parties
         readers.foreach { case (reader, files) =>
           // group our files by actions which can be parallelized
           val groups = scala.collection.mutable.ListBuffer.empty[Seq[StorageFilePath]]
@@ -109,17 +111,24 @@ object FileSystemThreadedReader extends StrictLogging {
               group += file
             } else {
               if (group.nonEmpty) {
-                groups += group
+                groups += group.toSeq
                 group = scala.collection.mutable.ArrayBuffer.empty[StorageFilePath]
               }
               groups += Seq(file)
             }
           }
           if (group.nonEmpty) {
-            groups += group // add the last group
+            groups += group.toSeq // add the last group
           }
 
-          es.submit(new ChainedReaderTask(es, phaser, reader, groups.head, groups.tail, queue))
+          // each chained reader task will register at most groups.length parties
+          parties += groups.length
+          if (parties > PhaserUtils.MaxParties) {
+            parties = groups.length
+            child = new Phaser(phaser)
+          }
+          child.register() // register new task
+          es.submit(new ChainedReaderTask(es, child, reader, groups.head, groups.tail.toSeq, queue))
         }
       } catch {
         case NonFatal(e) => es.shutdownNow(); throw e
@@ -171,9 +180,7 @@ object FileSystemThreadedReader extends StrictLogging {
       chain: Seq[Seq[StorageFilePath]],
       queue: BlockingQueue[SimpleFeature],
       mods: scala.collection.mutable.Set[String] = scala.collection.mutable.HashSet.empty[String]
-  ) extends Runnable {
-
-    phaser.register()
+    ) extends Runnable {
 
     override def run(): Unit = {
       val child = new Phaser(1) {
@@ -181,6 +188,7 @@ object FileSystemThreadedReader extends StrictLogging {
           // when this group is done, submit the next group for processing
           try {
             if (chain.nonEmpty) {
+              phaser.register() // register new task
               es.submit(new ChainedReaderTask(es, phaser, reader, chain.head, chain.tail, queue, mods))
             }
             true // return true to indicate the phaser should terminate
@@ -190,7 +198,10 @@ object FileSystemThreadedReader extends StrictLogging {
         }
       }
       try {
-        group.foreach(file => es.submit(new ReaderTask(child, queue, file.path, read(reader, file, mods))))
+        group.foreach { file =>
+          child.register() // register new task
+          es.submit(new ReaderTask(child, queue, file.path, read(reader, file, mods)))
+        }
       } finally {
         child.arriveAndDeregister()
       }
@@ -211,8 +222,6 @@ object FileSystemThreadedReader extends StrictLogging {
       path: Path,
       iter: => CloseableIterator[SimpleFeature]
     ) extends Runnable {
-
-    phaser.register()
 
     override def run(): Unit = {
       try {

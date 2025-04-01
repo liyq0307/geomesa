@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,31 +8,27 @@
 
 package org.locationtech.geomesa.lambda.stream
 
+import com.typesafe.scalalogging.LazyLogging
+import org.apache.curator.framework.CuratorFramework
+import org.apache.curator.framework.recipes.cache.{PathChildrenCache, PathChildrenCacheEvent, PathChildrenCacheListener}
+import org.apache.curator.framework.recipes.locks.InterProcessSemaphoreMutex
+import org.locationtech.geomesa.lambda.stream.OffsetManager.OffsetListener
+import org.locationtech.geomesa.lambda.stream.ZookeeperOffsetManager.CuratorOffsetListener
+import org.locationtech.geomesa.utils.index.ByteArrays
+import org.locationtech.geomesa.utils.io.CloseWithLogging
+import org.locationtech.geomesa.utils.zk.CuratorHelper
+
 import java.io.Closeable
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.{Executors, TimeUnit}
-
-import com.typesafe.scalalogging.LazyLogging
-import org.apache.curator.framework.recipes.cache.{PathChildrenCache, PathChildrenCacheEvent, PathChildrenCacheListener}
-import org.apache.curator.framework.recipes.locks.InterProcessSemaphoreMutex
-import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
-import org.apache.curator.retry.ExponentialBackoffRetry
-import org.locationtech.geomesa.index.utils.Releasable
-import org.locationtech.geomesa.lambda.stream.OffsetManager.OffsetListener
-import org.locationtech.geomesa.lambda.stream.ZookeeperOffsetManager.CuratorOffsetListener
-import org.locationtech.geomesa.utils.io.CloseWithLogging
-
 import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 class ZookeeperOffsetManager(zookeepers: String, namespace: String = "geomesa") extends OffsetManager {
 
   import ZookeeperOffsetManager.offsetsPath
 
-  private val client = CuratorFrameworkFactory.builder()
-      .namespace(namespace)
-      .connectString(zookeepers)
-      .retryPolicy(new ExponentialBackoffRetry(1000, 3))
-      .build()
+  private val client = CuratorHelper.client(zookeepers).namespace(namespace).build()
   client.start()
 
   private val listeners = scala.collection.mutable.Map.empty[String, CuratorOffsetListener]
@@ -73,16 +69,16 @@ class ZookeeperOffsetManager(zookeepers: String, namespace: String = "geomesa") 
     CloseWithLogging(client)
   }
 
-  override protected def acquireDistributedLock(path: String): Releasable =
-    acquireLock(path, (lock) => { lock.acquire(); true })
+  override protected def acquireDistributedLock(path: String): Closeable =
+    acquireLock(path, lock => { lock.acquire(); true })
 
-  override protected def acquireDistributedLock(path: String, timeOut: Long): Option[Releasable] =
-    Option(acquireLock(path, (lock) => lock.acquire(timeOut, TimeUnit.MILLISECONDS)))
+  override protected def acquireDistributedLock(path: String, timeOut: Long): Option[Closeable] =
+    Option(acquireLock(path, lock => lock.acquire(timeOut, TimeUnit.MILLISECONDS)))
 
-  private def acquireLock(path: String, acquire: (InterProcessSemaphoreMutex) => Boolean): Releasable = {
+  private def acquireLock(path: String, acquire: InterProcessSemaphoreMutex => Boolean): Closeable = {
     val lock = new InterProcessSemaphoreMutex(client, s"/$path/locks")
     if (acquire(lock)) {
-      new Releasable { override def release(): Unit = lock.release() }
+      () => lock.release()
     } else {
       null
     }
@@ -110,7 +106,14 @@ object ZookeeperOffsetManager {
     def addListener(listener: OffsetListener): Unit = {
       closeCache()
       listeners += listener
-      cache = new PathChildrenCache(client, path, true)
+      cache = new PathChildrenCache(client, path, true) {
+        // override ensure path to avoid using containers, which aren't supported in zk 3.4
+        override protected def ensurePath(): Unit = {
+          if (client.checkExists().forPath(path) == null) {
+            client.create().creatingParentsIfNeeded().forPath(path)
+          }
+        }
+      }
       cache.getListenable.addListener(this)
       cache.start()
     }
@@ -129,15 +132,23 @@ object ZookeeperOffsetManager {
         if ((event.getType == CHILD_ADDED || event.getType == CHILD_UPDATED) && eventPath.startsWith(path)) {
           logger.trace(s"ZK event triggered for: $eventPath")
           val partition = partitionFromPath(eventPath)
-          val offset = ZookeeperOffsetManager.deserializeOffsets(event.getData.getData)
-          listeners.foreach { listener =>
-            executor.execute(new Runnable {
-              override def run(): Unit = {
-                try { listener.offsetChanged(partition, offset) } catch {
-                  case NonFatal(e) => logger.warn("Error calling offset listener", e)
-                }
+          val data = event.getData.getData
+          Try(ZookeeperOffsetManager.deserializeOffsets(data)) match {
+            case Success(offset) =>
+              listeners.foreach { listener =>
+                executor.execute(() => {
+                  try { listener.offsetChanged(partition, offset) } catch {
+                    case NonFatal(e) => logger.warn("Error calling offset listener", e)
+                  }
+                })
               }
-            })
+
+            case Failure(e) =>
+              // for some reason we get IP addresses sometimes... seems to be something curator is doing.
+              // we generally get the correct data immediately afterwards, so it appears to be harmless
+              logger.warn(
+                s"Error deserializing offset data " +
+                  s"'${Try(new String(data, StandardCharsets.UTF_8)).getOrElse(ByteArrays.toHex(data))}': ${e.getClass.getName}")
           }
         }
       } catch {

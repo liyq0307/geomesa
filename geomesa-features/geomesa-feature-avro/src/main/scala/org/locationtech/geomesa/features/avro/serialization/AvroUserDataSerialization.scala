@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,11 @@
 
 package org.locationtech.geomesa.features.avro.serialization
 
-import java.nio.ByteBuffer
-
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.avro.io.{Decoder, Encoder}
 import org.geotools.util.factory.Hints
+
+import java.nio.ByteBuffer
 
 object AvroUserDataSerialization extends LazyLogging {
 
@@ -29,7 +29,7 @@ object AvroUserDataSerialization extends LazyLogging {
         case v: java.lang.Double  => Some(() => { out.writeIndex(5); out.writeDouble(v) })
         case v: java.lang.Boolean => Some(() => { out.writeIndex(6); out.writeBoolean(v) })
         case v: Array[Byte]       => Some(() => { out.writeIndex(7); out.writeBytes(v) })
-        case v: Hints.Key if v == Hints.USE_PROVIDED_FID => logger.warn("Dropping USE_PROVIDED_FID hint"); None
+        case v: Hints.Key if v == Hints.USE_PROVIDED_FID => logger.debug("Dropping USE_PROVIDED_FID hint"); None
         case _ =>
           throw new IllegalArgumentException(s"Serialization not implemented for '$value' of type ${value.getClass}")
       }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -14,7 +14,10 @@ import org.apache.hadoop.hbase.client.{Admin, HBaseAdmin}
 import org.apache.hadoop.hbase.io.compress.Compression.Algorithm
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding
 import org.apache.hadoop.hbase.regionserver.BloomType
-import org.apache.hadoop.hbase.{Coprocessor, TableName}
+import org.apache.hadoop.hbase.{Coprocessor, NamespaceDescriptor, TableName}
+
+import java.lang.reflect.InvocationTargetException
+import scala.util.Try
 
 /**
   * Reflection wrapper for method signature differences in the HBase API
@@ -43,6 +46,13 @@ object HBaseVersions {
     inMemory: Option[Boolean],
     coprocessor: Option[(String, Option[Path])],
     splits: Seq[Array[Byte]]): Unit = {
+
+    if (name.getNamespaceAsString != null &&
+        name.getNamespaceAsString != NamespaceDescriptor.DEFAULT_NAMESPACE_NAME_STR &&
+        name.getNamespaceAsString != NamespaceDescriptor.SYSTEM_NAMESPACE_NAME_STR &&
+        Try(Option(admin.getNamespaceDescriptor(name.getNamespaceAsString))).getOrElse(None).isEmpty) {
+      admin.createNamespace(NamespaceDescriptor.create(name.getNamespaceAsString).build())
+    }
 
     val descriptor = hTableDescriptorClass.getConstructor(classOf[TableName]).newInstance(name).asInstanceOf[AnyRef]
 
@@ -113,8 +123,12 @@ object HBaseVersions {
     val parameterTypes = method.getParameterTypes.asInstanceOf[Array[AnyRef]]
     val expected = Array[AnyRef](classOf[String], classOf[Path], classOf[Int], classOf[java.util.Map[String, String]])
     if (java.util.Arrays.equals(parameterTypes, expected)) {
-      (descriptor, className, jarFilePath, priority, kvs) =>
-        method.invoke(descriptor, className, jarFilePath, Int.box(priority), kvs)
+      (descriptor, className, jarFilePath, priority, kvs) => {
+        try { method.invoke(descriptor, className, jarFilePath, Int.box(priority), kvs)  } catch {
+          case e: InvocationTargetException => throw e.getCause
+        }
+      }
+
     } else {
       throw new NoSuchMethodException(
         s"Couldn't find HTableDescriptor.addCoprocessor method with correct parameters: $method")
@@ -130,7 +144,11 @@ object HBaseVersions {
     if (parameterTypes.lengthCompare(2) == 0
         && parameterTypes.head.isAssignableFrom(hTableDescriptorClass)
         && parameterTypes.last == classOf[Array[Array[Byte]]]) {
-      (admin, descriptor, splits) => method.invoke(admin, descriptor, splits)
+      (admin, descriptor, splits) => {
+        try { method.invoke(admin, descriptor, splits) } catch {
+          case e: InvocationTargetException => throw e.getCause
+        }
+      }
     } else {
       throw new NoSuchMethodException(s"Couldn't find Admin.createTableAsync method with correct parameters: $method")
     }
@@ -144,7 +162,11 @@ object HBaseVersions {
     if (method.getParameterCount != 1 || method.getParameterTypes.head != classOf[Configuration]) {
       throw new NoSuchMethodException(s"Couldn't find HBaseAdmin.available method with correct parameters: $method")
     }
-    conf => method.invoke(null, conf)
+    conf => {
+      try { method.invoke(null, conf) } catch {
+        case e: InvocationTargetException => throw e.getCause
+      }
+    }
   }
 
   private def findMethod(clas: Class[_], name: String, param: Class[_]): (Any, Any) => Unit = {
@@ -153,7 +175,11 @@ object HBaseVersions {
     }
     val parameterTypes = method.getParameterTypes
     if (parameterTypes.length == 1 && parameterTypes.head == param) {
-      (obj, p) => method.invoke(obj, p.asInstanceOf[AnyRef])
+      (obj, p) => {
+        try { method.invoke(obj, p.asInstanceOf[AnyRef]) } catch {
+          case e: InvocationTargetException => throw e.getCause
+        }
+      }
     } else {
       throw new NoSuchMethodException(
         s"Couldn't find ${clas.getSimpleName}.$name method with correct parameters: $method")

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.index.index.z2.legacy
 
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
-import org.locationtech.geomesa.index.api.ShardStrategy.ZShardStrategy
+import org.locationtech.geomesa.index.api.ShardStrategy.Z2ShardStrategy
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.z2.Z2IndexKeySpace
 import org.locationtech.geomesa.index.index.z2.legacy.Z2IndexV1.Z2IndexKeySpaceV1
 import org.locationtech.geomesa.index.index.z2.legacy.Z2IndexV3.Z2IndexKeySpaceV3
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
-import org.opengis.feature.simple.SimpleFeatureType
 
 // initial implementation - supports points and non-points  (note that non-point support has been removed)
 class Z2IndexV1(ds: GeoMesaDataStore[_], sft: SimpleFeatureType, geom: String, mode: IndexMode)
@@ -27,7 +27,7 @@ class Z2IndexV1(ds: GeoMesaDataStore[_], sft: SimpleFeatureType, geom: String, m
   override val serializedWithId: Boolean = true
 
   override val keySpace: Z2IndexKeySpace =
-    new Z2IndexKeySpaceV1(sft, sft.getTableSharingBytes, ZShardStrategy(sft), geom)
+    new Z2IndexKeySpaceV1(sft, sft.getTableSharingBytes, Z2ShardStrategy(sft), geom)
 }
 
 object Z2IndexV1 {

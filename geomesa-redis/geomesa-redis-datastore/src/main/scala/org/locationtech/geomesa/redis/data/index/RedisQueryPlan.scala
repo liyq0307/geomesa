@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,9 +9,7 @@
 package org.locationtech.geomesa.redis.data
 package index
 
-import java.nio.charset.StandardCharsets
-
-import org.locationtech.geomesa.index.PartitionParallelScan
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFeatures}
 import org.locationtech.geomesa.index.api.{BoundedByteRange, FilterStrategy, QueryPlan}
 import org.locationtech.geomesa.index.utils.Explainer
@@ -19,8 +17,9 @@ import org.locationtech.geomesa.index.utils.Reprojection.QueryReferenceSystems
 import org.locationtech.geomesa.redis.data.util.RedisBatchScan
 import org.locationtech.geomesa.utils.collection.{CloseableIterator, SelfClosingIterator}
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.filter.Filter
 import redis.clients.jedis.Response
+
+import java.nio.charset.StandardCharsets
 
 sealed trait RedisQueryPlan extends QueryPlan[RedisDataStore] {
 
@@ -61,9 +60,10 @@ object RedisQueryPlan {
   def explain(plan: RedisQueryPlan, explainer: Explainer, prefix: String): Unit = {
     explainer.pushLevel(s"${prefix}Plan: ${plan.getClass.getSimpleName}")
     explainer(s"Tables: ${plan.tables.mkString(", ")}")
-    explainer(s"ECQL: ${plan.ecql.map(filterToString).getOrElse("None")}")
+    explainer(s"ECQL: ${plan.ecql.map(filterToString).getOrElse("none")}")
     explainer(s"Ranges (${plan.ranges.size}): ${plan.ranges.take(5).map(rangeToString).mkString(", ")}")
     plan.explain(explainer)
+    explainer(s"Reduce: ${plan.reducer.getOrElse("none")}")
     explainer.popLevel()
   }
 
@@ -107,9 +107,9 @@ object RedisQueryPlan {
     override def scan(ds: RedisDataStore): CloseableIterator[Array[Byte]] = {
       val iter = tables.iterator.map(_.getBytes(StandardCharsets.UTF_8))
       val scans = iter.map(singleTableScan(ds, _))
-      if (PartitionParallelScan.toBoolean.contains(true)) {
+      if (ds.config.queries.parallelPartitionScans) {
         // kick off all the scans at once
-        scans.foldLeft(CloseableIterator.empty[Array[Byte]])(_ ++ _)
+        scans.foldLeft(CloseableIterator.empty[Array[Byte]])(_ concat _)
       } else {
         // kick off the scans sequentially as they finish
         SelfClosingIterator(scans).flatMap(s => s)
@@ -121,7 +121,7 @@ object RedisQueryPlan {
 
     private def singleTableScan(ds: RedisDataStore, table: Array[Byte]): CloseableIterator[Array[Byte]] = {
       if (pipeline) {
-        val result = Seq.newBuilder[Response[java.util.Set[Array[Byte]]]]
+        val result = Seq.newBuilder[Response[java.util.List[Array[Byte]]]]
         result.sizeHint(ranges.length)
         WithClose(ds.connection.getResource) { jedis =>
           WithClose(jedis.pipelined()) { pipe =>

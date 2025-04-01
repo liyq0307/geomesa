@@ -36,7 +36,7 @@ Creating an EMR Cluster (AWS CLI)
 This section is meant for advanced users. If you have bootstrapped a cluster via the Web Console you can skip this
 section and continue on to Installing GeoMesa. The instructions below were executed on an AWS EC2 machine running Amazon
 Linux. To set up the AWS command line tools, follow the instructions found in the AWS
-`online documentation <http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html>`_.
+`online documentation <https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html>`_.
 
 First, you will need to configure an S3 bucket for use by HBase. Make sure to replace ``<bucket-name>`` with your bucket
 name. You can also use a different root directory for HBase if you desire. If you're using the AWS CLI you can create a
@@ -86,7 +86,7 @@ wish to increase or decrease the number of worker nodes or change the instance t
 
 .. note::
 
-    In the code below, ``$VERSION`` = |release|
+    In the code below, ``$VERSION`` = |scala_release_version|
 
 .. code-block:: shell
 
@@ -145,13 +145,14 @@ commands:
     hadoop version
 
 If everything looks good, download the GeoMesa HBase distribution, replacing ``${VERSION}`` with the appropriate GeoMesa
-Version (e.g. 1.3.4) or setting the ``VERSION`` environment variable.
+plus Scala versions (e.g. |scala_release_version|) and ``${TAG}`` with the corresponding tag version (e.g. |release_version|):
 
 .. code-block:: shell
 
-   $ wget "https://repo.eclipse.org/content/repositories/geomesa-releases/org/locationtech/geomesa/geomesa-hbase-dist_2.11/${VERSION}/geomesa-hbase_2.11-${VERSION}-bin.tar.gz" -o /tmp/geomesa-hbase_2.11-${VERSION}-bin.tar.gz
+   $ wget "https://github.com/locationtech/geomesa/releases/download/geomesa-${TAG}/geomesa-hbase_${VERSION}-bin.tar.gz" \
+       -o /tmp/geomesa-hbase_${VERSION}-bin.tar.gz
    $ cd /opt
-   $ sudo tar zxvf /tmp/geomesa-hbase_2.11-${VERSION}-bin.tar.gz
+   $ sudo tar zxvf /tmp/geomesa-hbase_${VERSION}-bin.tar.gz
 
 Then, bootstrap GeoMesa on HBase on S3 by executing the provided script. This script sets up the needed environment
 variables, copies hadoop jars into GeoMesa's lib directory, copies the GeoMesa distributed runtime into S3 where HBase
@@ -159,7 +160,7 @@ can utilize it, sets up the GeoMesa coprocessor registration among other adminis
 
 .. code-block:: shell
 
-   $ sudo /opt/geomesa-hbase_2.11-${VERSION}/bin/bootstrap-geomesa-hbase-aws.sh
+   $ sudo /opt/geomesa-hbase_${VERSION}/bin/bootstrap-geomesa-hbase-aws.sh
 
 Now, log out and back in and your environment will be set up appropriately.
 
@@ -167,7 +168,7 @@ Ingest Public GDELT data
 ------------------------
 
 GeoMesa ships with predefined data models for many open spatio-temporal data sets such as GDELT.  To ingest the most recent 7 days of `GDELT
-<http://www.gdeltproject.org>`_ from Amazon's public S3 bucket, one can copy the files locally to the cluster or use a distributed ingest:
+<https://www.gdeltproject.org>`_ from Amazon's public S3 bucket, one can copy the files locally to the cluster or use a distributed ingest:
 
 Local ingest:
 
@@ -175,7 +176,7 @@ Local ingest:
 
     mkdir gdelt
     cd gdelt
-    seq 7 -1 1 | xargs -n 1 -I{} sh -c "date -d'{} days ago' +%Y%m%d" | xargs -n 1 -I{} aws s3 cp  s3://gdelt-open-data/events/{}.export.csv .
+    for i in `seq 1 7`; do aws s3 cp s3://gdelt-open-data/events/2019080$i.export.csv .; done
     
     # you'll need to ensure the hbase-site.xml is provided on the classpath...by default it is picked up by the tools from standard locations
     geomesa-hbase ingest -c geomesa.gdelt -C gdelt -f gdelt -s gdelt \*.csv
@@ -190,8 +191,8 @@ Distributed ingest:
     zip /tmp/hbase-site.zip hbase-site.xml
     export GEOMESA_EXTRA_CLASSPATHS=/tmp/hbase-site.zip
 
-    # now lets ingest
-    files=$(for x in `seq 7 -1 1 | xargs -n 1 -I{} sh -c "date -d'{} days ago' +%Y%m%d"`; do echo "s3a://gdelt-open-data/events/$x.export.csv"; done)
+    # now lets ingest 7 days of data from August 2019
+    files=$(for i in `seq 1 7`; do echo s3://gdelt-open-data/events/2019080$i.export.csv; done)
     geomesa-hbase ingest -c geomesa.gdelt -C gdelt -f gdelt -s gdelt $files
 
 You can then query the data using the GeoMesa command line export tool.
@@ -203,11 +204,12 @@ You can then query the data using the GeoMesa command line export tool.
 Setup GeoMesa and SparkSQL
 --------------------------
 
-To start executing SQL queries using Spark over your GeoMesa on HBase on S3 cluster, set up the following variable, replacing ``VERSION`` with the appropriate version of GeoMesa.
+To start executing SQL queries using Spark over your GeoMesa on HBase on S3 cluster, set up the following variable,
+replacing ``${VERSION}`` with the appropriate Scala plus GeoMesa versions (e.g. |scala_release_version|):
 
 .. code-block:: shell
     
-    $ JARS=file:///opt/geomesa/dist/spark/geomesa-hbase-spark-runtime_2.11-${VERSION}.jar,file:///usr/lib/hbase/conf/hbase-site.xml
+    $ JARS=file:///opt/geomesa/dist/spark/geomesa-hbase-spark-runtime-hbase2_${VERSION}.jar,file:///usr/lib/hbase/conf/hbase-site.xml
 
 Then, start up the Spark shell
 
@@ -219,7 +221,7 @@ Within the Spark shell, you can connect to GDELT and issues some queries.
 
 .. code-block:: scala
 
-   scala> val df = spark.read.format("geomesa").option("bigtable.table.name", "geomesa.gdelt").option("geomesa.feature", "gdelt").load()
+   scala> val df = spark.read.format("geomesa").option("hbase.catalog", "geomesa.gdelt").option("geomesa.feature", "gdelt").load()
 
    scala> df.createOrReplaceTempView("gdelt")
 

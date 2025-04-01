@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,10 @@
 
 package org.locationtech.geomesa.index.index.id.legacy
 
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.LegacyTableNaming
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
-import org.opengis.feature.simple.SimpleFeatureType
 
 class IdIndexV2 protected (ds: GeoMesaDataStore[_], sft: SimpleFeatureType, version: Int, mode: IndexMode)
     extends IdIndexV3(ds, sft, version, mode) with LegacyTableNaming[Set[Array[Byte]], Array[Byte]] {

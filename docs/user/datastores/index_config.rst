@@ -173,6 +173,26 @@ you may instead call the ``indexes`` methods:
         .indices(List("id", "z3", "attr"))
         .build("mySft")
 
+Configuring Index Table Names
+-----------------------------
+
+The names used for index tables attempt to be unique, usually being composed of the catalog table name, the feature type name,
+and the index identifier. In certain situations, it may be useful to modify the index table names. For example, in Accumulo
+you may want to put index tables in different namespaces that have custom configurations. Table name prefixes can be set
+using the user data key ``index.table.prefix``, or, to configure prefixes for a specific index type, ``index.table.prefix.<index>``
+where ``<index>`` is an index name such as ``z3`` or ``id``:
+
+.. code-block:: java
+
+    import org.locationtech.geomesa.utils.interop.SimpleFeatureTypes;
+
+    String spec = "name:String,dtg:Date,*geom:Point:srid=4326";
+    SimpleFeatureType sft = SimpleFeatureTypes.createType("mySft", spec);
+    // table names will look like geomesa.custom_mySft_id_v4
+    sft.getUserData().put("index.table.prefix", "geomesa.custom");
+    // override table names for just the z3 index
+    sft.getUserData().put("index.table.prefix.z3", "geomesa_z3.custom");
+
 Configuring Feature ID Encoding
 -------------------------------
 
@@ -305,17 +325,18 @@ GeoMesa allows configuration of the number of shards (or splits) into which the 
 divided. This parameter may be changed individually for each ``SimpleFeatureType``. If nothing is specified,
 GeoMesa will default to 4 shards. The number of shards must be between 1 and 127.
 
-Shards allow us to pre-split tables, which provides some initial parallelism for reads and writes. As more data is
+Shards allow for tables to be pre-split, which provides some initial parallelism for reads and writes. As more data is
 written, tables will generally split based on size, thus obviating the need for explicit shards. For small data sets,
 shards are more important as the tables might never split due to size. Setting the number of shards too high can
 reduce performance, as it requires more calculations to be performed per query.
 
 The number of shards is set when calling ``createSchema``. It may be specified through the simple feature type
-user data using the key ``geomesa.z.splits``. See :ref:`set_sft_options` for details on setting user data.
+user data using the keys ``geomesa.z2.splits`` or ``geomesa.z3.splits`` for two and three dimensional indices
+respectively. See :ref:`set_sft_options` for details on setting user data.
 
 .. code-block:: java
 
-    sft.getUserData().put("geomesa.z.splits", "4");
+    sft.getUserData().put("geomesa.z3.splits", "4");
 
 .. _customizing_z_index:
 
@@ -415,7 +436,7 @@ Configuring Partitioned Indices
 
 To help with large data sets, GeoMesa can partition each index into separate tables, based on the attributes of
 each feature. Having multiple tables for a single index can make it simpler to manage a cluster, for example by
-making it trivial to delete old data. This functionality is currently supported in HBase, Accumulo and Cassandra.
+making it trivial to delete old data.
 
 Partitioning must be specified through user data when creating a simple feature type, before calling
 ``createSchema``. To indicate a partitioning scheme, use the key ``geomesa.table.partition``. Currently
@@ -490,28 +511,30 @@ The Default Table Splitter
 
 Generally, ``table.splitter.class`` can be omitted. If so, GeoMesa will use a default implementation that allows
 for a flexible configuration using ``table.splitter.options``. If no options are specified, then all tables
-will generally create 4 split (based on the number of shards). The default ID index splits assume
+will generally create 4 splits (based on the number of shards). The default ID index splits assume
 that feature IDs are randomly distributed UUIDs.
 
 For the default splitter, ``table.splitter.options`` should consist of comma-separated entries, in the form
 ``key1:value1,key2:value2``. Entries related to a given index should start with the index identifier, e.g. one
 of ``id``, ``z3``, ``z2`` or ``attr`` (``xz3`` and ``xz2`` indices use ``z3`` and ``z2``, respectively).
 
-+------------+-------------------------------+----------------------------------------+
-| Index      | Option                        | Description                            |
-+============+===============================+========================================+
-| Z3/XZ3     | ``z3.min``                    | The minimum date for the data          |
-+            +-------------------------------+----------------------------------------+
-|            | ``z3.max``                    | The maximum date for the data          |
-+            +-------------------------------+----------------------------------------+
-|            | ``z3.bits``                   | The number of leading bits to split on |
-+------------+-------------------------------+----------------------------------------+
-| Z2/XZ2     | ``z2.bits``                   | The number of leading bits to split on |
-+------------+-------------------------------+----------------------------------------+
-| ID         | ``id.pattern``                | Split pattern                          |
-+------------+-------------------------------+----------------------------------------+
-| Attribute  |  ``attr.<attribute>.pattern`` | Split pattern for a given attribute    |
-+------------+-------------------------------+----------------------------------------+
++------------+---------------------------------+----------------------------------------+
+| Index      | Option                          | Description                            |
++============+=================================+========================================+
+| Z3/XZ3     | ``z3.min``                      | The minimum date for the data          |
++            +---------------------------------+----------------------------------------+
+|            | ``z3.max``                      | The maximum date for the data          |
++            +---------------------------------+----------------------------------------+
+|            | ``z3.bits``                     | The number of leading bits to split on |
++------------+---------------------------------+----------------------------------------+
+| Z2/XZ2     | ``z2.bits``                     | The number of leading bits to split on |
++------------+---------------------------------+----------------------------------------+
+| ID         | ``id.pattern``                  | Split pattern                          |
++------------+---------------------------------+----------------------------------------+
+| Attribute  | ``attr.<attribute>.pattern``    | Split pattern for a given attribute    |
++            +---------------------------------+----------------------------------------+
+|            | ``attr.<attribute>.date-range`` | Date range for a given attribute       |
++------------+---------------------------------+----------------------------------------+
 
 Z3/XZ3 Splits
 +++++++++++++
@@ -539,9 +562,11 @@ as part of the option. For example, given the schema ``name:String:index=true,*g
 Patterns consist of one or more single characters or ranges enclosed in square brackets. Valid characters
 can be any of the numbers 0 to 9, or any letter a to z, in upper or lower case. Ranges are two characters
 separated by a dash. Each set of brackets corresponds to a single character, allowing for nested splits.
+For numeric types, negatives may be specified with a leading negative sign.
 
 For example, the pattern ``[0-9]`` would create 10 splits, based on the numbers 0 through 9. The
-pattern ``[0-9][0-9]`` would create 100 splits. The pattern ``[0-9a-f]`` would create 16 splits based on lower-case
+pattern ``[0-9][0-9]`` would create 100 splits. The pattern ``[-][0-9]`` would create 10 splits based on
+the numbers -9 through 0. The pattern ``[0-9a-f]`` would create 16 splits based on lower-case
 hex characters. The pattern ``[0-9A-F]`` would do the same with upper-case characters.
 
 For data hot-spots, multiple patterns can be specified by adding additional options with a 2, 3, etc appended to
@@ -552,6 +577,16 @@ For number-type attributes, only numbers are considered valid characters. Due to
 prefixing will not work correctly. E.g., if the data has numbers in the range 8000-9000, specifying
 ``[8-9][0-9]`` will not split the data properly. Instead, trailing zeros should be added to reach the appropriate
 length, e.g. ``[8-9][0-9][0][0]``.
+
+For attribute indices with secondary date indexing, each attribute pattern can be further refined with a date
+pattern, using the suffix ``date-range``. For the example above, you could have any or all of ``attr.name.date-range``,
+``attr.name.date-range2`` and ``attr.name.date-range3``. The date range is expected to take the form of
+``begin-date/end-date/number of splits``, and dates are specified in the form ``yyyy-MM-dd``, e.g.
+``2020-01-01/2023-01-01/8``. Note that this is mainly useful with low-cardinality attributes, as due to the way
+secondary indexing works, date suffixes are only useful after full keys. Continuing the example,
+``attr.name.pattern:[a][l][i][c][e],attr.name.date-range:2020-01-01/2023-01-01/8`` would effectively partition an
+index where everyone is named Alice, but ``attr.name.pattern:[a-z],attr.name.date-range:2020-01-01/2023-01-01/8``
+would not be effective unless everyone had a single-letter name.
 
 Full Example
 ++++++++++++
@@ -565,55 +600,10 @@ Full Example
     sft.getUserData().put("table.splitter.options",
         "id.pattern:[0-9a-f],attr.name.pattern:[a-z],z3.min:2018-01-01,z3.max:2018-01-31,z3.bits:2,z2.bits:4");
 
-.. _query_interceptors:
-
 Configuring Query Interceptors
 ------------------------------
-
-GeoMesa provides a chance for custom logic to be applied to a query before executing it. Query interceptors must
-be specified through user data in the simple feature type, and may be set before calling ``createSchema``, or
-updated by calling ``updateSchema``. To indicate query interceptors, use the key ``geomesa.query.interceptors``:
-
-.. code-block:: java
-
-    sft.getUserData().put("geomesa.query.interceptors", "com.example.MyQueryInterceptor");
-
-The value must be a comma-separated string consisting of the names of one or more classes implementing
-the trait ``org.locationtech.geomesa.index.planning.QueryInterceptor``:
-
-.. code-block:: scala
-
-    /**
-      * Provides a hook to modify a query before executing it
-      */
-    trait QueryInterceptor extends Closeable {
-
-      /**
-        * Called exactly once after the interceptor is instantiated
-        *
-        * @param ds data store
-        * @param sft simple feature type
-        */
-      def init(ds: DataStore, sft: SimpleFeatureType): Unit
-
-      /**
-        * Modifies the query in place
-        *
-        * @param query query
-        */
-      def rewrite(query: Query): Unit
-    }
-
-Interceptors must have a default, no-arg constructor. The interceptor lifecycle consists of:
-
-1. The instance is instantiated via reflection, using its default constructor
-#. The instance is initialized via the ``init`` method, passing in the data store containing the simple feature type
-#. ``rewrite`` is called repeatedly
-#. The instance is cleaned up via the ``close`` method
-
-Interceptors will be invoked in the order they are declared in the user data. In order to see detailed information
-on the results of query interceptors, you can enable ``TRACE``-level logging on the class
-``org.locationtech.geomesa.index.planning.QueryRunner$``.
+GeoMesa provides a chance for custom logic to be applied to a query before executing it via
+query interceptors and guards.  A full discussion of their use and configuration is at :ref:`query_interceptors`.
 
 .. _stat_config:
 
@@ -661,6 +651,28 @@ user-data key ``geomesa.temporal.priority``:
     sft.getUserData().put("geomesa.temporal.priority", "true");
 
 This may be configured before calling ``createSchema``, or updated by calling ``updateSchema``.
+
+.. _required_vis_config:
+
+Configuring Required Visibilities
+---------------------------------
+
+GeoMesa supports :ref:`data_security` through the use of visibility labels to secure access to sensitive data.
+To help prevent data spills, a schema can be configured to reject any writes that don't contain valid visibilities.
+To enable this setting, use the user-data key ``geomesa.vis.required``:
+
+.. code-block:: java
+
+    sft.getUserData().put("geomesa.vis.required", "true");
+
+This may be configured before calling ``createSchema``, or updated by calling ``updateSchema``.
+
+Note that this configuration will prevent missing visibility labels in normal write paths, but that
+it is still possible to write unlabelled data through older clients, bulk loading, or direct access
+to the underlying database.
+
+In Accumulo data stores, setting this configuration will also set the Accumulo ``ReqVisFilter`` on all data
+tables, which will prevent any unlabelled data from being returned in queries.
 
 Mixed Geometry Types
 --------------------

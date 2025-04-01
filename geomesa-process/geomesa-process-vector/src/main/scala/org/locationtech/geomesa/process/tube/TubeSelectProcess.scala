@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,12 @@
 
 package org.locationtech.geomesa.process.tube
 
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.Query
+import org.geotools.api.data.{Query, SimpleFeatureSource}
+import org.geotools.api.feature.Feature
+import org.geotools.api.filter.Filter
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureSource}
+import org.geotools.data.simple.SimpleFeatureCollection
 import org.geotools.data.store.EmptyFeatureCollection
 import org.geotools.feature.visitor._
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
@@ -25,10 +25,9 @@ import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.iterators.DeduplicatingSimpleFeatureIterator
 import org.locationtech.jts.geom._
-import org.opengis.feature.Feature
-import org.opengis.filter.Filter
 
-import scala.collection.JavaConversions._
+import java.util.Date
+import scala.collection.JavaConverters._
 
 @DescribeProcess(
   title = "Tube Select",
@@ -169,7 +168,7 @@ class TubeVisitor(val tubeFeatures: SimpleFeatureCollection,
       val geoms = (0 until geom.getNumGeometries).toIterator.map(geom.getGeometryN)
       SelfClosingIterator(geoms).flatMap { g =>
         val geomFilter = ff.intersects(geomProperty, ff.literal(g))
-        val combinedFilter = ff.and(List(query.getFilter, geomFilter, dtg1, dtg2, filter))
+        val combinedFilter = ff.and(List(query.getFilter, geomFilter, dtg1, dtg2, filter).asJava)
         SelfClosingIterator(source.getFeatures(combinedFilter).features)
       }
     }

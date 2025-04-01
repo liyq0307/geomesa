@@ -1,28 +1,28 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.tools.export
+package org.locationtech.geomesa.tools.`export`
+
+import com.typesafe.config.Config
+import com.typesafe.scalalogging.LazyLogging
+import org.apache.commons.io.FileUtils
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.junit.runner.RunWith
+import org.locationtech.geomesa.tools.ingest.IngestCommand
+import org.locationtech.geomesa.tools.ingest.IngestCommand.Inputs
+import org.locationtech.geomesa.utils.io.PathUtils
+import org.specs2.mutable.Specification
+import org.specs2.runner.JUnitRunner
 
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.util.concurrent.atomic.AtomicInteger
-
-import com.typesafe.config.Config
-import com.typesafe.scalalogging.LazyLogging
-import org.apache.commons.io.FileUtils
-import org.junit.runner.RunWith
-import org.locationtech.geomesa.tools.export.formats.ExportFormat
-import org.locationtech.geomesa.tools.ingest.IngestCommand
-import org.locationtech.geomesa.utils.io.PathUtils
-import org.opengis.feature.simple.SimpleFeatureType
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
 class ConvertCommandTest extends Specification with LazyLogging {
@@ -84,7 +84,7 @@ class ConvertCommandTest extends Specification with LazyLogging {
       forall(inFormats) { inFmt =>
         forall(outFormats) { outFmt =>
           val command = createCommand(inFmt, outFmt)
-          val sftAndConverter = IngestCommand.getSftAndConverter(command.params, Seq.empty, None, None)
+          val sftAndConverter = IngestCommand.getSftAndConverter(command.params, Inputs(Seq.empty), None, None)
           sftAndConverter must beASuccessfulTry(beSome[(SimpleFeatureType, Config)])
         }
       }

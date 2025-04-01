@@ -1,15 +1,12 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.tools.export
-
-import java.io.File
-import java.util.UUID
+package org.locationtech.geomesa.tools.`export`
 
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
 import org.apache.hadoop.conf.Configuration
@@ -17,28 +14,36 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.io.{Text, WritableComparable}
 import org.apache.hadoop.mapred.InvalidJobConfException
 import org.apache.hadoop.mapreduce._
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
+import org.apache.hadoop.mapreduce.lib.output.{FileOutputCommitter, FileOutputFormat}
 import org.apache.hadoop.mapreduce.lib.partition.InputSampler.{RandomSampler, Sampler, SplitSampler}
 import org.apache.hadoop.mapreduce.lib.partition.{InputSampler, TotalOrderPartitioner}
 import org.apache.hadoop.mapreduce.security.TokenCache
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.geotools.data.DataUtilities
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.features.exporters.FeatureExporter
 import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.index.geoserver.ViewParams
 import org.locationtech.geomesa.index.index.attribute.AttributeIndexKey
 import org.locationtech.geomesa.jobs.GeoMesaConfigurator
 import org.locationtech.geomesa.jobs.mapreduce.JobWithLibJars
-import org.locationtech.geomesa.tools.export.ExportCommand.{ExportOptions, Exporter, FileSizeEstimator}
-import org.locationtech.geomesa.tools.export.formats.{ExportFormat, FeatureExporter}
+import org.locationtech.geomesa.tools.export.ExportCommand.{ExportOptions, Exporter}
 import org.locationtech.geomesa.utils.index.ByteArrays
-import org.locationtech.geomesa.utils.io.{IncrementingFileName, PathUtils}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.locationtech.geomesa.utils.io.{FileSizeEstimator, IncrementingFileName, PathUtils}
+
+import java.io.File
+import java.text.NumberFormat
+import java.util.UUID
 
 /**
  * Class that handles configuration and tracking of the remote job
  */
 object ExportJob extends JobWithLibJars {
+
+  // mimic id formatting in job
+  private val jobIdFormat = createFormat(4)
+  private val taskIdFormat = createFormat(5)
 
   def configure(
       job: Job,
@@ -121,6 +126,13 @@ object ExportJob extends JobWithLibJars {
     conf.set("mapreduce.job.reduce.slowstart.completedmaps", ".90")
 
     job
+  }
+
+  private def createFormat(digits: Int): NumberFormat = {
+    val nf = NumberFormat.getInstance()
+    nf.setMinimumIntegerDigits(digits)
+    nf.setGroupingUsed(false)
+    nf
   }
 
   object Counters {
@@ -259,10 +271,15 @@ object ExportJob extends JobWithLibJars {
       val conf = job.getConfiguration
       val file = {
         val (base, extension) = PathUtils.getBaseNameAndExtension(Config.getOutputFile(conf))
-        conf.set(FileOutputFormat.BASE_OUTPUT_NAME, base) // controls result from getDefaultWorkFile
-        getDefaultWorkFile(job, extension).toString
+        val workPath = getOutputCommitter(job).asInstanceOf[FileOutputCommitter].getWorkPath
+        val jobId = job.getJobID
+        val jobIdentifier = s"${jobId.getJtIdentifier}_${jobIdFormat.format(jobId.getId)}"
+        val taskId = job.getTaskAttemptID.getTaskID
+        val taskType = TaskID.getRepresentingCharacter(taskId.getTaskType)
+        val name = s"$base-$taskType-${jobIdentifier}_${taskIdFormat.format(taskId.getId)}$extension"
+        new Path(workPath, name).toString
       }
-      val opts = ExportOptions(Config.getFormat(conf), Some(file), Config.getGzip(conf), Config.getHeaders(conf))
+      val opts = ExportOptions(Config.getFormat(conf), Some(file), Config.getGzip(conf), Config.getHeaders(conf), writeEmptyFiles = true)
       val hints = Config.getQueryHints(conf)
       lazy val names = new IncrementingFileName(file)
       Config.getChunks(conf) match {
@@ -289,7 +306,7 @@ object ExportJob extends JobWithLibJars {
 
     override def write(key: Text, value: SimpleFeature): Unit = {
       if (exporter == null) {
-        exporter = new Exporter(opts, hints, Map.empty)
+        exporter = new Exporter(opts, hints)
         exporter.start(value.getFeatureType)
       }
       exporter.export(Iterator.single(value))
@@ -319,12 +336,12 @@ object ExportJob extends JobWithLibJars {
 
     private val counter = context.getCounter(Counters.Group, Counters.Written)
 
-    private var exporter: FeatureExporter = _
+    private var exporter: Exporter = _
     private var estimator: FileSizeEstimator = _
 
     override def write(key: Text, value: SimpleFeature): Unit = {
       if (exporter == null) {
-        exporter = new Exporter(opts.copy(file = Some(files.next)), hints, Map.empty)
+        exporter = new Exporter(opts.copy(file = Some(files.next)), hints)
         exporter.start(value.getFeatureType)
         if (estimator == null) {
           val bytesPerFeature = opts.format.bytesPerFeature(value.getFeatureType)
@@ -365,14 +382,14 @@ object ExportJob extends JobWithLibJars {
 
     private val counter = context.getCounter(Counters.Group, Counters.Written)
 
-    private var exporter: FeatureExporter = _
+    private var exporter: Exporter = _
     private var estimator: FileSizeEstimator = _
     private var estimate = 0L // estimated number of features to write to hit our chunk size
-    private var count = 0 // current number of features written since the last estimate
+    private var count = 0L // current number of features written since the last estimate
 
     override def write(key: Text, value: SimpleFeature): Unit = {
       if (exporter == null) {
-        exporter = new Exporter(opts.copy(file = Some(files.next)), hints, Map.empty)
+        exporter = new Exporter(opts.copy(file = Some(files.next)), hints)
         exporter.start(value.getFeatureType)
         if (estimator == null) {
           val bytesPerFeature = opts.format.bytesPerFeature(value.getFeatureType)

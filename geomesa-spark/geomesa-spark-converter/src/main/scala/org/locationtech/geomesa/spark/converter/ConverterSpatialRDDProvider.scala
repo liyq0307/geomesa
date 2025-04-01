@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,7 +16,9 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.convert.ConverterConfigLoader
@@ -24,10 +26,8 @@ import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.jobs.mapreduce.ConverterInputFormat
 import org.locationtech.geomesa.spark.{SpatialRDD, SpatialRDDProvider}
 import org.locationtech.geomesa.utils.geotools.{SftArgResolver, SftArgs, SimpleFeatureTypeLoader}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 /**
@@ -64,10 +64,10 @@ class ConverterSpatialRDDProvider extends SpatialRDDProvider with LazyLogging {
     FileInputFormat.setInputPaths(job, params(InputFilesKey))
     conf.set(FileInputFormat.INPUT_DIR, job.getConfiguration.get(FileInputFormat.INPUT_DIR))
     val queryProperties = query.getPropertyNames
-    val sftProperties = sft.getAttributeDescriptors.map{_.getLocalName}
+    val sftProperties = sft.getAttributeDescriptors.asScala.map{_.getLocalName}
     if (queryProperties != null && queryProperties.nonEmpty && sftProperties != queryProperties.toSeq) {
       logger.debug("Query transform retyping results")
-      val modifiedSft = SimpleFeatureTypeBuilder.retype(sft, query.getPropertyNames)
+      val modifiedSft = SimpleFeatureTypeBuilder.retype(sft, query.getPropertyNames: _*)
       ConverterInputFormat.setRetypeSft(conf, modifiedSft)
     }
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,13 +9,16 @@
 
 package org.locationtech.geomesa.filter.factory
 
+import org.geotools.api.filter.expression.Literal
+import org.geotools.api.filter.spatial.BBOX
 import org.geotools.factory.CommonFactoryFinder
+import org.geotools.filter.text.ecql.ECQL
 import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.filter.expression.{FastPropertyName, OrHashEquality, OrSequentialEquality}
+import org.locationtech.geomesa.filter.expression.{FastPropertyIsEqualTo, FastPropertyName, OrHashEquality, OrSequentialEquality}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.filter.spatial.BBOX
+import org.specs2.execute.Result
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -26,18 +29,18 @@ class FastFilterFactoryTest extends Specification {
     "be loadable via hints" >> {
       val hints = new Hints()
       hints.put(Hints.FILTER_FACTORY, classOf[FastFilterFactory])
-      val ff = CommonFactoryFinder.getFilterFactory2(hints)
+      val ff = CommonFactoryFinder.getFilterFactory(hints)
       ff must beAnInstanceOf[FastFilterFactory]
     }
     "be loadable via system hints" >> {
       skipped("This might work if property is set globally at jvm startup...")
-      System.setProperty("org.opengis.filter.FilterFactory", classOf[FastFilterFactory].getName)
+      System.setProperty("org.geotools.api.filter.FilterFactory", classOf[FastFilterFactory].getName)
       try {
         Hints.scanSystemProperties()
-        val ff = CommonFactoryFinder.getFilterFactory2
+        val ff = CommonFactoryFinder.getFilterFactory
         ff must beAnInstanceOf[FastFilterFactory]
       } finally {
-        System.clearProperty("org.opengis.filter.FilterFactory")
+        System.clearProperty("org.geotools.api.filter.FilterFactory")
         Hints.scanSystemProperties()
       }
     }
@@ -86,6 +89,36 @@ class FastFilterFactoryTest extends Specification {
       FastFilterFactory.toFilter(sft, "name ilike '%abc\\'") must throwA[IllegalArgumentException]
       FastFilterFactory.toFilter(sft, "name like '%abc\\'") must throwA[IllegalArgumentException]
       ok
+    }
+    "handle logical erasure of entire clauses" >> {
+      val sft = SimpleFeatureTypes.createType("test", "a:Integer")
+      val ecql = "(a = 0 AND a = 0) OR (a = 0 AND a = 1) OR (a = 0 AND a = 2)"
+      val filter = FastFilterFactory.toFilter(sft, ecql)
+      filter must beAnInstanceOf[FastPropertyIsEqualTo]
+      filter.asInstanceOf[FastPropertyIsEqualTo].getExpression1 must beAnInstanceOf[FastPropertyName]
+      filter.asInstanceOf[FastPropertyIsEqualTo].getExpression1.asInstanceOf[FastPropertyName].getPropertyName mustEqual "a"
+      filter.asInstanceOf[FastPropertyIsEqualTo].getExpression2 must beAnInstanceOf[Literal]
+      filter.asInstanceOf[FastPropertyIsEqualTo].getExpression2.asInstanceOf[Literal].getValue mustEqual 0
+    }
+    "create filter containing functions with embedded expressions" >> {
+      val sft = SimpleFeatureTypes.createType("test", "f0:Integer,f1:Integer")
+      val ecql = "min(f0 + 2, 4) < min(f1, 5)"
+      val filterGeoMesa = FastFilterFactory.toFilter(sft, ecql)
+      val filterGeoTools = ECQL.toFilter(ecql)
+      Result.foreach(1 to 10) { i =>
+        Result.foreach(1 to 10) { j =>
+          val sf = ScalaSimpleFeature.create(sft, s"${i}_${j}", i, j)
+          filterGeoMesa.evaluate(sf) mustEqual filterGeoTools.evaluate(sf)
+        }
+      }
+    }
+    "comparison operators should have consistent semantics" >> {
+      val sft = SimpleFeatureTypes.createType("test", "s:String")
+      val sf = ScalaSimpleFeature.create(sft, "id", "5")
+      FastFilterFactory.toFilter(sft, "s > '100'").evaluate(sf) must beTrue
+      FastFilterFactory.toFilter(sft, "s >= '100'").evaluate(sf) must beTrue
+      FastFilterFactory.toFilter(sft, "s < '100'").evaluate(sf) must beFalse
+      FastFilterFactory.toFilter(sft, "s <= '100'").evaluate(sf) must beFalse
     }
   }
 }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,9 @@
 
 package org.locationtech.geomesa.accumulo.index
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
@@ -20,12 +22,13 @@ import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.Conversions._
 import org.locationtech.geomesa.utils.text.WKTUtils
-import org.opengis.feature.simple.SimpleFeatureType
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
 class AttrKeyPlusValueIteratorTest extends Specification with TestWithMultipleSfts {
+
+  import scala.collection.JavaConverters._
 
   val spec =
     "name:String:index=join:cardinality=high," +
@@ -56,14 +59,13 @@ class AttrKeyPlusValueIteratorTest extends Specification with TestWithMultipleSf
     "work with table sharing off" >> {
       import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
-
       sft.isTableSharing must beFalse
 
       "do a single scan for attribute idx queries" >> {
         val filterName = "(((name = 'alice') or name = 'bill') or name = 'bob')"
         val filter = ECQL.toFilter(s"$filterName AND BBOX(geom, 40, 40, 60, 60) and " +
             s"dtg during 2014-01-01T00:00:00.000Z/2014-01-05T00:00:00.000Z ")
-        val query = new Query(sft.getTypeName, filter, Array[String]("dtg", "geom", "name"))
+        val query = new Query(sft.getTypeName, filter, "dtg", "geom", "name")
         val plans = ds.getQueryPlan(query)
         plans.size mustEqual 1
         plans.head must beAnInstanceOf[BatchScanPlan]
@@ -82,13 +84,12 @@ class AttrKeyPlusValueIteratorTest extends Specification with TestWithMultipleSf
       }
 
       "work with 150 attrs" >> {
-        import scala.collection.JavaConversions._
-        val ff = CommonFactoryFinder.getFilterFactory2
-        val filterName = ff.or((0 to 150).map(i => ff.equals(ff.property("name"), ff.literal(i.toString))))
+        val ff = CommonFactoryFinder.getFilterFactory
+        val filterName = ff.or(Seq.tabulate[Filter](150)(i => ff.equals(ff.property("name"), ff.literal(i.toString))).asJava)
         val filter = ff.and(filterName, ECQL.toFilter("BBOX(geom, 40, 40, 60, 60) and " +
             "dtg during 2014-01-01T00:00:00.000Z/2014-01-05T00:00:00.000Z "))
 
-        val query = new Query(sft.getTypeName, filter, Array[String]("dtg", "geom", "name"))
+        val query = new Query(sft.getTypeName, filter, "dtg", "geom", "name")
         val plans = ds.getQueryPlan(query)
         plans.size mustEqual 1
         plans.head must beAnInstanceOf[BatchScanPlan]
@@ -105,7 +106,7 @@ class AttrKeyPlusValueIteratorTest extends Specification with TestWithMultipleSf
         val filter = ECQL.toFilter(s"$filterName AND BBOX(geom, 40, 40, 60, 60) and " +
             s"dtg during 2014-01-01T00:00:00.000Z/2014-01-05T00:00:00.000Z ")
 
-        val query = new Query(sft.getTypeName, filter, Array[String]("dtg", "geom", "name"))
+        val query = new Query(sft.getTypeName, filter, "dtg", "geom", "name")
         query.getHints.put(QueryHints.SAMPLING, new java.lang.Float(.5f))
 
         val plans = ds.getQueryPlan(query)

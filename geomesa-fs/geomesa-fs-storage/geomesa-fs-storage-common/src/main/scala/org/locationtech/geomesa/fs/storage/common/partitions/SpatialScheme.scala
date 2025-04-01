@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.fs.storage.common.partitions
 
-import java.util.regex.Pattern
-
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.filter.FilterHelper
 import org.locationtech.geomesa.fs.storage.api.PartitionScheme.SimplifiedFilter
 import org.locationtech.geomesa.fs.storage.api.{NamedOptions, PartitionScheme, PartitionSchemeFactory}
 import org.locationtech.geomesa.utils.geotools.GeometryUtils
-import org.locationtech.sfcurve.IndexRange
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
+import org.locationtech.geomesa.zorder.sfcurve.IndexRange
+
+import java.util.regex.Pattern
 
 abstract class SpatialScheme(bits: Int, geom: String) extends PartitionScheme {
 
@@ -31,6 +31,16 @@ abstract class SpatialScheme(bits: Int, geom: String) extends PartitionScheme {
   override val depth: Int = 1
 
   override def getSimplifiedFilters(filter: Filter, partition: Option[String]): Option[Seq[SimplifiedFilter]] = {
+    getIntersectingPartitions(filter, partition).map { partitions =>
+      // note: we don't simplify the filter as usually we wouldn't be able to remove much
+      Seq(SimplifiedFilter(filter, partitions, partial = false))
+    }
+  }
+
+  override def getIntersectingPartitions(filter: Filter): Option[Seq[String]] =
+    getIntersectingPartitions(filter, None)
+
+  private def getIntersectingPartitions(filter: Filter, partition: Option[String]): Option[Seq[String]] = {
     val geometries = FilterHelper.extractGeometries(filter, geom, intersect = true)
     if (geometries.disjoint) {
       Some(Seq.empty)
@@ -42,8 +52,7 @@ abstract class SpatialScheme(bits: Int, geom: String) extends PartitionScheme {
         val ranges = generateRanges(geometries.values.map(GeometryUtils.bounds))
         ranges.flatMap(r => r.lower to r.upper).distinct.map(_.formatted(format))
       }
-      // note: we don't simplify the filter as usually we wouldn't be able to remove much
-      Some(Seq(SimplifiedFilter(filter, partitions, partial = false)))
+      Some(partitions)
     }
   }
 }

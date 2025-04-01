@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,14 @@
 
 package org.locationtech.geomesa.convert2.validators
 
-import java.util.{Date, Locale}
-
 import com.codahale.metrics.Counter
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.convert2.metrics.ConverterMetrics
 import org.locationtech.geomesa.curve.BinnedTime
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.util.{Date, Locale}
 
 /**
   * Validator based on the indices used by the feature type. Currently only the x/z2 and x/z3 indices have
@@ -92,7 +92,7 @@ object IndexValidatorFactory extends LazyLogging {
       } else if (!WholeWorldEnvelope.contains(g.getEnvelopeInternal)) {
         counters.geom.bounds.inc()
         counters.total.inc()
-        Errors.GeomBounds
+        Errors.geomBounds(g)
       } else {
         null
       }
@@ -112,8 +112,8 @@ object IndexValidatorFactory extends LazyLogging {
   private class Z3Validator(geom: Int, dtg: Int, minDate: Date, maxDate: Date, counters: Z3Counters)
       extends SimpleFeatureValidator {
 
-    private val dateBefore = s"date is before minimum indexable date ($minDate)"
-    private val dateAfter = s"date is after maximum indexable date ($maxDate)"
+    private val dateBefore = Errors.dateBoundsLow(minDate)
+    private val dateAfter = Errors.dateBoundsHigh(maxDate)
 
     override def validate(sf: SimpleFeature): String = {
       val d = sf.getAttribute(dtg).asInstanceOf[Date]
@@ -124,17 +124,17 @@ object IndexValidatorFactory extends LazyLogging {
         error =  s"$error, ${Errors.GeomNull}"
       } else if (!WholeWorldEnvelope.contains(g.getEnvelopeInternal)) {
         counters.geom.bounds.inc()
-        error =  s"$error, ${Errors.GeomBounds}"
+        error =  s"$error, ${Errors.geomBounds(g)}"
       }
       if (d == null) {
         counters.dtg.missing.inc()
         error = s"$error, ${Errors.DateNull}"
       } else if (d.before(minDate)) {
         counters.dtg.bounds.inc()
-        error = s"$error, $dateBefore"
+        error = s"$error, ${dateBefore(d)}"
       } else if (d.after(maxDate)) {
         counters.dtg.bounds.inc()
-        error = s"$error, $dateAfter"
+        error = s"$error, ${dateAfter(d)}"
       }
       if (error == null) { null } else {
         counters.total.inc()

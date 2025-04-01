@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,9 +8,6 @@
 
 package org.locationtech.geomesa.convert.avro.registry
 
-import java.io.InputStream
-import java.nio.ByteBuffer
-
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, LoadingCache}
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.LazyLogging
@@ -18,13 +15,16 @@ import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient
 import io.confluent.kafka.serializers.KafkaAvroDeserializer
 import org.apache.avro.generic.{GenericDatumReader, GenericRecord}
 import org.apache.avro.io.DecoderFactory
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert.avro.registry.AvroSchemaRegistryConverter.{AvroSchemaRegistryConfig, GenericRecordSchemaRegistryIterator}
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicField, BasicOptions}
 import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.convert2.{AbstractConverter, ConverterConfig}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.opengis.feature.simple.SimpleFeatureType
+
+import java.io.InputStream
+import java.nio.ByteBuffer
 
 class AvroSchemaRegistryConverter(
     sft: SimpleFeatureType,

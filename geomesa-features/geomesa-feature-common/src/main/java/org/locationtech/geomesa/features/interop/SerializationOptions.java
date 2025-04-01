@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,14 +9,14 @@
 package org.locationtech.geomesa.features.interop;
 
 import org.locationtech.geomesa.features.SerializationOption;
-import org.locationtech.geomesa.features.SerializationOption$;
+import scala.Enumeration;
 
 public class SerializationOptions {
-    public static scala.collection.immutable.Set<SerializationOption$.Value> withUserData() {
+    public static scala.collection.immutable.Set<Enumeration.Value> withUserData() {
         return SerializationOption.SerializationOptions$.MODULE$.withUserData();
     }
 
-    public static scala.collection.immutable.Set<SerializationOption$.Value> withoutId() {
+    public static scala.collection.immutable.Set<Enumeration.Value> withoutId() {
         return SerializationOption.SerializationOptions$.MODULE$.withoutId();
     }
 }

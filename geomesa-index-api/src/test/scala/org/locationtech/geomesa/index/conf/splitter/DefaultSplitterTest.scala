@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,17 +8,19 @@
 
 package org.locationtech.geomesa.index.conf.splitter
 
-import java.nio.charset.StandardCharsets
-
-import com.google.common.primitives.Shorts
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
-import org.locationtech.geomesa.index.index.attribute.AttributeIndex
+import org.locationtech.geomesa.index.index.attribute.{AttributeIndex, AttributeIndexKey}
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.index.ByteArrays
+import org.locationtech.geomesa.utils.text.DateParsing
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.nio.charset.StandardCharsets
+import java.util.Date
 
 @RunWith(classOf[JUnitRunner])
 class DefaultSplitterTest extends Specification {
@@ -60,7 +62,7 @@ class DefaultSplitterTest extends Specification {
       val opts = s"z3.min:2017-01-01,z3.max:2017-01-10,z3.bits:4"
       val splits = splitter.getSplits(sft, z3, opts)
       splits must haveLength(32)
-      splits.toSeq.map(s => (Shorts.fromByteArray(s.take(2)).toInt, s(2).toInt, s.drop(3).sum.toInt)) must
+      splits.toSeq.map(s => (ByteArrays.readShort(s).toInt, s(2).toInt, s.drop(3).sum.toInt)) must
           containTheSameElementsAs(Seq(2452, 2453).flatMap(w => Range(0, 128, 8).map((w, _, 0))))
     }
 
@@ -91,6 +93,37 @@ class DefaultSplitterTest extends Specification {
       splits.length must be equalTo 20
       splits.map(new String(_, StandardCharsets.UTF_8)).toSeq mustEqual
           (0 to 9).map(_.toString) ++ (0 to 9).map(i => s"8$i")
+    }
+
+    "produce correct string tiered date splits" in {
+      val opts =
+        "attr.myString.pattern:[A][B][C],attr.myString.pattern2:[B-Z]," +
+        "attr.myString.date-range:2023-09-15/2023-09-16/4"
+      val splits = splitter.getSplits(sft, attrString, opts)
+      splits.length must be equalTo 29
+      splits.toSeq must containAllOf(Seq.tabulate(25)(i => Array(('B' + i).toChar.toByte)))
+      val dates =
+        Seq("2023-09-15T00:00:00Z", "2023-09-15T06:00:00Z", "2023-09-15T12:00:00Z", "2023-09-15T18:00:00Z").map { d =>
+          "ABC".getBytes(StandardCharsets.UTF_8) ++
+              ByteArrays.ZeroByteArray ++
+              AttributeIndexKey.encodeForQuery(DateParsing.parseDate(d), classOf[Date]).getBytes(StandardCharsets.UTF_8)
+        }
+      splits.toSeq must containAllOf(dates)
+    }
+
+    "produce correct string tiered date splits for all dates" in {
+      foreach(Seq("2023-01-01", "2023-10-04", "2023-11-11", "2023-12-31")) { date =>
+        val opts =
+          "attr.myString.pattern:[A][B][C],attr.myString.pattern2:[B-Z]," +
+              s"attr.myString.date-range:2023-09-15/$date/4"
+        splitter.getSplits(sft, attrString, opts) must not(throwAn[Exception])
+      }
+      foreach(Seq("2023-01-32", "2023-13-04", "2023-00-11", "2023-12-00")) { date =>
+        val opts =
+          "attr.myString.pattern:[A][B][C],attr.myString.pattern2:[B-Z]," +
+              s"attr.myString.date-range:2023-09-15/$date/4"
+        splitter.getSplits(sft, attrString, opts) must throwAn[Exception]
+      }
     }
 
     "produce correct int splits" in {
@@ -126,6 +159,33 @@ class DefaultSplitterTest extends Specification {
       // note: lexicoded values in hex
       splits.map(new String(_, StandardCharsets.UTF_8)).toSeq mustEqual
           (0 until 10).map(i => s"8000000$i") ++ (0 to 9).map(i => s"8000005$i")
+    }
+
+    "produce correct negative int splits" in {
+      val opts = "attr.myInt.pattern:[-][0-9]"
+      val splits = splitter.getSplits(sft, attrInt, opts)
+      splits must haveLength(10)
+      // note: lexicoded values in hex
+      splits.map(new String(_, StandardCharsets.UTF_8)).toSeq mustEqual
+          (-9 to 0).map(AttributeIndexKey.encodeForQuery(_, classOf[Integer]))
+    }
+
+    "produce correct union negative int splits" in {
+      val opts = "attr.myInt.pattern:[-][8-95-6]"
+      val splits = splitter.getSplits(sft, attrInt, opts)
+      splits must haveLength(4)
+      // note: lexicoded values in hex
+      splits.map(new String(_, StandardCharsets.UTF_8)).toSeq mustEqual
+          Seq("7ffffff7", "7ffffff8", "7ffffffa", "7ffffffb")
+    }
+
+    "produce correct tiered negative int splits" in {
+      val opts = "attr.myInt.pattern:[-][0-1][2-3]"
+      val splits = splitter.getSplits(sft, attrInt, opts)
+      splits must haveLength(4)
+      // note: lexicoded values in hex
+      splits.map(new String(_, StandardCharsets.UTF_8)).toSeq mustEqual
+          Seq("7ffffff3", "7ffffff4", "7ffffffd", "7ffffffe")
     }
 
     "reject invalid int splits" in {

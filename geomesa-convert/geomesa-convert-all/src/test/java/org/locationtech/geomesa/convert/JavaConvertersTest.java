@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,14 +10,14 @@ package org.locationtech.geomesa.convert;
 
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
+import org.geotools.api.feature.simple.SimpleFeature;
+import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.junit.Assert;
 import org.junit.Test;
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter;
 import org.locationtech.geomesa.convert2.interop.SimpleFeatureConverterLoader;
 import org.locationtech.geomesa.utils.collection.CloseableIterator;
 import org.locationtech.geomesa.utils.interop.SimpleFeatureTypes;
-import org.opengis.feature.simple.SimpleFeature;
-import org.opengis.feature.simple.SimpleFeatureType;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;

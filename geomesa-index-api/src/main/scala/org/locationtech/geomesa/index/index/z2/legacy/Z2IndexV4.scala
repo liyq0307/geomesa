@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,8 @@
 
 package org.locationtech.geomesa.index.index.z2.legacy
 
-import org.locationtech.geomesa.index.api.ShardStrategy.ZShardStrategy
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.index.api.ShardStrategy.Z2ShardStrategy
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.z2.legacy.Z2IndexV4.Z2IndexKeySpaceV4
@@ -16,7 +17,6 @@ import org.locationtech.geomesa.index.index.z2.{Z2Index, Z2IndexKeySpace}
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
 import org.locationtech.jts.geom.Point
-import org.opengis.feature.simple.SimpleFeatureType
 
 import scala.util.control.NonFatal
 
@@ -32,7 +32,7 @@ class Z2IndexV4 protected (ds: GeoMesaDataStore[_], sft: SimpleFeatureType, vers
   override protected val tableNameKey: String = s"table.z2.v$version"
 
   override val keySpace: Z2IndexKeySpace =
-    new Z2IndexKeySpaceV4(sft, sft.getTableSharingBytes, ZShardStrategy(sft), geom)
+    new Z2IndexKeySpaceV4(sft, sft.getTableSharingBytes, Z2ShardStrategy(sft), geom)
 }
 
 object Z2IndexV4 {

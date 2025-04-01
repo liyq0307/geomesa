@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,13 @@
 
 package org.locationtech.geomesa.process.query
 
-import java.util.concurrent.ConcurrentHashMap
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.Query
+import org.geotools.api.data.{Query, SimpleFeatureSource}
+import org.geotools.api.feature.Feature
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureIterator, SimpleFeatureSource}
+import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureIterator}
 import org.geotools.feature.collection.DecoratingSimpleFeatureCollection
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
 import org.geotools.referencing.GeodeticCalculator
@@ -27,9 +28,8 @@ import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom._
 import org.locationtech.jts.operation.distance.DistanceOp
-import org.opengis.feature.Feature
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
+
+import java.util.concurrent.ConcurrentHashMap
 
 @DescribeProcess(
   title = "Route Search",

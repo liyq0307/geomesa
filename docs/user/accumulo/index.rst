@@ -25,7 +25,7 @@ To get started with the Accumulo Data Store, try the :doc:`/tutorials/geomesa-qu
    commandline
    configuration
    index_config
-   visibilities
    jobs
+   atomic_writes
    kerberos
    examples

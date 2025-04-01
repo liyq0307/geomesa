@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,23 +9,22 @@
 package org.locationtech.geomesa.features.kryo
 package impl
 
-import java.io.InputStream
-import java.util.{Date, UUID}
-
 import com.esotericsoftware.kryo.io.Input
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.`type`.AttributeDescriptor
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.features.SimpleFeatureSerializer
 import org.locationtech.geomesa.features.kryo.impl.KryoFeatureDeserialization.KryoAttributeReader
 import org.locationtech.geomesa.features.kryo.json.KryoJsonSerialization
 import org.locationtech.geomesa.features.kryo.serialization.KryoGeometrySerialization
-import org.locationtech.geomesa.features.serialization.ObjectType
-import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
 import org.locationtech.geomesa.utils.cache.{CacheKeyGenerator, SoftThreadLocal, ThreadLocalCache}
+import org.locationtech.geomesa.utils.geotools.ObjectType
+import org.locationtech.geomesa.utils.geotools.ObjectType.ObjectType
 import org.locationtech.geomesa.utils.kryo.NonMutatingInput
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.`type`.AttributeDescriptor
-import org.opengis.feature.simple.SimpleFeatureType
 
+import java.io.InputStream
+import java.util.{Date, UUID}
 import scala.util.control.NonFatal
 
 /**

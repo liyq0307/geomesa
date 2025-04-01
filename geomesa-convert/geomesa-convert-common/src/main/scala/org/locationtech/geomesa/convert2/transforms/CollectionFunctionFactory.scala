@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,48 +8,60 @@
 
 package org.locationtech.geomesa.convert2.transforms
 
-import java.util.{Collections, UUID}
-
-import org.locationtech.geomesa.convert2.transforms.CollectionFunctionFactory.CollectionParsing
+import org.locationtech.geomesa.convert.EvaluationContext
+import org.locationtech.geomesa.convert2.transforms.CollectionFunctionFactory.{CollectionParsing, TransformList}
+import org.locationtech.geomesa.convert2.transforms.Expression.LiteralString
+import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
 import org.locationtech.geomesa.utils.geotools.converters.FastConverter
+
+import java.util.{Collections, UUID}
 
 class CollectionFunctionFactory extends TransformerFunctionFactory with CollectionParsing {
 
   import scala.collection.JavaConverters._
 
-  override def functions: Seq[TransformerFunction] = Seq(listParserFn, mapParserFn, listFn, mapValueFunction)
+  override def functions: Seq[TransformerFunction] =
+    Seq(listParserFn, mapParserFn, listFn, mapValueFunction, transformList, listItem)
 
   private val defaultListDelim = ","
   private val defaultKVDelim   = "->"
 
   private val listParserFn = TransformerFunction.pure("parseList") { args =>
-    val clazz = determineClazz(args(0).asInstanceOf[String])
-    val s = args(1).asInstanceOf[String]
-    val delim = if (args.length >= 3) args(2).asInstanceOf[String] else defaultListDelim
+    args(1) match {
+      case s: String if s.nonEmpty =>
+        val clazz = determineClazz(args(0).asInstanceOf[String])
+        val delim = if (args.length >= 3) { args(2).asInstanceOf[String] } else { defaultListDelim }
+        s.split(delim).map(i => convert(i.trim(), clazz)).toList.asJava
 
-    if (s.isEmpty) {
-      Collections.emptyList()
-    } else {
-      s.split(delim).map(_.trim).map(convert(_, clazz)).toList.asJava
+      case "" => Collections.emptyList()
+
+      case null => null
+
+      case s => throw new IllegalArgumentException(s"Expected a String but got $s:${s.getClass.getName}")
     }
   }
 
   private val mapParserFn = TransformerFunction.pure("parseMap") { args =>
-    val kv = args(0).asInstanceOf[String].split("->").map(_.trim)
-    val keyClazz = determineClazz(kv(0))
-    val valueClazz = determineClazz(kv(1))
-    val s: String = args(1).toString
-    val kvDelim: String = if (args.length >= 3) args(2).asInstanceOf[String] else defaultKVDelim
-    val pairDelim: String = if (args.length >= 4) args(3).asInstanceOf[String] else defaultListDelim
+    args(1) match {
+      case s: String if s.nonEmpty =>
+        val types = args(0).asInstanceOf[String].split("->").map(_.trim)
+        val keyClazz = determineClazz(types(0))
+        val valueClazz = determineClazz(types(1))
+        val kvDelim = if (args.length >= 3) { args(2).asInstanceOf[String] } else { defaultKVDelim }
+        val pairDelim = if (args.length >= 4) { args(3).asInstanceOf[String] } else { defaultListDelim }
+        val pairs = s.split(pairDelim).map { pair =>
+          pair.split(kvDelim) match {
+            case Array(key, value) => (convert(key.trim(), keyClazz), convert(value.trim(), valueClazz))
+            case _ => throw new IllegalArgumentException(s"Unexpected key/value pair: $pair")
+          }
+        }
+        pairs.toMap.asJava
 
-    if (s.isEmpty) {
-      Collections.emptyMap()
-    } else {
-      s.split(pairDelim)
-          .map(_.split(kvDelim).map(_.trim))
-          .map { case Array(key, value) =>
-            (convert(key, keyClazz), convert(value, valueClazz))
-          }.toMap.asJava
+      case "" => Collections.emptyMap()
+
+      case null => null
+
+      case s => throw new IllegalArgumentException(s"Expected a String but got $s:${s.getClass.getName}")
     }
   }
 
@@ -57,10 +69,23 @@ class CollectionFunctionFactory extends TransformerFunctionFactory with Collecti
     args.toList.asJava
   }
 
-  private val mapValueFunction = TransformerFunction.pure("mapValue") {
-    args => args(0).asInstanceOf[java.util.Map[Any, Any]].get(args(1))
+  private val mapValueFunction = TransformerFunction.pure("mapValue") { args =>
+    args(0) match {
+      case m: java.util.Map[Any, Any] => m.get(args(1))
+      case null => null
+      case m => throw new IllegalArgumentException(s"Expected a java.util.Map but got $m:${m.getClass.getName}")
+    }
   }
 
+  private val listItem = TransformerFunction.pure("listItem") { args =>
+    args(0) match {
+      case list: java.util.List[Any] => list.get(args(1).asInstanceOf[Int])
+      case null => null
+      case list => throw new IllegalArgumentException(s"Expected a java.util.List but got $list:${list.getClass.getName}")
+    }
+  }
+
+  private val transformList = new TransformList(null)
 }
 
 object CollectionFunctionFactory {
@@ -85,6 +110,31 @@ object CollectionFunctionFactory {
       case "bytes"            => classOf[Array[Byte]]
       case "uuid"             => classOf[UUID]
       case "date"             => classOf[java.util.Date]
+    }
+  }
+
+  private class TransformList(exp: Expression) extends NamedTransformerFunction(Seq("transformListItems")) {
+
+    import scala.collection.JavaConverters._
+
+    override def apply(args: Array[AnyRef]): AnyRef = {
+      args(0) match {
+        case null => null
+        case list: java.util.List[AnyRef] => list.asScala.map(a => exp.apply(Array(a))).asJava
+        case list => throw new IllegalArgumentException(s"Expected a java.util.List but got $list:${list.getClass.getName}")
+      }
+    }
+
+    override def withContext(ec: EvaluationContext): TransformerFunction = {
+      val ewc = exp.withContext(ec)
+      if (exp.eq(ewc)) { this } else { new TransformList(ewc) }
+    }
+
+    override def getInstance(args: List[Expression]): TransformerFunction = {
+      args(1) match {
+        case LiteralString(exp) => new TransformList(Expression(exp))
+        case a => throw new IllegalArgumentException(s"${names.head} invoked with non-literal expression argument: $a")
+      }
     }
   }
 }

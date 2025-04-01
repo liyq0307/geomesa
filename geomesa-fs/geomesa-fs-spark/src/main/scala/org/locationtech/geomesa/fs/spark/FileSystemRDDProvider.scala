@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.fs.spark
 
-import java.io.Serializable
-
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.mapreduce.Job
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.geotools.data.{Query, Transaction}
+import org.geotools.api.data.{Query, Transaction}
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.fs.data.{FileSystemDataStore, FileSystemDataStoreFactory}
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{StorageFileAction, StorageFilePath}
@@ -24,14 +24,13 @@ import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration
 import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration.SimpleFeatureAction
 import org.locationtech.geomesa.fs.storage.orc.OrcFileSystemStorage
 import org.locationtech.geomesa.fs.storage.orc.jobs.{OrcSimpleFeatureActionInputFormat, OrcSimpleFeatureInputFormat}
-import org.locationtech.geomesa.parquet.ParquetFileSystemStorage
-import org.locationtech.geomesa.parquet.jobs.{ParquetSimpleFeatureActionInputFormat, ParquetSimpleFeatureInputFormat}
+import org.locationtech.geomesa.fs.storage.parquet.ParquetFileSystemStorage
+import org.locationtech.geomesa.fs.storage.parquet.jobs.{ParquetSimpleFeatureActionInputFormat, ParquetSimpleFeatureInputFormat}
 import org.locationtech.geomesa.spark.{SpatialRDD, SpatialRDDProvider}
 import org.locationtech.geomesa.utils.geotools.FeatureUtils
 import org.locationtech.geomesa.utils.io.{WithClose, WithStore}
-import org.opengis.feature.simple.SimpleFeature
-import org.opengis.filter.Filter
 
+import java.io.Serializable
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
 class FileSystemRDDProvider extends SpatialRDDProvider with LazyLogging {
@@ -103,7 +102,7 @@ class FileSystemRDDProvider extends SpatialRDDProvider with LazyLogging {
           }
         }
         if (defaults.nonEmpty) {
-          partitioned += ((defaultPartitions.mkString("', '"), fp.filter, defaults, false))
+          partitioned += ((defaultPartitions.mkString("', '"), fp.filter, defaults.toSeq, false))
         }
       }
 

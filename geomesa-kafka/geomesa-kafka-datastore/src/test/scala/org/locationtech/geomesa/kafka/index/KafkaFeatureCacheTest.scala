@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,21 +8,21 @@
 
 package org.locationtech.geomesa.kafka.index
 
-import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
-
 import com.github.benmanes.caffeine.cache.Ticker
+import org.geotools.api.feature.simple.SimpleFeature
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.kafka.ExpirationMocking.{MockTicker, ScheduledExpiry, WrappedRunnable}
-import org.locationtech.geomesa.kafka.data.KafkaDataStore.IndexConfig
+import org.locationtech.geomesa.kafka.data.KafkaDataStore.{IndexConfig, IndexResolution, IngestTimeConfig, NeverExpireConfig}
 import org.locationtech.geomesa.memory.cqengine.utils.CQIndexType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.mockito.ArgumentMatchers
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mock.Mockito
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 
 @RunWith(classOf[JUnitRunner])
 class KafkaFeatureCacheTest extends Specification with Mockito {
@@ -35,6 +35,8 @@ class KafkaFeatureCacheTest extends Specification with Mockito {
 
   val sft = SimpleFeatureTypes.createType("track", "trackId:String,*geom:Point:srid=4326")
 
+  val res = IndexResolution(360, 180)
+
   val track0v0 = track("track0", "POINT (30 30)")
   val track0v1 = track("track0", "POINT (35 30)")
 
@@ -45,12 +47,14 @@ class KafkaFeatureCacheTest extends Specification with Mockito {
 
   val track3v0 = track("track3", "POINT (0 60)")
 
+  val track4v0 = track("track4", "POINT (null null)")
+
   def track(id: String, track: String): SimpleFeature = ScalaSimpleFeature.create(sft, id, id, track)
 
   def caches(expiry: Option[(Duration, ScheduledExecutorService, Ticker)] = None) = {
     val config = expiry match {
-      case None => IndexConfig(Duration.Inf, None, 360, 180, Seq.empty, Seq.empty, lazyDeserialization = true, None)
-      case Some((e, es, t)) => IndexConfig(e, None, 360, 180, Seq.empty, Seq.empty, lazyDeserialization = true, Some((es, t)))
+      case None => IndexConfig(NeverExpireConfig, res, Seq.empty, Seq.empty, lazyDeserialization = true, None)
+      case Some((e, es, t)) => IndexConfig(IngestTimeConfig(e), res, Seq.empty, Seq.empty, lazyDeserialization = true, Some((es, t)))
     }
     Seq(
       KafkaFeatureCache(sft, config),
@@ -181,6 +185,22 @@ class KafkaFeatureCacheTest extends Specification with Mockito {
           cache.put(track1v0)
           cache.size() mustEqual 2
           cache.query(ECQL.toFilter("trackId ILIKE 'T%'")).toSeq must containTheSameElementsAs(Seq(track0v0, track1v0))
+        } finally {
+          cache.close()
+        }
+      }
+    }
+
+    "query with null geometries inserted into cache" >> {
+      foreach(caches()) { cache =>
+        try {
+          cache.put(track0v0)
+          cache.put(track1v0)
+          cache.put(track4v0)
+          cache.size() mustEqual 2
+
+          val res = cache.query(wholeWorldFilter).toSeq
+          res must containTheSameElementsAs(Seq(track0v0, track1v0))
         } finally {
           cache.close()
         }

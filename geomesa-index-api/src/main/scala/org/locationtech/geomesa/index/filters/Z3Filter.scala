@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,13 @@
 
 package org.locationtech.geomesa.index.filters
 
-import java.nio.ByteBuffer
-
 import org.locationtech.geomesa.index.filters.RowFilter.RowFilterFactory
 import org.locationtech.geomesa.index.index.z3.Z3IndexValues
+import org.locationtech.geomesa.utils.conf.GeoMesaProperties
 import org.locationtech.geomesa.utils.index.ByteArrays
-import org.locationtech.sfcurve.zorder.Z3
+import org.locationtech.geomesa.zorder.sfcurve.Z3
+
+import java.nio.ByteBuffer
 
 class Z3Filter(
     val xy: Array[Array[Int]],
@@ -69,9 +70,10 @@ object Z3Filter extends RowFilterFactory[Z3Filter] {
   private val TermSeparator  = ";"
   private val EpochSeparator = ","
 
-  val XYKey     = "zxy"
-  val TKey      = "zt"
-  val EpochKey  = "epoch"
+  val XYKey      = "zxy"
+  val TKey       = "zt"
+  val EpochKey   = "epoch"
+  val VersionKey = "v"
 
   def apply(values: Z3IndexValues): Z3Filter = {
     val Z3IndexValues(sfc, _, spatialBounds, _, temporalBounds, _) = values
@@ -160,9 +162,10 @@ object Z3Filter extends RowFilterFactory[Z3Filter] {
     val epoch = s"${filter.minEpoch}$RangeSeparator${filter.maxEpoch}"
 
     Map(
-      XYKey    -> xy,
-      TKey     -> t,
-      EpochKey -> epoch
+      XYKey      -> xy,
+      TKey       -> t,
+      EpochKey   -> epoch,
+      VersionKey -> GeoMesaProperties.ProjectVersion
     )
   }
 

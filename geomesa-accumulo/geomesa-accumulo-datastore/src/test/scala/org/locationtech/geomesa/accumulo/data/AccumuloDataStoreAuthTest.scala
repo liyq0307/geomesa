@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,23 +8,21 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import java.io.Serializable
-import java.util
-
 import org.apache.accumulo.core.security.Authorizations
-import org.geotools.data._
+import org.geotools.api.data._
+import org.geotools.api.feature.simple.SimpleFeature
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.SimpleFeatureStore
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.security.{AuthorizationsProvider, DefaultAuthorizationsProvider, FilteringAuthorizationsProvider, SecurityUtils}
+import org.locationtech.geomesa.security.{AuthorizationsProvider, DefaultAuthorizationsProvider, FilteringAuthorizationsProvider, GEOMESA_AUTH_PROVIDER_IMPL, SecurityUtils}
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
+import java.util
+import java.util.Collections
 
 @RunWith(classOf[JUnitRunner])
 class AccumuloDataStoreAuthTest extends TestWithFeatureType {
@@ -32,7 +30,7 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
   import AccumuloDataStoreParams.{AuthsParam, ForceEmptyAuthsParam}
   import org.locationtech.geomesa.security.AuthProviderParam
 
-  sequential
+  import scala.collection.JavaConverters._
 
   override val spec = "name:String:index=join,dtg:Date,*geom:Point:srid=4326"
 
@@ -54,15 +52,15 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
   val threadedAuths = new ThreadLocal[Authorizations]
 
   val authProvider = new AuthorizationsProvider {
-    override def getAuthorizations: java.util.List[String] = threadedAuths.get.getAuthorizations.map(new String(_))
-    override def configure(params: util.Map[String, _ <: Serializable]): Unit = {}
+    override def getAuthorizations: java.util.List[String] = threadedAuths.get.getAuthorizations.asScala.map(new String(_)).asJava
+    override def configure(params: util.Map[String, _]): Unit = {}
   }
 
   "AccumuloDataStore" should {
     "provide ability to configure authorizations" >> {
       "by static auths" >> {
         val params = dsParams ++ Map(AuthsParam.key -> "user")
-        val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+        val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
         ds must not(beNull)
         ds.config.authProvider must beAnInstanceOf[FilteringAuthorizationsProvider]
         ds.config.authProvider.asInstanceOf[FilteringAuthorizationsProvider].wrappedProvider must beAnInstanceOf[DefaultAuthorizationsProvider]
@@ -71,7 +69,7 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
 
       "by comma-delimited static auths" >> {
         val params = dsParams ++ Map(AuthsParam.key -> "user,admin,system")
-        val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+        val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
         ds must not(beNull)
         ds.config.authProvider must beAnInstanceOf[FilteringAuthorizationsProvider]
         ds.config.authProvider.asInstanceOf[FilteringAuthorizationsProvider].wrappedProvider must beAnInstanceOf[DefaultAuthorizationsProvider]
@@ -79,23 +77,23 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
       }
 
       "fail when auth provider system property does not match an actual class" >> {
-        System.setProperty(AuthorizationsProvider.AUTH_PROVIDER_SYS_PROPERTY, "my.fake.Clas")
+        GEOMESA_AUTH_PROVIDER_IMPL.threadLocalValue.set("my.fake.Clas")
         try {
           val params = dsParams ++ Map(AuthsParam.key -> "user,admin,system")
-          DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore] must throwAn[IllegalArgumentException]
+          DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore] must throwAn[IllegalArgumentException]
         } finally {
-          System.clearProperty(AuthorizationsProvider.AUTH_PROVIDER_SYS_PROPERTY)
+          GEOMESA_AUTH_PROVIDER_IMPL.threadLocalValue.remove()
         }
       }
 
       "fail when authorizations are explicitly provided, but the flag to force using authorizations is not set" >> {
         val params = dsParams ++ Map(AuthsParam.key -> "user,admin,system", ForceEmptyAuthsParam.key -> "true")
-        DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore] must throwAn[IllegalArgumentException]
+        DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore] must throwAn[IllegalArgumentException]
       }
 
       "replace empty authorizations with the Accumulo user's full authorizations (without the override)" >> {
         val params = dsParams ++ Map(AuthsParam.key -> "")
-        val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+        val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
         ds must not(beNull)
         ds.config.authProvider must beAnInstanceOf[FilteringAuthorizationsProvider]
         ds.config.authProvider.asInstanceOf[FilteringAuthorizationsProvider].wrappedProvider must beAnInstanceOf[DefaultAuthorizationsProvider]
@@ -104,7 +102,7 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
 
       "use empty authorizations (with the override)" >> {
         val params = dsParams ++ Map(AuthsParam.key -> "", ForceEmptyAuthsParam.key -> "true")
-        val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+        val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
         ds must not(beNull)
         ds.config.authProvider must beAnInstanceOf[FilteringAuthorizationsProvider]
         ds.config.authProvider.asInstanceOf[FilteringAuthorizationsProvider].wrappedProvider must beAnInstanceOf[DefaultAuthorizationsProvider]
@@ -113,7 +111,7 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
 
       "query with a threaded auth provider against various indices" >> {
         val params = dsParams ++ Map(AuthsParam.key -> "user,admin", AuthProviderParam.key -> authProvider)
-        val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+        val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
         ds must not(beNull)
 
         val user  = Seq("IN('0')", "name = '0'", "bbox(geom, 44, 49.1, 46, 50.1)", "bbox(geom, 44, 49.1, 46, 50.1) AND dtg DURING 2016-01-01T00:59:30.000Z/2016-01-01T01:00:30.000Z")
@@ -190,7 +188,7 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
 
     "allow users with sufficient auths to write data" >> {
       val params = dsParams ++ Map(AuthsParam.key -> "user,admin")
-      val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+      val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
       ds must not(beNull)
 
       val sft = SimpleFeatureTypes.createType("canwrite", spec)
@@ -198,13 +196,13 @@ class AccumuloDataStoreAuthTest extends TestWithFeatureType {
 
       // write some data
       val fs = ds.getFeatureSource("canwrite").asInstanceOf[SimpleFeatureStore]
-      val feat = new ScalaSimpleFeature(sft, "1")
+      val feat: SimpleFeature = new ScalaSimpleFeature(sft, "1")
       feat.setAttribute("geom", "POINT(45 55)")
       SecurityUtils.setFeatureVisibility(feat, "user&admin")
-      val written = fs.addFeatures(new ListFeatureCollection(sft, List(feat)))
+      val written = fs.addFeatures(new ListFeatureCollection(sft, Collections.singletonList(feat)))
 
       written must not(beNull)
-      written.length mustEqual 1
+      written.size mustEqual 1
     }
   }
 }

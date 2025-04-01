@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,32 +9,41 @@
 
 package org.locationtech.geomesa.parquet
 
-import java.nio.file.Files
-import java.util.UUID
-
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileContext, Path}
-import org.geotools.data.Query
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.hadoop.ParquetFileReader
+import org.apache.parquet.hadoop.util.HadoopInputFile
+import org.everit.json.schema.loader.SchemaLoader
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.util.factory.Hints
+import org.json.{JSONObject, JSONTokener}
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.fs.storage.api.FileSystemStorage.FileSystemWriter
 import org.locationtech.geomesa.fs.storage.api._
 import org.locationtech.geomesa.fs.storage.common.StorageKeys
 import org.locationtech.geomesa.fs.storage.common.metadata.FileBasedMetadataFactory
+import org.locationtech.geomesa.fs.storage.parquet.ParquetFileSystemStorageFactory
+import org.locationtech.geomesa.fs.storage.parquet.io.SimpleFeatureParquetSchema.GeoParquetMetadata
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
+import org.locationtech.geomesa.utils.io.WithClose
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 import org.specs2.specification.AllExpectations
 
+import java.nio.file.Files
+import java.util.UUID
+
 @RunWith(classOf[JUnitRunner])
 class ParquetStorageTest extends Specification with AllExpectations with LazyLogging {
+
+  import scala.collection.JavaConverters._
 
   sequential
 
@@ -59,7 +68,7 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
       }
 
       withTestDir { dir =>
-        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val context = FileSystemContext(dir, config)
         val metadata =
           new FileBasedMetadataFactory()
               .create(context, Map.empty, Metadata(sft, "parquet", scheme, leafStorage = true))
@@ -103,6 +112,25 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
         val loaded = new FileBasedMetadataFactory().load(context)
         loaded must beSome
         testQuery(new ParquetFileSystemStorageFactory().apply(context, loaded.get), sft)("INCLUDE", null, features)
+
+        // verify GeoParquet metadata
+        val geoParquetSchema = WithClose(getClass.getClassLoader.getResourceAsStream("geoparquet-1.1.0-schema.json")) { is =>
+          SchemaLoader.load(new JSONObject(new JSONTokener(is)))
+        }
+        foreach(storage.getPartitions) { partition =>
+          foreach(partition.files) { file =>
+            val path = new Path(dir, file.name)
+            WithClose(ParquetFileReader.open(HadoopInputFile.fromPath(path, context.conf))) { reader =>
+              val meta = reader.getFileMetaData.getKeyValueMetaData
+              val geo = Option(meta.get(GeoParquetMetadata.GeoParquetMetadataKey)).map(new JSONObject(_)).orNull
+              geo must not(beNull)
+              val col = geo.getJSONObject("columns").getJSONObject("geom")
+              col.getString("encoding") mustEqual "point"
+              col.getJSONArray("geometry_types").asScala.toSeq mustEqual Seq("Point")
+              geoParquetSchema.validate(geo) must not(throwAn[Exception])
+            }
+          }
+        }
       }
     }
 
@@ -145,7 +173,7 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
       }
 
       withTestDir { dir =>
-        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val context = FileSystemContext(dir, config)
         val metadata =
           new FileBasedMetadataFactory()
               .create(context, Map.empty, Metadata(sft, "parquet", scheme, leafStorage = true))
@@ -202,7 +230,7 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
       }
 
       withTestDir { dir =>
-        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val context = FileSystemContext(dir, config)
         val metadata =
           new FileBasedMetadataFactory()
               .create(context, Map.empty, Metadata(sft, "parquet", scheme, leafStorage = true))
@@ -264,7 +292,7 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
       }
 
       withTestDir { dir =>
-        val context = FileSystemContext(FileContext.getFileContext(dir.toUri), config, dir)
+        val context = FileSystemContext(dir, config)
         val metadata =
           new FileBasedMetadataFactory()
               .create(context, Map.empty, Metadata(sft, "parquet", scheme, leafStorage = true))
@@ -313,11 +341,58 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
       }
     }
 
+    "write files with a target size" in {
+      val sft = SimpleFeatureTypes.createType("parquet-test", "name:String,age:Int,dtg:Date,*geom:Point:srid=4326")
+
+      val features = (0 until 10000).map { i =>
+        val sf = new ScalaSimpleFeature(sft, i.toString)
+        sf.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
+        sf.setAttribute(0, s"name${i % 10}")
+        sf.setAttribute(1, s"${i % 10}")
+        sf.setAttribute(2, f"2014-01-${i % 10 + 1}%02dT00:00:01.000Z")
+        sf.setAttribute(3, s"POINT(4${i % 10} 5${i % 10})")
+        sf
+      }
+
+      // note: this is somewhat of a magic number, in that it works the first time through with no remainder
+      val targetSize = 2100L
+
+      withTestDir { dir =>
+        val context = FileSystemContext(dir, config)
+        val metadata =
+          new FileBasedMetadataFactory()
+              .create(context, Map.empty, Metadata(sft, "parquet", scheme, leafStorage = true, Some(targetSize)))
+        val storage = new ParquetFileSystemStorageFactory().apply(context, metadata)
+
+        storage must not(beNull)
+
+        val writers = scala.collection.mutable.Map.empty[String, FileSystemWriter]
+
+        features.foreach { f =>
+          val partition = storage.metadata.scheme.getPartitionName(f)
+          val writer = writers.getOrElseUpdate(partition, storage.getWriter(partition))
+          writer.write(f)
+        }
+
+        writers.foreach(_._2.close())
+
+        logger.debug(s"wrote to ${writers.size} partitions for ${features.length} features")
+
+        val partitions = storage.getPartitions.map(_.name)
+        partitions must haveLength(writers.size)
+        foreach(partitions) { partition =>
+          val paths = storage.getFilePaths(partition)
+          paths.size must beGreaterThan(1)
+          foreach(paths)(p => context.fs.getFileStatus(p.path).getLen must beCloseTo(targetSize, targetSize / 10))
+        }
+      }
+    }
+
     "read old files" in {
       val url = getClass.getClassLoader.getResource("data/2.3.0/example-csv/")
       url must not(beNull)
       val path = new Path(url.toURI)
-      val context = FileSystemContext(FileContext.getFileContext(url.toURI), config, path)
+      val context = FileSystemContext(path, config)
       val metadata = StorageMetadataFactory.load(context).orNull
       metadata must not(beNull)
       val storage = FileSystemStorageFactory(context, metadata)
@@ -342,15 +417,14 @@ class ParquetStorageTest extends Specification with AllExpectations with LazyLog
       (filter: String,
           transforms: Array[String],
           results: Seq[SimpleFeature]): MatchResult[Any] = {
-    import scala.collection.JavaConversions._
 
-    val query = new Query(sft.getTypeName, ECQL.toFilter(filter), transforms)
+    val query = new Query(sft.getTypeName, ECQL.toFilter(filter), transforms: _*)
     val features = {
       val iter = SelfClosingIterator(storage.getReader(query))
       // note: need to copy features in iterator as same object is re-used
       iter.map(ScalaSimpleFeature.copy).toList
     }
-    val attributes = Option(transforms).getOrElse(sft.getAttributeDescriptors.map(_.getLocalName).toArray)
+    val attributes = Option(transforms).getOrElse(sft.getAttributeDescriptors.asScala.map(_.getLocalName).toArray)
     features.map(_.getID) must containTheSameElementsAs(results.map(_.getID))
     forall(features) { feature =>
       feature.getAttributes must haveLength(attributes.length)

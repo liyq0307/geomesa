@@ -44,7 +44,7 @@ Custom Validators
 Custom validators may be loaded through Java SPI by by implementing
 ``org.locationtech.geomesa.convert2.validators.SimpleFeatureValidatorFactory``, shown below. Note that validators
 must be registered through a special
-`service descriptor file <http://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html>`__.
+`service descriptor file <https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html>`__.
 
 .. code-block:: scala
 
@@ -68,7 +68,7 @@ must be registered through a special
     }
 
 
-Valdiators are provided with a `Dropwizard MetricRegistry <https://metrics.dropwizard.io/>`__, which can be used
+Validators are provided with a `Dropwizard MetricRegistry <https://metrics.dropwizard.io/>`__, which can be used
 to register custom validation metrics. See :ref:`converter_metrics`, below.
 
 When specifying validators in a converter config, the ``name`` of the factory must match the ``validators`` string.
@@ -106,19 +106,21 @@ See the GeoMesa
 for a sample implementation.
 
 For more details on implementing a service provider, see the
-`Oracle Javadoc <http://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html>`__.
+`Oracle Javadoc <https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html>`__.
 
 Error Mode
 ~~~~~~~~~~
 
-There are two types of modes for handling errors:
+There are three modes for handling errors:
 
-* ``skip-bad-records``
+* ``log-errors``
 * ``raise-errors``
+* ``return-errors``
 
 ``raise-errors`` mode will throw an IOException if bad data is detected based on parsing or validation. This can
-be especially useful when first developing and testing a converter definition. ``skip-bad-records`` mode will
-still provide debug level logging but will not throw an exception. To configure the
+be especially useful when first developing and testing a converter definition. ``log-errors`` mode will
+still provide debug level logging but will not throw an exception. ``return-errors`` will expose error details through
+the evaluation context, and is generally only useful when using converters programmatically. To configure the
 error mode add the following option to your converter's typesafe config:
 
 ::
@@ -192,53 +194,7 @@ through the converter evaluation context, or can be exposed through reporters co
       }
     }
 
-Reporters are available for `SLF4J <https://www.slf4j.org/>`__, `CloudWatch <https://aws.amazon.com/cloudwatch/>`__,
-`Graphite <https://graphiteapp.org/>`__, and `Ganglia <http://ganglia.sourceforge.net/>`__. To use CloudWatch,
-Graphite, or Ganglia, you must include a dependency on ``geomesa-convert-metrics-cloudwatch_2.11``, 
-``geomesa-convert-metrics-graphite_2.11``, or ``geomesa-convert-metrics-ganglia_2.11``, respectively. The CloudWatch
-module uses the default credentials and region specified in your AWS profile config. Note that using Ganglia requires 
-an additional GPL-licensed dependency ``info.ganglia.gmetric4j:gmetric4j``, which is excluded by default. 
-The reporters can be configured as follows:
-
-::
-
-    geomesa.converters.myconverter {
-      options {
-        reporters = [
-          {
-            type        = "cloudwatch"
-            units       = "MILLISECONDS"
-            interval    = "60 seconds"
-            namespace   = "geomesa"
-            raw-counts  = false
-            zero-values = true
-          },
-          {
-            type           = "graphite"
-            url            = "localhost:9000"
-            prefix         = "example"
-            rate-units     = "SECONDS"
-            duration-units = "MILLISECONDS"
-            interval       = "10 seconds"
-          },
-          {
-            type            = "ganglia"
-            group           = "example"
-            port            = 8649
-            addressing-mode = "multicast" // or unicast
-            ttl             = 32
-            ganglia311      = true
-            rate-units      = "SECONDS"
-            duration-units  = "MILLISECONDS"
-            interval        = "10 seconds"
-          }
-        ]
-      }
-    }
-
-Additional reporters can be added at runtime by implementing
-``org.locationtech.geomesa.convert2.metrics.ReporterFactory`` and registering the new class as a
-`service provider <http://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html>`__.
+See :ref:`geomesa_metrics` for more details on configuring different reporters.
 
 Transactional Considerations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -272,7 +228,7 @@ incremental parse mode:
     }
 
 If you are using a framework such as the GeoMesa Nifi processor, then the file will still be routed to an error
-relationship but you may experience partially ingested data. See :doc:`/user/nifi` for more info.
+relationship but you may experience partially ingested data. See :doc:`/user/nifi/index` for more info.
 
 Managing Parsing and Validation Configuration with System Properties
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

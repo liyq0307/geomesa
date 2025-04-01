@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.geotools.tools
 
-import java.io.{File, FileInputStream}
-import java.util.Properties
-
 import com.beust.jcommander.{Parameter, ParameterException}
-import org.geotools.data.DataStore
+import org.geotools.api.data.DataStore
 import org.locationtech.geomesa.geotools.tools.GeoToolsDataStoreCommand.GeoToolsDataStoreParams
 import org.locationtech.geomesa.tools.utils.ParameterConverters.KeyValueConverter
 import org.locationtech.geomesa.tools.{DataStoreCommand, DistributedCommand}
 import org.locationtech.geomesa.utils.classpath.ClassPathUtils
+
+import java.io.{File, FileInputStream}
+import java.util.Properties
 
 /**
  * Abstract class for commands that have a pre-existing catalog
@@ -64,7 +64,7 @@ object GeoToolsDataStoreCommand {
       description = "Parameter for DataStoreFinder to load the data store, in the form key=value",
       variableArity = true,
       converter = classOf[KeyValueConverter])
-    val params: java.util.List[(String, String)] = new java.util.ArrayList()
+    var params: java.util.List[(String, String)] = new java.util.ArrayList()
 
     @Parameter(
       names = Array("--params"),

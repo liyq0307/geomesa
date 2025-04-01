@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,14 @@
 
 package org.locationtech.geomesa.lambda.data
 
-import java.util.concurrent.atomic.AtomicLong
-
-import org.geotools.data.simple.SimpleFeatureWriter
+import org.geotools.api.data.SimpleFeatureWriter
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.lambda.stream.TransientStore
+import org.locationtech.geomesa.security.VisibilityChecker
 import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.util.concurrent.atomic.AtomicLong
 
 object LambdaFeatureWriter {
 
@@ -22,7 +23,7 @@ object LambdaFeatureWriter {
 
   class AppendLambdaFeatureWriter(transient: TransientStore) extends SimpleFeatureWriter {
 
-    private var feature: SimpleFeature = _
+    protected var feature: SimpleFeature = _
 
     override def getFeatureType: SimpleFeatureType = transient.sft
 
@@ -44,11 +45,7 @@ object LambdaFeatureWriter {
   }
 
   class ModifyLambdaFeatureWriter(transient: TransientStore, features: CloseableIterator[SimpleFeature])
-      extends SimpleFeatureWriter {
-
-    private var feature: SimpleFeature = _
-
-    override def getFeatureType: SimpleFeatureType = transient.sft
+      extends AppendLambdaFeatureWriter(transient) {
 
     override def hasNext: Boolean = features.hasNext
 
@@ -57,16 +54,18 @@ object LambdaFeatureWriter {
       feature
     }
 
-    override def write(): Unit = {
-      transient.write(feature)
-      feature = null
-    }
-
     override def remove(): Unit = {
       transient.delete(feature)
       feature = null
     }
 
     override def close(): Unit = features.close()
+  }
+
+  trait RequiredVisibilityWriter extends AppendLambdaFeatureWriter with VisibilityChecker {
+    abstract override def write(): Unit = {
+      requireVisibilities(feature)
+      super.write()
+    }
   }
 }

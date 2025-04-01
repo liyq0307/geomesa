@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,9 @@
 
 package org.locationtech.geomesa.jobs.mapreduce
 
-import java.io.{Closeable, InputStream}
-import java.util.Locale
-
 import com.typesafe.config.ConfigFactory
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.commons.compress.archivers.ArchiveStreamFactory
+import org.apache.commons.compress.archivers.{ArchiveEntry, ArchiveInputStream, ArchiveStreamFactory}
 import org.apache.commons.compress.archivers.zip.ZipFile
 import org.apache.commons.compress.utils.SeekableInMemoryByteChannel
 import org.apache.commons.io.IOUtils
@@ -22,20 +19,22 @@ import org.apache.hadoop.fs.{Path, Seekable}
 import org.apache.hadoop.io.LongWritable
 import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.lib.input.{CombineFileInputFormat, CombineFileRecordReader, CombineFileRecordReaderWrapper, CombineFileSplit}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.geotools.data.ReTypeFeatureReader
 import org.geotools.data.simple.DelegateSimpleFeatureReader
 import org.geotools.feature.collection.DelegateSimpleFeatureIterator
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.convert.EvaluationContext
-import org.locationtech.geomesa.convert.EvaluationContext.DelegatingEvaluationContext
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.jobs.GeoMesaConfigurator
-import org.locationtech.geomesa.jobs.mapreduce.ConverterInputFormat.{ConverterKey, Counters, RetypeKey}
+import org.locationtech.geomesa.jobs.mapreduce.ConverterInputFormat.{ConverterCounters, ConverterKey, RetypeKey}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.fs.{ArchiveFileIterator, ZipFileIterator}
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, PathUtils}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.io.{Closeable, InputStream}
+import java.util.Locale
 
 /**
  * Input format for Converters gives us access to the entire file as a byte stream
@@ -50,7 +49,7 @@ object ConverterInputFormat {
   // note: we can get away with a single instance b/c m/r doesn't end up sharing it
   lazy private [mapreduce] val instance = new ConverterInputFormat
 
-  object Counters {
+  object ConverterCounters {
     val Group     = "org.locationtech.geomesa.jobs.convert"
     val Converted = "converted"
     val Failed    = "failed"
@@ -101,18 +100,20 @@ class ConverterRecordReader extends FileStreamRecordReader with LazyLogging {
     val filter    = GeoMesaConfigurator.getFilter(context.getConfiguration).map(ECQL.toFilter)
     val retypedSpec = context.getConfiguration.get(RetypeKey)
 
-    val ec = {
+    def ec(path: String): EvaluationContext = {
       // global success/failure counters for the entire job
-      val success = new MapReduceCounter(context.getCounter(Counters.Group, Counters.Converted))
-      val failure = new MapReduceCounter(context.getCounter(Counters.Group, Counters.Failed))
-      val delegate = converter.createEvaluationContext(EvaluationContext.inputFileParam(filePath.toString))
-      new DelegatingEvaluationContext(delegate)(success, failure)
+      val success = new MapReduceCounter(context.getCounter(ConverterCounters.Group, ConverterCounters.Converted))
+      val failure = new MapReduceCounter(context.getCounter(ConverterCounters.Group, ConverterCounters.Failed))
+      converter.createEvaluationContext(EvaluationContext.inputFileParam(path), success, failure)
     }
+
+    lazy val defaultEc = ec(filePath.toString)
 
     val streams: CloseableIterator[(Option[String], InputStream)] =
       PathUtils.getUncompressedExtension(filePath.getName).toLowerCase(Locale.US) match {
         case ArchiveStreamFactory.TAR =>
-          val archive = new ArchiveStreamFactory().createArchiveInputStream(ArchiveStreamFactory.TAR, stream)
+          val archive: ArchiveInputStream[_ <: ArchiveEntry] =
+            new ArchiveStreamFactory().createArchiveInputStream(ArchiveStreamFactory.TAR, stream)
           new ArchiveFileIterator(archive, filePath.toString)
 
         case ArchiveStreamFactory.ZIP | ArchiveStreamFactory.JAR =>
@@ -126,8 +127,7 @@ class ConverterRecordReader extends FileStreamRecordReader with LazyLogging {
       }
 
     val all = streams.flatMap { case (name, is) =>
-      ec.setInputFilePath(name.getOrElse(filePath.toString))
-      converter.process(is, ec)
+      converter.process(is, name.map(ec).getOrElse(defaultEc))
     }
     val iter = filter match {
       case Some(f) => all.filter(f.evaluate)

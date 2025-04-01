@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,9 +8,9 @@
 
 package org.locationtech.geomesa.fs.storage.api
 
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.fs.storage.api.PartitionScheme.SimplifiedFilter
-import org.opengis.feature.simple.SimpleFeature
-import org.opengis.filter.Filter
 
 /**
   * Scheme for partitioning features into various named partitions (e.g. file paths) on disk, for
@@ -24,6 +24,13 @@ trait PartitionScheme {
     * @return the max depth this partition scheme goes to
     */
   def depth: Int
+
+  /**
+   * Indication of the directory structure, suitable for displaying to a user
+   *
+   * @return
+   */
+  def pattern: String
 
   /**
     * Return the partition in which a SimpleFeature should be stored
@@ -49,6 +56,26 @@ trait PartitionScheme {
     * @return list of simplified filters and partitions
     */
   def getSimplifiedFilters(filter: Filter, partition: Option[String] = None): Option[Seq[SimplifiedFilter]] = None
+
+  /**
+   * Get partitions that intersect the given filter
+   *
+   * If the filter does not constrain partitions at all, then an empty option will be returned. If
+   * the filter excludes all potential partitions, then an empty list will be returned
+   *
+   * @param filter filter
+   * @return list of intersecting filters
+   */
+  def getIntersectingPartitions(filter: Filter): Option[Seq[String]]
+
+  /**
+   * Get a filter that will cover a partitions, i.e. the filter will return all features
+   * in the given partition and none from other partitions
+   *
+   * @param partition partition to cover
+   * @return filter
+   */
+  def getCoveringFilter(partition: String): Filter
 }
 
 object PartitionScheme {

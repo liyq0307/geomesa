@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -7,8 +7,6 @@
  ***********************************************************************/
 
 package org.locationtech.geomesa.jobs.mapreduce
-
-import java.io.{Closeable, InputStream}
 
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.commons.io.IOUtils
@@ -18,9 +16,10 @@ import org.apache.hadoop.io.LongWritable
 import org.apache.hadoop.io.compress.{CodecPool, CompressionCodecFactory, Decompressor}
 import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat, FileSplit}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
+import java.io.{Closeable, InputStream}
 import scala.util.control.NonFatal
 
 /**

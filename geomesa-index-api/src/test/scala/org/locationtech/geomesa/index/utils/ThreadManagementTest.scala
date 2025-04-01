@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,7 +10,6 @@ package org.locationtech.geomesa.index.utils
 
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.index.utils.ThreadManagement.{LowLevelScanner, ManagedScan, Timeout}
-import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -20,14 +19,14 @@ class ThreadManagementTest extends Specification {
   "ManagedScan" should {
     "pre-close expired scans" in {
       val scanner = TestScanner(Seq("foo", "bar", "baz"))
-      val scan = new TestScan(Timeout(0), scanner)
+      val scan = new ManagedScan(scanner, Timeout(0), "", None)
       scan.isTerminated must beTrue
       scan.hasNext must beTrue
       scan.next must throwA[RuntimeException]
     }
     "throw exception on next for expired scans" in {
       val scanner = TestScanner(Seq("foo", "bar", "baz"))
-      val scan = new TestScan(Timeout("10 minutes"), scanner)
+      val scan = new ManagedScan(scanner, Timeout("10 minutes"), "", None)
       scan.isTerminated must beFalse
       scan.hasNext must beTrue
       scan.next mustEqual "foo"
@@ -38,7 +37,7 @@ class ThreadManagementTest extends Specification {
     }
     "throw exception on next for expired scans even if underlying iterator is empty" in {
       val scanner = TestScanner(Seq("foo"))
-      val scan = new TestScan(Timeout("10 minutes"), scanner)
+      val scan = new ManagedScan(scanner, Timeout("10 minutes"), "", None)
       scan.isTerminated must beFalse
       scan.hasNext must beTrue
       scan.next mustEqual "foo"
@@ -54,17 +53,11 @@ class ThreadManagementTest extends Specification {
           override def next(): String = null
         }
       }
-      val scan = new TestScan(Timeout("10 minutes"), scanner)
+      val scan = new ManagedScan(scanner, Timeout("10 minutes"), "", None)
       scan.isTerminated must beFalse
       scan.hasNext must beTrue
       scan.next must throwA[RuntimeException]
     }
-  }
-
-  class TestScan(override val timeout: Timeout, override protected val underlying: TestScanner)
-      extends ManagedScan[String] {
-    override protected def typeName: String = ""
-    override protected def filter: Option[Filter] = None
   }
 
   case class TestScanner(values: Seq[String]) extends LowLevelScanner[String] {

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,14 +9,13 @@
 package org.locationtech.geomesa.convert2.transforms
 
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.filter.expression.PropertyName
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.expression.{PropertyAccessor, PropertyAccessorFactory}
 import org.geotools.util.factory.Hints
-import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.transforms.CqlFunctionFactory.{CqlTransformerFunction, arrayIndexProperty}
 import org.locationtech.geomesa.convert2.transforms.Expression.Literal
 import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
-import org.opengis.filter.expression.PropertyName
 
 class CqlFunctionFactory extends TransformerFunctionFactory with LazyLogging {
 
@@ -50,17 +49,17 @@ class CqlFunctionFactory extends TransformerFunctionFactory with LazyLogging {
 
 object CqlFunctionFactory {
 
-  private val ff = CommonFactoryFinder.getFilterFactory2
+  private val ff = CommonFactoryFinder.getFilterFactory
 
   // use alphas for the array indices, as used by the ArrayPropertyAccessor, below
   private def arrayIndexProperty(i: Int): PropertyName = ff.property(('a' + i).toChar.toString)
 
-  class CqlTransformerFunction(name: String, expressions: Array[_ <: org.opengis.filter.expression.Expression])
+  class CqlTransformerFunction(name: String, expressions: Array[_ <: org.geotools.api.filter.expression.Expression])
       extends NamedTransformerFunction(Seq(s"cql:$name")) {
 
     private val fn = ff.function(name, expressions: _*)
 
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = fn.evaluate(args)
+    override def apply(args: Array[AnyRef]): AnyRef = fn.evaluate(args)
 
     override def getInstance(args: List[Expression]): CqlTransformerFunction = {
       // remap literals to cql literals so that they can be optimized (e.g. prepared geometries, etc)

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,28 +8,31 @@
 
 package org.locationtech.geomesa.filter
 
-import java.time.temporal.ChronoUnit
-import java.time.{ZoneOffset, ZonedDateTime}
-import java.util.Date
-
+import org.geotools.api.filter._
 import org.geotools.filter.text.ecql.ECQL
-import org.geotools.filter.{IsGreaterThanImpl, IsLessThenImpl, LiteralExpressionImpl}
+import org.geotools.filter.{IsGreaterThanImpl, IsLessThenImpl, LiteralExpressionImpl, OrImpl}
 import org.geotools.util.Converters
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.filter.Bounds.Bound
 import org.locationtech.geomesa.filter.visitor.QueryPlanFilterVisitor
 import org.locationtech.geomesa.utils.date.DateUtils.toInstant
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.filter._
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.time.temporal.ChronoUnit
+import java.time.{ZoneOffset, ZonedDateTime}
+import java.util
+import java.util.Date
 
 @RunWith(classOf[JUnitRunner])
 class FilterHelperTest extends Specification {
 
   val sft = SimpleFeatureTypes.createType("FilterHelperTest",
-    "dtg:Date,number:Int,a:Int,b:Int,c:Int,*geom:Point:srid=4326")
+    "dtg:Date,number:Int,a:Int,b:Int,c:Int,*geom:Point:srid=4326,name:String")
 
   def updateFilter(filter: Filter): Filter = QueryPlanFilterVisitor.apply(sft, filter)
 
@@ -40,6 +43,33 @@ class FilterHelperTest extends Specification {
   }
 
   "FilterHelper" should {
+
+    "optimize the inArray function" >> {
+      val sf = new ScalaSimpleFeature(sft, "1",
+        Array(new Date(), new Integer(1), new Integer(2), new Integer(3), new Integer(4), WKTUtils.read("POINT(1 5)"), "foo"))
+
+      val originalFilter = ff.equals(
+        ff.function("inArray", ff.property("name"), ff.literal(new util.ArrayList(util.Arrays.asList("foo", "bar")))),
+        ff.literal(java.lang.Boolean.TRUE)
+      )
+      val optimizedFilter = updateFilter(originalFilter)
+
+      optimizedFilter.isInstanceOf[OrImpl] mustEqual(true)
+      originalFilter.evaluate(sf) mustEqual(true)
+      optimizedFilter.evaluate(sf) mustEqual(true)
+
+      // Show that either order works.
+      val reverseOrder = ff.equals(
+        ff.literal(java.lang.Boolean.TRUE),
+        ff.function("inArray",
+          ff.property("name"),
+          ff.literal(new util.ArrayList(util.Arrays.asList("foo", "bar"))))
+      )
+      val optimizedReverseOrder = updateFilter(reverseOrder)
+      optimizedReverseOrder.isInstanceOf[OrImpl] mustEqual(true)
+      reverseOrder.evaluate(sf) mustEqual(true)
+      optimizedReverseOrder.evaluate(sf) mustEqual(true)
+    }
 
     "evaluate functions with 0 arguments" >> {
       val filter = ECQL.toFilter("dtg < currentDate()")
@@ -223,6 +253,117 @@ class FilterHelperTest extends Specification {
       }
     }
 
+    "ignore OR clauses with differing attributes when extracting bounds" >> {
+      val cql1 = "((BBOX(geom, 0.0,0.0,10.0,10.0) OR " +
+        "BBOX(geom, 20.0,20.0,30.0,30.0)) AND " +
+        "(dtg BETWEEN 2021-05-05T00:00:00+00:00 AND 2021-05-10T00:00:00+00:00 OR " +
+        "dtg BETWEEN 2021-05-01T00:00:00+00:00 AND 2021-05-04T00:00:00+00:00)) AND " +
+        "((BBOX(geom, 0.0,0.0,10.0,10.0) OR " +
+        "dtg BETWEEN 2021-05-01T00:00:00+00:00 AND 2021-05-04T00:00:00+00:00) AND " +
+        "(dtg BETWEEN 2021-05-05T00:00:00+00:00 AND 2021-05-10T00:00:00+00:00 OR " +
+        "BBOX(geom, 20.0,20.0,30.0,30.0)))"
+
+      val cql2 = "dtg BETWEEN 2021-05-05T00:00:00+00:00 AND 2021-05-10T00:00:00+00:00 OR " +
+        "dtg BETWEEN 2021-05-01T00:00:00+00:00 AND 2021-05-04T00:00:00+00:00"
+
+      val intervals1 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql1), "dtg", classOf[Date])
+      val intervals2 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql2), "dtg", classOf[Date])
+      intervals1 mustEqual intervals2
+    }
+
+    "ignore OR clauses with differing attributes when extracting bounds" >> {
+      val cql1 = "((BBOX(geom, 0.0,0.0,10.0,10.0) OR " +
+        "BBOX(geom, 20.0,20.0,30.0,30.0)) AND " +
+        "(dtg BETWEEN 2021-05-05T00:00:00+00:00 AND 2021-05-10T00:00:00+00:00 OR " +
+        "dtg BETWEEN 2021-05-01T00:00:00+00:00 AND 2021-05-04T00:00:00+00:00)) AND " +
+        "((BBOX(geom, 0.0,0.0,10.0,10.0) OR " +
+        "dtg BETWEEN 2021-05-01T00:00:00+00:00 AND 2021-05-04T00:00:00+00:00) AND " +
+        "(dtg BETWEEN 2021-05-05T00:00:00+00:00 AND 2021-05-10T00:00:00+00:00 OR " +
+        "BBOX(geom, 20.0,20.0,30.0,30.0)))"
+
+      val cql2 = "dtg BETWEEN 2021-05-05T00:00:00+00:00 AND 2021-05-10T00:00:00+00:00 OR " +
+        "dtg BETWEEN 2021-05-01T00:00:00+00:00 AND 2021-05-04T00:00:00+00:00"
+
+      val intervals1 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql1), "dtg", classOf[Date])
+      val intervals2 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql2), "dtg", classOf[Date])
+      intervals1 mustEqual intervals2
+    }
+
+    "ignore OR clauses with differing attributes (2)" >> {
+      val cql1 = "(BBOX(geom, 20.0,20.0,30.0,30.0) OR " +
+        "dtg DURING 2021-05-05T00:00:00.000Z/2021-05-10T00:00:00.000Z) AND " +
+        "dtg DURING 2021-05-01T00:00:00.000Z/2021-05-04T00:00:00.000Z"
+
+      val cql2 = "dtg DURING 2021-05-01T00:00:00.000Z/2021-05-04T00:00:00.000Z"
+
+      val intervals1 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql1), "dtg", classOf[Date])
+      val intervals2 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql2), "dtg", classOf[Date])
+      intervals1 mustEqual intervals2
+    }
+
+    "ignore OR clauses with differing attributes without losing valid clauses" >> {
+      val cql1 = "(BBOX(geom, 20.0,20.0,30.0,30.0) AND " +
+        "dtg DURING 2021-05-05T00:00:00.000Z/2021-05-10T00:00:00.000Z) OR " +
+        "dtg DURING 2021-05-01T00:00:00.000Z/2021-05-04T00:00:00.000Z"
+
+      val cql2 = "dtg DURING 2021-05-05T00:00:00.000Z/2021-05-10T00:00:00.000Z OR " +
+        "dtg DURING 2021-05-01T00:00:00.000Z/2021-05-04T00:00:00.000Z"
+
+      val intervals1 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql1), "dtg", classOf[Date])
+      val intervals2 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql2), "dtg", classOf[Date])
+      intervals1 mustEqual intervals2
+    }
+
+    "remove interleaving bounds for AND filter" >> {
+      var cql = "S < 3 AND S < 2 AND S < 4"
+      var bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(1)
+      bounds.values.exists(_ == Bounds(Bound(None, false), Bound(Some(2), false))) must beTrue
+      cql = "S >= 3 AND S >= 2 AND S >= 1"
+      bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(1)
+      bounds.values.exists(_ == Bounds(Bound(Some(3), true), Bound(None, false))) must beTrue
+    }
+
+    "remove interleaving bounds for OR filter" >> {
+      var cql = "S < 3 OR S < 2 OR S < 1"
+      var bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(1)
+      bounds.values.exists(_ == Bounds(Bound(None, false), Bound(Some(3), false))) must beTrue
+      cql = "S >= 3 OR S >= 2 OR S >= 1"
+      bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(1)
+      bounds.values.exists(_ == Bounds(Bound(Some(1), true), Bound(None, false))) must beTrue
+    }
+
+    "concatenate bounds for OR filter" >> {
+      var cql = "(S > 2 AND S <= 5) OR (S > 1 AND S < 3)"
+      var bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(1)
+      bounds.values.exists(_ == Bounds(Bound(Some(1), false), Bound(Some(5), true))) must beTrue
+      cql = "(S >= 3 AND S <= 5) OR (S > 1 AND S < 3)"
+      bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(1)
+      bounds.values.exists(_ == Bounds(Bound(Some(1), false), Bound(Some(5), true))) must beTrue
+    }
+
+    "don't concatenate open bounds for OR filter" >> {
+      val cql = "(S > 3 AND S <= 5) OR (S > 1 AND S < 3)"
+      val bounds = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql), "S", classOf[Integer])
+      bounds.values must haveSize(2)
+      bounds.values.exists(_ == Bounds(Bound(Some(1), false), Bound(Some(3), false))) must beTrue
+      bounds.values.exists(_ == Bounds(Bound(Some(3), false), Bound(Some(5), true))) must beTrue
+    }
+
+    "remove duplicated bounds" >> {
+      val cql1 = "(S > 3 AND S < 5) OR (S > 8)"
+      val cql2 = "(S > 3 OR S > 8) AND (S < 5 OR S > 8)"
+      val bounds1 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql1), "S", classOf[Integer])
+      val bounds2 = FilterHelper.extractAttributeBounds(ECQL.toFilter(cql2), "S", classOf[Integer])
+      bounds1 mustEqual bounds2
+      bounds1.values must haveSize(2)
+    }
+
     "deduplicate OR filters" >> {
       val filters = Seq(
         ("(a > 1 AND b < 2 AND c = 3) OR (c = 3 AND a > 2 AND b < 2) OR (b < 2 AND a > 3 AND c = 3)",
@@ -239,7 +380,7 @@ class FilterHelperTest extends Specification {
     }
 
     "deduplicate massive OR filters without stack overflow" >> {
-      import scala.collection.JavaConversions._
+      import scala.collection.JavaConverters._
       // actual count to get the old code to stack overflow varies depending on environment
       // with the fix, tested up to 100k without issue, but the specs checks take a long time with that many
       val count = 1000
@@ -251,8 +392,34 @@ class FilterHelperTest extends Specification {
       val flattened = FilterHelper.simplify(filter)
       flattened must beAnInstanceOf[Or]
       flattened.asInstanceOf[Or].getChildren must haveLength(count)
-      flattened.asInstanceOf[Or].getChildren.map(_.toString) must
+      flattened.asInstanceOf[Or].getChildren.asScala.map(_.toString) must
           containTheSameElementsAs((0 until count).map(i => s"[ a equals $i ]"))
+    }
+
+    "evaluate functions with large IN predicate" >> {
+      val string = (0 to 4000).mkString("IN(", ",", ")")
+      val filter = ECQL.toFilter(string)
+      updateFilter(filter) must not(throwAn[Exception])
+    }
+
+    "evaluate functions with large number of ORs" >> {
+      val count = 4000
+      val a = ff.property("a")
+      var filter: Filter = ff.equal(a, ff.literal(0))
+      (1 until count).foreach { i =>
+        filter = ff.or(filter, ff.equal(a, ff.literal(i)))
+      }
+      updateFilter(filter) must not(throwAn[Exception])
+    }
+
+    "evaluate functions with large number of ANDs" >> {
+      val count = 4000
+      val a = ff.property("a")
+      var filter: Filter = ff.equal(a, ff.literal(0))
+      (1 until count).foreach { i =>
+        filter = ff.and(filter, ff.equal(a, ff.literal(i)))
+      }
+      updateFilter(filter) must not(throwAn[Exception])
     }
   }
 }

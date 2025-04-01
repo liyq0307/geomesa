@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,12 +13,12 @@ import org.apache.hadoop.io.NullWritable
 import org.apache.hadoop.mapreduce.RecordReader
 import org.apache.hadoop.mapreduce.lib.input.FileSplit
 import org.apache.orc.mapred.OrcStruct
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.StorageFileAction.StorageFileAction
 import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration
 import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration.SimpleFeatureAction
 import org.locationtech.geomesa.fs.storage.orc.jobs.OrcSimpleFeatureInputFormat.{OrcSimpleFeatureInputFormatBase, OrcSimpleFeatureRecordReaderBase}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
 /**
   * Input format for orc files that tracks the action and timestamp associated with each feature

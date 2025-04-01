@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,10 @@
 
 package org.locationtech.geomesa.arrow.io
 
-import java.io.{File, FileInputStream, FileOutputStream}
-import java.nio.file.Files
-import java.util.concurrent.atomic.AtomicInteger
-
-import org.apache.arrow.vector.ipc.message.IpcOption
+import org.apache.arrow.memory.RootAllocator
+import org.apache.arrow.vector.VarCharVector
+import org.apache.arrow.vector.ipc.{ArrowFileReader, ArrowStreamReader}
+import org.apache.arrow.vector.ipc.message.{ArrowBlock, IpcOption}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.arrow.vector.ArrowDictionary
@@ -20,11 +19,15 @@ import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEn
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.WithClose
-import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
+import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom.{Geometry, LineString, Point, Polygon}
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
+import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(classOf[JUnitRunner])
 class SimpleFeatureArrowFileTest extends Specification {
@@ -102,6 +105,34 @@ class SimpleFeatureArrowFileTest extends Specification {
         }
       }
     }
+    "write and read values with flatten" >> {
+      withTestFile("simple") { file =>
+        WithClose(SimpleFeatureArrowFileWriter(new FileOutputStream(file), sft, Map.empty, SimpleFeatureEncoding.Max, ipcOpts, None, true)) { writer =>
+          features0.foreach(writer.add)
+          writer.flush()
+          features1.foreach(writer.add)
+        }
+
+        var totalRecords = 0
+        val rootAllocator = new RootAllocator()
+
+        val bytes = Files.readAllBytes(file.toPath)
+        val reader = new ArrowStreamReader(new ByteArrayInputStream(bytes), rootAllocator)
+
+        while (reader.loadNextBatch()) {
+          val root = reader.getVectorSchemaRoot
+
+          // Flatten removes the outer StructVector which is the SFT name
+          root.getFieldVectors.get(0) must haveClass[VarCharVector]
+          totalRecords += root.getRowCount
+        }
+
+        reader.close()
+        rootAllocator.close()
+
+        totalRecords mustEqual (features0.size + features1.size)
+      }
+    }
     "optimize queries for sorted files" >> {
       withTestFile("sorted") { file =>
         WithClose(SimpleFeatureArrowFileWriter(new FileOutputStream(file), sft, Map.empty, SimpleFeatureEncoding.Max, ipcOpts, Some(("dtg", false)))) { writer =>
@@ -151,7 +182,7 @@ class SimpleFeatureArrowFileTest extends Specification {
       }
     }
     "write and read dictionary encoded values" >> {
-      val dictionaries = Map("foo:String" -> ArrowDictionary.create(0, Array("foo0", "foo1", "foo2")))
+      val dictionaries = Map("foo:String" -> ArrowDictionary.create(sft.getTypeName, 0, Array("foo0", "foo1", "foo2")))
       withTestFile("dictionary") { file =>
         WithClose(SimpleFeatureArrowFileWriter(new FileOutputStream(file), sft, dictionaries, SimpleFeatureEncoding.Max, ipcOpts, None)) { writer =>
           features0.foreach(writer.add)
@@ -166,8 +197,37 @@ class SimpleFeatureArrowFileTest extends Specification {
         }
       }
     }
+    "write and read dictionary encoded values with flatten" >> {
+      val dictionaries = Map("foo:String" -> ArrowDictionary.create(sft.getTypeName, 0, Array("foo0", "foo1", "foo2")))
+      withTestFile("dictionary") { file =>
+        WithClose(SimpleFeatureArrowFileWriter(new FileOutputStream(file), sft, dictionaries, SimpleFeatureEncoding.Max, ipcOpts, None, true)) { writer =>
+          features0.foreach(writer.add)
+          writer.flush()
+          features1.foreach(writer.add)
+        }
+
+        var totalRecords = 0
+        val rootAllocator = new RootAllocator()
+
+        val bytes = Files.readAllBytes(file.toPath)
+        val reader = new ArrowStreamReader(new ByteArrayInputStream(bytes), rootAllocator)
+
+        while (reader.loadNextBatch()) {
+          val root = reader.getVectorSchemaRoot
+
+          // Flatten removes the outer StructVector which is the SFT name
+          root.getFieldVectors.get(0) must haveClass[VarCharVector]
+          totalRecords += root.getRowCount
+        }
+
+        reader.close()
+        rootAllocator.close()
+
+        totalRecords mustEqual (features0.size + features1.size)
+      }
+    }
     "write and read dictionary encoded ints" >> {
-      val dictionaries = Map("age" -> ArrowDictionary.create(0, Array(0, 1, 2, 3, 4, 5).map(Int.box)))
+      val dictionaries = Map("age" -> ArrowDictionary.create(sft.getTypeName, 0, Array(0, 1, 2, 3, 4, 5).map(Int.box)))
       withTestFile("dictionary-int") { file =>
         WithClose(SimpleFeatureArrowFileWriter(new FileOutputStream(file), sft, dictionaries, SimpleFeatureEncoding.Max, ipcOpts, None)) { writer =>
           features0.foreach(writer.add)
@@ -183,7 +243,7 @@ class SimpleFeatureArrowFileTest extends Specification {
       }
     }
     "write and read dictionary encoded values with defaults" >> {
-      val dictionaries = Map("foo" -> ArrowDictionary.create(0, Array("foo0", "foo1")))
+      val dictionaries = Map("foo" -> ArrowDictionary.create(sft.getTypeName, 0, Array("foo0", "foo1")))
       withTestFile("dictionary-defaults") { file =>
         WithClose(SimpleFeatureArrowFileWriter(new FileOutputStream(file), sft, dictionaries, SimpleFeatureEncoding.Max, ipcOpts, None)) { writer =>
           features0.foreach(writer.add)

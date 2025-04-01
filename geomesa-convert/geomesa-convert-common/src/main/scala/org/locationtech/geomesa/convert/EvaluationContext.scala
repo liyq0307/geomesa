@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,17 @@
 
 package org.locationtech.geomesa.convert
 
+import com.codahale.metrics.Counter
 import com.typesafe.scalalogging.LazyLogging
+import org.locationtech.geomesa.convert.EvaluationContext.{EvaluationError, FieldAccessor}
+import org.locationtech.geomesa.convert2.Field
 import org.locationtech.geomesa.convert2.metrics.ConverterMetrics
 
+import scala.util.control.NonFatal
+
 /**
-  * Shared converter state
-  */
+ * Holds the state associated with a conversion attempt. Evaluation contexts are not thread safe.
+ */
 trait EvaluationContext {
 
   /**
@@ -54,61 +59,66 @@ trait EvaluationContext {
   def failure: com.codahale.metrics.Counter
 
   /**
-    * Get the current value for the given index
-    *
-    * @param i value index
-    * @return
-    */
-  def get(i: Int): Any
+   * Access to any errors that have occurred - note that errors will generally only be kept if the converter
+   * error mode is set to `ReturnErrors`
+   *
+   * @return
+   */
+  def errors: java.util.Queue[EvaluationError]
 
   /**
-    * Set the current value for the given index
-    *
-    * @param i value index
-    * @param value value
-    */
-  def set(i: Int, value: Any): Unit
+   * Gets a references to a field's value
+   *
+   * @param name field name
+   * @return
+   */
+  def accessor(name: String): FieldAccessor
 
   /**
-    * Look up an index by name
-    *
-    * @param name name
-    * @return
-    */
-  def indexOf(name: String): Int
-
-  /**
-    * Clear any local (per-entry) state
-    */
-  def clear(): Unit
+   * Evaluate all values using the given arguments. The returned array may be mutated on subsequent calls to
+   * `evaluate`, so shouldn't be kept long-term
+   *
+   * @param args single row of input
+   */
+  def evaluate(args: Array[AnyRef]): Either[EvaluationError, Array[AnyRef]]
 }
 
 object EvaluationContext extends LazyLogging {
 
   val InputFilePathKey = "inputFilePath"
+  val FilterKey = "filter"
 
   /**
     * Creates a new, empty evaluation context
     *
     * @return
     */
-  def empty: EvaluationContext = new EvaluationContextImpl(Seq.empty, Map.empty, Map.empty, ConverterMetrics.empty)
+  def empty: EvaluationContext = {
+    val metrics = ConverterMetrics.empty
+    val success = metrics.counter("success")
+    val failures = metrics.counter("failure")
+    new StatefulEvaluationContext(Array.empty, Map.empty, Map.empty, metrics, success, failures)
+  }
 
   /**
-    * Creates an evaluation context with the given fields
-    *
-    * @param localNames names of per-entry fields
-    * @param globalValues names and values of global fields
-    * @param caches enrichment caches
-    * @param metrics metrics
-    * @return
-    */
+   * Creates a new evaluation context with the given state
+   *
+   * @param fields converter fields, in topological dependency order
+   * @param globalValues global values
+   * @param caches enrichment caches
+   * @param metrics metrics
+   * @param success success counter
+   * @param failure failure counter
+   * @return
+   */
   def apply(
-      localNames: Seq[String],
-      globalValues: Map[String, Any] = Map.empty,
-      caches: Map[String, EnrichmentCache] = Map.empty,
-      metrics: ConverterMetrics = ConverterMetrics.empty): EvaluationContext = {
-    new EvaluationContextImpl(localNames, globalValues, caches, metrics)
+      fields: Seq[Field],
+      globalValues: Map[String, _ <: AnyRef],
+      caches: Map[String, EnrichmentCache],
+      metrics: ConverterMetrics,
+      success: Counter,
+      failure: Counter): EvaluationContext = {
+    new StatefulEvaluationContext(fields.toArray, globalValues, caches, metrics, success, failure)
   }
 
   /**
@@ -120,73 +130,115 @@ object EvaluationContext extends LazyLogging {
   def inputFileParam(file: String): Map[String, AnyRef] = Map(InputFilePathKey -> file)
 
   /**
+   * Trait for reading a field from an evaluation context
+   */
+  sealed trait FieldAccessor {
+    def apply(): AnyRef
+  }
+
+  case object NullFieldAccessor extends FieldAccessor {
+    override def apply(): AnyRef = null
+  }
+
+  class FieldValueAccessor(values: Array[AnyRef], i: Int) extends FieldAccessor {
+    override def apply(): AnyRef = values(i)
+  }
+
+  class GlobalFieldAccessor(value: AnyRef) extends FieldAccessor {
+    override def apply(): AnyRef = value
+  }
+
+  /**
+   * Marker trait for resources that are dependent on the evaluation context state
+   *
+   * @tparam T type
+   */
+  trait ContextDependent[T <: ContextDependent[T]] {
+
+    /**
+     * Return a copy of the instance tied to the given evaluation context.
+     *
+     * If the instance does not use the evaluation context, it should return itself instead of a copy
+     *
+     * @param ec evaluation context
+     * @return
+     */
+    def withContext(ec: EvaluationContext): T
+  }
+
+  /**
+   * Evaluation error
+   *
+   * @param field field name that had an error
+   * @param line line number of the input being evaluated
+   * @param e error
+   */
+  case class EvaluationError(field: String, line: Long, e: Throwable)
+
+  /**
     * Evaluation context accessors
     *
     * @param ec context
     */
   implicit class RichEvaluationContext(val ec: EvaluationContext) extends AnyVal {
-    def getInputFilePath: Option[String] = ec.indexOf(InputFilePathKey) match {
-      case -1 => None
-      case i  => Option(ec.get(i)).map(_.toString)
-    }
-    def setInputFilePath(path: String): Unit = ec.indexOf(InputFilePathKey) match {
-      case -1 => throw new IllegalArgumentException(s"$InputFilePathKey is not present in execution context")
-      case i  => ec.set(i, path)
-    }
+    def getInputFilePath: Option[String] = Option(ec.accessor(InputFilePathKey).apply().asInstanceOf[String])
   }
 
   /**
     * Evaluation context implementation
     *
-    * @param localNames per-entry variable names
-    * @param globalValues global variable name/values (global values are not cleared on `clear`)
+    * @param fields fields to evaluate, in topological dependency order
+    * @param globalValues global variable name/values
     * @param cache enrichment caches
     * @param metrics metrics
     */
-  class EvaluationContextImpl(
-      localNames: Seq[String],
-      globalValues: Map[String, Any],
+  class StatefulEvaluationContext(
+      fields: Array[Field],
+      globalValues: Map[String, _ <: AnyRef],
       val cache: Map[String, EnrichmentCache],
-      val metrics: ConverterMetrics) extends EvaluationContext {
+      val metrics: ConverterMetrics,
+      val success: Counter,
+      val failure: Counter,
+      val errors: java.util.Queue[EvaluationError] = new java.util.ArrayDeque[EvaluationError]()
+    ) extends EvaluationContext {
 
-    private val localCount = localNames.length
-    // inject the input file path as a global key so there's always a spot for it in the array
-    private val names = localNames ++ (globalValues.keys.toSeq :+ EvaluationContext.InputFilePathKey).distinct
-    private val values = Array.tabulate[Any](names.length)(i => globalValues.get(names(i)).orNull)
+    // holder for results from evaluating each row
+    private val values = Array.ofDim[AnyRef](fields.length)
+    // temp array for holding the arguments for a field
+    private val fieldArray = Array.ofDim[AnyRef](1)
+    // copy the transforms and tie them to the context
+    // note: the class isn't fully instantiated yet, but this statement is last in the initialization
+    private val transforms = fields.map(_.transforms.map(_.withContext(this)))
 
-    override val success: com.codahale.metrics.Counter = metrics.counter("success")
-    override val failure: com.codahale.metrics.Counter = metrics.counter("failure")
-
-    override def indexOf(name: String): Int = names.indexOf(name)
-
-    override def get(i: Int): Any = values(i)
-    override def set(i: Int, value: Any): Unit = values(i) = value
-
-    override def clear(): Unit = {
-      var i = 0
-      while (i < localCount) {
-        values(i) = null
-        i += 1
+    override def accessor(name: String): FieldAccessor = {
+      val i = fields.indexWhere(_.name == name)
+      if (i >= 0) { new FieldValueAccessor(values, i) } else {
+        globalValues.get(name) match {
+          case Some(value) => new GlobalFieldAccessor(value)
+          case None => NullFieldAccessor
+        }
       }
     }
-  }
 
-  /**
-    * Allows for override of success/failure counters
-    *
-    * @param delegate delegate context
-    * @param success success counter
-    * @param failure failure coutner
-    */
-  class DelegatingEvaluationContext(delegate: EvaluationContext)(
-      override val success: com.codahale.metrics.Counter = delegate.success,
-      override val failure: com.codahale.metrics.Counter = delegate.failure
-    ) extends EvaluationContext {
-    override def get(i: Int): Any = delegate.get(i)
-    override def set(i: Int, value: Any): Unit = delegate.set(i, value)
-    override def indexOf(name: String): Int = delegate.indexOf(name)
-    override def clear(): Unit = delegate.clear()
-    override def metrics: ConverterMetrics = delegate.metrics
-    override def cache: Map[String, EnrichmentCache] = delegate.cache
+    override def evaluate(args: Array[AnyRef]): Either[EvaluationError, Array[AnyRef]] = {
+      var i = 0
+      // note: since fields are in topological order we don't need to clear them
+      while (i < values.length) {
+        values(i) = try {
+          val fieldArgs = fields(i).fieldArg match {
+            case None => args
+            case Some(f) => fieldArray(0) = f.apply(args); fieldArray
+          }
+          transforms(i) match {
+            case Some(t) => t.apply(fieldArgs)
+            case None    => fieldArgs(0)
+          }
+        } catch {
+          case NonFatal(e) => return Left(EvaluationError(fields(i).name, line, e))
+        }
+        i += 1
+      }
+      Right(values)
+    }
   }
 }

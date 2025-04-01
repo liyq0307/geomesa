@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,22 +9,19 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import java.util.Locale
-
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.accumulo.core.client._
+import org.apache.accumulo.core.conf.ClientProperty
 import org.apache.accumulo.core.iterators.SortedKeyValueIterator
 import org.apache.accumulo.core.security.Authorizations
 import org.apache.hadoop.security.UserGroupInformation
-import org.geotools.data.Query
-import org.locationtech.geomesa.accumulo._
-import org.locationtech.geomesa.accumulo.audit.AccumuloAuditService
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.accumulo.data.AccumuloBackedMetadata.SingleRowAccumuloMetadata
 import org.locationtech.geomesa.accumulo.data.AccumuloDataStoreFactory.AccumuloDataStoreConfig
 import org.locationtech.geomesa.accumulo.data.stats._
 import org.locationtech.geomesa.accumulo.index._
-import org.locationtech.geomesa.accumulo.iterators.{AgeOffIterator, DtgAgeOffIterator, ProjectVersionIterator}
-import org.locationtech.geomesa.accumulo.util.TableUtils
+import org.locationtech.geomesa.accumulo.iterators.{AgeOffIterator, DtgAgeOffIterator, ProjectVersionIterator, VisibilityIterator}
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
@@ -34,17 +31,18 @@ import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, MetadataStringSerializer}
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.utils.conf.FeatureExpiration.{FeatureTimeExpiration, IngestTimeExpiration}
-import org.locationtech.geomesa.utils.conf.IndexId
+import org.locationtech.geomesa.utils.conf.{FeatureExpiration, IndexId}
 import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.AttributeOptions
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs.OverrideDtgJoin
+import org.locationtech.geomesa.utils.hadoop.HadoopUtils
 import org.locationtech.geomesa.utils.index.{GeoMesaSchemaValidator, IndexMode, VisibilityLevel}
-import org.locationtech.geomesa.utils.io.{CloseQuietly, HadoopUtils, WithClose}
+import org.locationtech.geomesa.utils.io.{CloseWithLogging, WithClose}
 import org.locationtech.geomesa.utils.stats.{IndexCoverage, Stat}
 import org.locationtech.geomesa.utils.zk.ZookeeperLocking
-import org.opengis.feature.simple.SimpleFeatureType
 
+import java.util.Locale
 import scala.util.control.NonFatal
 
 /**
@@ -54,7 +52,7 @@ import scala.util.control.NonFatal
  * @param connector Accumulo connector
  * @param config configuration values
  */
-class AccumuloDataStore(val connector: Connector, override val config: AccumuloDataStoreConfig)
+class AccumuloDataStore(val connector: AccumuloClient, override val config: AccumuloDataStoreConfig)
     extends GeoMesaDataStore[AccumuloDataStore](config) with ZookeeperLocking {
 
   import scala.collection.JavaConverters._
@@ -67,7 +65,8 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
 
   override val stats: AccumuloGeoMesaStats = AccumuloGeoMesaStats(this)
 
-  override protected def zookeepers: String = connector.getInstance.getZooKeepers
+  override protected def zookeepers: String =
+    connector.properties().getProperty(ClientProperty.INSTANCE_ZOOKEEPERS.getKey)
 
   // If on a secured cluster, create a thread to periodically renew Kerberos tgt
   private val kerberosTgtRenewer = {
@@ -84,20 +83,16 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
     *
     * @return
     */
-  def auths: Authorizations = new Authorizations(config.authProvider.getAuthorizations.asScala: _*)
+  def auths: Authorizations = new Authorizations(config.authProvider.getAuthorizations.asScala.toSeq: _*)
 
   override def delete(): Unit = {
     // note: don't delete the query audit table
-    val all = getTypeNames.toSeq.flatMap(getAllTableNames).distinct
-    val toDelete = config.audit match {
-      case Some((a: AccumuloAuditService, _, _)) => all.filter(_ != a.table)
-      case _ => all
-    }
+    val toDelete = getTypeNames.toSeq.flatMap(getAllTableNames).distinct.filter(_ != config.auditWriter.table)
     adapter.deleteTables(toDelete)
   }
 
   override def getAllTableNames(typeName: String): Seq[String] = {
-    val others = Seq(stats.metadata.table) ++ config.audit.map(_._1.asInstanceOf[AccumuloAuditService].table).toSeq
+    val others = Seq(stats.metadata.table) :+ config.auditWriter.table
     super.getAllTableNames(typeName) ++ others
   }
 
@@ -157,24 +152,33 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
   override protected def preSchemaCreate(sft: SimpleFeatureType): Unit = {
     import org.locationtech.geomesa.index.conf.SchemaProperties.ValidateDistributedClasspath
 
-    // validate that the accumulo runtime is available
-    val namespace = config.catalog.indexOf('.') match {
-      case -1 => ""
-      case i  => config.catalog.substring(0, i)
-    }
-    TableUtils.createNamespaceIfNeeded(connector, namespace)
-    val canLoad = connector.namespaceOperations().testClassLoad(namespace,
-      classOf[ProjectVersionIterator].getName, classOf[SortedKeyValueIterator[_, _]].getName)
+    // call super first so that user data keys are updated
+    super.preSchemaCreate(sft)
 
-    if (!canLoad) {
-      val msg = s"Could not load GeoMesa distributed code from the Accumulo classpath for table '${config.catalog}'"
-      logger.error(msg)
-      if (ValidateDistributedClasspath.toBoolean.contains(true)) {
-        val nsMsg = if (namespace.isEmpty) { "" } else { s" for the namespace '$namespace'" }
-        throw new RuntimeException(s"$msg. You may override this check by setting the system property " +
+    def getNamespace(prefix: String): String = prefix.indexOf('.') match {
+      case -1 => ""
+      case i  => prefix.substring(0, i)
+    }
+
+    val prefixes = Seq(config.catalog) ++ sft.getIndices.flatMap(i => sft.getTablePrefix(i.name))
+    prefixes.map(getNamespace).distinct.foreach { namespace =>
+      if (namespace.nonEmpty) {
+        adapter.ensureNamespaceExists(namespace)
+      }
+      // validate that the accumulo runtime is available
+      val canLoad = connector.namespaceOperations().testClassLoad(namespace,
+        classOf[ProjectVersionIterator].getName, classOf[SortedKeyValueIterator[_, _]].getName)
+
+      if (!canLoad) {
+        val msg = s"Could not load GeoMesa distributed code from the Accumulo classpath"
+        logger.error(s"$msg for catalog ${config.catalog}")
+        if (ValidateDistributedClasspath.toBoolean.contains(true)) {
+          val nsMsg = if (namespace.isEmpty) { "" } else { s" for the namespace '$namespace'" }
+          throw new RuntimeException(s"$msg. You may override this check by setting the system property " +
             s"'${ValidateDistributedClasspath.property}=false'. Otherwise, please verify that the appropriate " +
             s"JARs are installed$nsMsg - see http://www.geomesa.org/documentation/user/accumulo/install.html" +
             "#installing-the-accumulo-distributed-runtime-library")
+        }
       }
     }
 
@@ -182,9 +186,6 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
       throw new IllegalArgumentException("Attribute level visibility only supports up to 255 attributes")
     }
 
-    super.preSchemaCreate(sft)
-
-    // note: dtg should be set appropriately before calling this method
     sft.getDtgField.foreach { dtg =>
       if (sft.getIndices.exists(i => i.name == JoinIndex.name && i.attributes.headOption.contains(dtg))) {
         if (!GeoMesaSchemaValidator.declared(sft, OverrideDtgJoin)) {
@@ -203,12 +204,28 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
     super.onSchemaCreated(sft)
     if (sft.statsEnabled) {
       // configure the stats combining iterator on the table for this sft
+      adapter.ensureTableExists(stats.metadata.table)
       stats.configureStatCombiner(connector, sft)
     }
     sft.getFeatureExpiration.foreach {
-      case IngestTimeExpiration(ttl) => AgeOffIterator.set(this, sft, ttl)
-      case FeatureTimeExpiration(dtg, _, ttl) => DtgAgeOffIterator.set(this, sft, ttl, dtg)
-      case e => throw new IllegalArgumentException(s"Unexpected feature expiration: $e")
+      case IngestTimeExpiration(ttl) =>
+        val tableOps = connector.tableOperations()
+        getAllIndexTableNames(sft.getTypeName).filter(tableOps.exists).foreach { table =>
+          AgeOffIterator.set(tableOps, table, sft, ttl)
+        }
+
+      case FeatureTimeExpiration(dtg, _, ttl) =>
+        val tableOps = connector.tableOperations()
+        manager.indices(sft).foreach { index =>
+          val indexSft = index match {
+            case joinIndex: AttributeJoinIndex => joinIndex.indexSft
+            case _ => sft
+          }
+          DtgAgeOffIterator.set(tableOps, indexSft, index, ttl, dtg)
+        }
+
+      case e =>
+        throw new IllegalArgumentException(s"Unexpected feature expiration: $e")
     }
   }
 
@@ -235,7 +252,16 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
     // check any previous age-off - previously age-off wasn't tied to the sft metadata
     if (!sft.isFeatureExpirationEnabled && !previous.isFeatureExpirationEnabled) {
       // explicitly set age-off in the feature type if found
-      val configured = AgeOffIterator.expiry(this, previous).orElse(DtgAgeOffIterator.expiry(this, previous))
+      val tableOps = connector.tableOperations()
+      val tables = getAllIndexTableNames(previous.getTypeName).filter(tableOps.exists)
+      val ageOff = tables.foldLeft[Option[FeatureExpiration]](None) { (res, table) =>
+        res.orElse(AgeOffIterator.expiry(tableOps, table))
+      }
+      val configured = ageOff.orElse {
+        tables.foldLeft[Option[FeatureExpiration]](None) { (res, table) =>
+          res.orElse(DtgAgeOffIterator.expiry(tableOps, previous, table))
+        }
+      }
       configured.foreach(sft.setFeatureExpiration)
     }
 
@@ -249,15 +275,39 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
       stats.removeStatCombiner(connector, previous)
     }
     if (sft.statsEnabled) {
+      adapter.ensureTableExists(stats.metadata.table)
       stats.configureStatCombiner(connector, sft)
     }
 
-    AgeOffIterator.clear(this, previous)
-    DtgAgeOffIterator.clear(this, previous)
+    val tableOps = connector.tableOperations()
+    val previousTables = getAllIndexTableNames(previous.getTypeName).filter(tableOps.exists)
+    val tables = getAllIndexTableNames(sft.getTypeName).filter(tableOps.exists)
+
+    if (previous.isVisibilityRequired != sft.isVisibilityRequired) {
+      previousTables.foreach(VisibilityIterator.clear(tableOps, _))
+      if (sft.isVisibilityRequired) {
+        tables.foreach(VisibilityIterator.set(tableOps, _))
+      }
+    }
+
+    previousTables.foreach { table =>
+      AgeOffIterator.clear(tableOps, table)
+      DtgAgeOffIterator.clear(tableOps, table)
+    }
 
     sft.getFeatureExpiration.foreach {
-      case IngestTimeExpiration(ttl) => AgeOffIterator.set(this, sft, ttl)
-      case FeatureTimeExpiration(dtg, _, ttl) => DtgAgeOffIterator.set(this, sft, ttl, dtg)
+      case IngestTimeExpiration(ttl) =>
+        tables.foreach(AgeOffIterator.set(tableOps, _, sft, ttl))
+
+      case FeatureTimeExpiration(dtg, _, ttl) =>
+        manager.indices(sft).foreach { index =>
+          val indexSft = index match {
+            case joinIndex: AttributeJoinIndex => joinIndex.indexSft
+            case _ => sft
+          }
+          DtgAgeOffIterator.set(tableOps, indexSft, index, ttl, dtg)
+        }
+
       case e => throw new IllegalArgumentException(s"Unexpected feature expiration: $e")
     }
   }
@@ -282,7 +332,7 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
             new SingleRowAccumuloMetadata[Stat](stats.metadata).migrate(typeName)
           }
         } finally {
-          lock.release()
+          lock.close()
         }
         sft = super.getSchema(typeName)
       }
@@ -305,6 +355,7 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
             val prefix = metadata.read(typeName, "id").getOrElse(s"${sft.getTypeName}~")
             sft.getUserData.put(SimpleFeatureTypes.InternalConfigs.TableSharingPrefix, prefix)
           }
+          // noinspection deprecation
           SimpleFeatureTypes.Configs.ENABLED_INDEX_OPTS.foreach { i =>
             metadata.read(typeName, i).foreach(e => sft.getUserData.put(SimpleFeatureTypes.Configs.EnabledIndices, e))
           }
@@ -327,11 +378,12 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
           val lock = acquireCatalogLock()
           try {
             if (!metadata.read(typeName, configuredKey, cache = false).contains("true")) {
+              adapter.ensureTableExists(stats.metadata.table)
               stats.configureStatCombiner(connector, sft)
               metadata.insert(typeName, configuredKey, "true")
             }
           } finally {
-            lock.release()
+            lock.close()
           }
         }
         // kick off asynchronous stats run for the existing data - this will set the stat date
@@ -346,10 +398,10 @@ class AccumuloDataStore(val connector: Connector, override val config: AccumuloD
   }
 
   override def dispose(): Unit = {
-    super.dispose()
-    CloseQuietly(kerberosTgtRenewer)
-    try { AccumuloVersion.close(connector) } catch {
-      case NonFatal(e) => logger.warn("Error closing Accumulo client:", e)
+    try {
+      super.dispose()
+    } finally {
+      CloseWithLogging(kerberosTgtRenewer.toSeq ++ Seq(connector))
     }
   }
 }
@@ -416,12 +468,12 @@ object AccumuloDataStore extends LazyLogging {
           s"GeoMesa 1.2.6 to update you data to a newer format. For more information, see $docs")
     }
 
-    // noinspection ScalaDeprecation
+    // noinspection deprecation
     SimpleFeatureTypes.Configs.ENABLED_INDEX_OPTS.map(sft.getUserData.get).find(_ != null) match {
       case None => indices
       case Some(enabled) =>
         // check for old index names
-        val e = enabled.toString.toLowerCase(Locale.US).split(",").map(_.trim).filter(_.length > 0).map {
+        val e = enabled.toString.toLowerCase(Locale.US).split(",").map(_.trim).filterNot(_.isEmpty).map {
           case "attr_idx" => AttributeIndex.name
           case "records" => IdIndex.name
           case i => i

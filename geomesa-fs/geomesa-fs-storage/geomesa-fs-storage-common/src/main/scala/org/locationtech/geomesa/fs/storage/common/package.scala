@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,19 +9,22 @@
 package org.locationtech.geomesa.fs.storage
 
 import com.typesafe.config._
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.fs.storage.api.NamedOptions
 import org.locationtech.geomesa.fs.storage.common.metadata.MetadataSerialization.Persistence.PartitionSchemeConfig
-import org.opengis.feature.simple.SimpleFeatureType
-import pureconfig.ConfigConvert
+import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
+import org.locationtech.geomesa.utils.text.Suffixes.Memory
 import pureconfig.generic.semiauto.deriveConvert
+import pureconfig.{ConfigConvert, ConfigSource}
 
-import scala.util.Try
 import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 package object common {
 
   val RenderOptions: ConfigRenderOptions = ConfigRenderOptions.concise().setFormatted(true)
   val ParseOptions: ConfigParseOptions = ConfigParseOptions.defaults()
+  val FileValidationEnabled: SystemProperty = SystemProperty("geomesa.fs.validate.file", "false")
 
   implicit val NamedOptionsConvert: ConfigConvert[NamedOptions] = deriveConvert[NamedOptions]
 
@@ -43,13 +46,13 @@ package object common {
       */
     def deserialize(options: String): NamedOptions = {
       val config = ConfigFactory.parseString(options, ParseOptions)
-      try { pureconfig.loadConfigOrThrow[NamedOptions](config) } catch {
+      try { ConfigSource.fromConfig(config).loadOrThrow[NamedOptions] } catch {
         case NonFatal(e) => Try(deserializeOldScheme(config)).getOrElse(throw e)
       }
     }
 
     private def deserializeOldScheme(config: Config): NamedOptions = {
-      val parsed = pureconfig.loadConfigOrThrow[PartitionSchemeConfig](config)
+      val parsed = ConfigSource.fromConfig(config).loadOrThrow[PartitionSchemeConfig]
       NamedOptions(parsed.scheme, parsed.options)
     }
   }
@@ -59,6 +62,7 @@ package object common {
     val LeafStorageKey = "geomesa.fs.leaf-storage"
     val MetadataKey    = "geomesa.fs.metadata"
     val SchemeKey      = "geomesa.fs.scheme"
+    val FileSizeKey    = "geomesa.fs.file-size"
     val ObserversKey   = "geomesa.fs.observers"
   }
 
@@ -87,6 +91,20 @@ package object common {
     def setMetadata(name: String, options: Map[String, String] = Map.empty): Unit =
       sft.getUserData.put(MetadataKey, serialize(NamedOptions(name, options)))
     def removeMetadata(): Option[NamedOptions] = remove(MetadataKey).map(deserialize)
+
+    def setTargetFileSize(size: String): Unit = {
+      // validate input
+      Memory.bytes(size).failed.foreach(e => throw new IllegalArgumentException("Invalid file size", e))
+      sft.getUserData.put(FileSizeKey, size)
+    }
+    def removeTargetFileSize(): Option[Long] = {
+      remove(FileSizeKey).map { s =>
+        Memory.bytes(s) match {
+          case Success(b) => b
+          case Failure(e) => throw new IllegalArgumentException("Invalid file size", e)
+        }
+      }
+    }
 
     def setObservers(names: Seq[String]): Unit = sft.getUserData.put(ObserversKey, names.mkString(","))
     def getObservers: Seq[String] = {

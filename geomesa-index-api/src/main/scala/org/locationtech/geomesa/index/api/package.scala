@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,14 @@
 
 package org.locationtech.geomesa.index
 
-import java.nio.charset.StandardCharsets
-
+import org.geotools.api.filter.Filter
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.filter.{andOption, filterToString}
 import org.locationtech.geomesa.index.utils.{ExplainNull, Explainer}
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.text.StringSerialization
-import org.opengis.filter.Filter
 
+import java.nio.charset.StandardCharsets
 import scala.util.control.NonFatal
 
 package object api {
@@ -235,48 +234,33 @@ package object api {
    * @param primary primary filter used for range generation
    * @param secondary secondary filter not captured in the ranges
    * @param temporal does the filter strategy have a temporal component
-   * @param toCost estimated cost of executing the query against this index
+   * @param costMultiplier a multiplier to take into account when evaluating the cost of this
+   *                 query plan. Values < 1f will prioritize this plan, while values > 1f
+   *                 will de-prioritize this plan
    */
-  class FilterStrategy(
-      val index: GeoMesaFeatureIndex[_, _],
-      val primary: Option[Filter],
-      val secondary: Option[Filter],
-      val temporal: Boolean,
-      toCost: => Long) {
+  case class FilterStrategy(
+      index: GeoMesaFeatureIndex[_, _],
+      primary: Option[Filter],
+      secondary: Option[Filter],
+      temporal: Boolean,
+      costMultiplier: Float) {
 
-    lazy val cost: Long = toCost
     lazy val filter: Option[Filter] = andOption(primary.toSeq ++ secondary)
+
+    def isFullTableScan: Boolean = primary.isEmpty
+
+    def isPreferredScan: Boolean = costMultiplier < FilterStrategy.PreferredMultiplierThreshold
 
     def getQueryStrategy(hints: Hints, explain: Explainer = ExplainNull): QueryStrategy =
       index.getQueryStrategy(this, hints, explain)
 
-    /**
-     * Copy without evaluating the cost
-     *
-     * @param secondary new secondary filter
-     * @param temporal new temporal flag
-     * @return
-     */
-    def copy(secondary: Option[Filter], temporal: Boolean = this.temporal): FilterStrategy =
-      new FilterStrategy(index, primary, secondary, temporal, toCost)
-
     override lazy val toString: String =
-      s"$index[${primary.map(filterToString).getOrElse("INCLUDE")}][${secondary.map(filterToString).getOrElse("None")}]"
+      s"$index[${primary.map(filterToString).getOrElse("INCLUDE")}]" +
+          s"[${secondary.map(filterToString).getOrElse("None")}]($costMultiplier)"
   }
 
   object FilterStrategy {
-
-    def apply(
-        index: GeoMesaFeatureIndex[_, _],
-        primary: Option[Filter],
-        secondary: Option[Filter],
-        temporal: Boolean,
-        toCost: => Long): FilterStrategy = {
-      new FilterStrategy(index, primary, secondary, temporal, toCost)
-    }
-
-    def unapply(f: FilterStrategy): Option[(GeoMesaFeatureIndex[_, _], Option[Filter], Option[Filter], Boolean, Long)] =
-      Some((f.index, f.primary, f.secondary, f.temporal, f.cost))
+    val PreferredMultiplierThreshold = 2f
   }
 
   /**
@@ -308,25 +292,28 @@ package object api {
   object ByteRange {
 
     import ByteArrays.ByteOrdering
-    import org.locationtech.geomesa.utils.conversions.ScalaImplicits.RichTraversableOnce
 
     val UnboundedLowerRange: Array[Byte] = Array.empty
     val UnboundedUpperRange: Array[Byte] = Array.fill(3)(ByteArrays.MaxByte)
 
     def min(ranges: Seq[ByteRange]): Array[Byte] = {
-      ranges.collect {
-        case BoundedByteRange(lo, _) => lo
-        case SingleRowByteRange(row) => row
-        case r => throw new IllegalArgumentException(s"Unexpected range type $r")
-      }.minOption.getOrElse(UnboundedLowerRange)
+      if (ranges.isEmpty) { UnboundedLowerRange } else {
+        ranges.collect {
+          case BoundedByteRange(lo, _) => lo
+          case SingleRowByteRange(row) => row
+          case r => throw new IllegalArgumentException(s"Unexpected range type $r")
+        }.min
+      }
     }
 
     def max(ranges: Seq[ByteRange]): Array[Byte] = {
-      ranges.collect {
-        case BoundedByteRange(_, hi) => hi
-        case SingleRowByteRange(row) => row
-        case r => throw new IllegalArgumentException(s"Unexpected range type $r")
-      }.maxOption.getOrElse(UnboundedUpperRange)
+      if (ranges.isEmpty) { UnboundedUpperRange } else {
+        ranges.collect {
+          case BoundedByteRange(_, hi) => hi
+          case SingleRowByteRange(row) => row
+          case r => throw new IllegalArgumentException(s"Unexpected range type $r")
+        }.max
+      }
     }
   }
 

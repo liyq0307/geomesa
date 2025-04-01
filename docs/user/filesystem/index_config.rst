@@ -108,6 +108,41 @@ Leaf storage can be specified through the user data key ``geomesa.fs.leaf-storag
         // or set directly in the user data as a string
         sft.getUserData.put("geomesa.fs.leaf-storage", "false")
 
+.. _fsds_file_size_config:
+
+Configuring Target File Size
+----------------------------
+
+By default data files can grow to unlimited size as more data is written and files are compacted. This may lead
+to poor performance, if a file becomes too large. To manage this, a target file size can be configured through
+the user data key ``geomesa.fs.file-size``:
+
+.. tabs::
+
+    .. code-tab:: java
+
+        import org.locationtech.geomesa.fs.storage.common.interop.ConfigurationUtils;
+
+        SimpleFeatureType sft = ...
+        // use the utility method
+        ConfigurationUtils.setTargetFileSize(sft, false);
+        // or set directly in the user data as a string
+        sft.getUserData().put("geomesa.fs.file-size", "1GB");
+
+    .. code-tab:: scala
+
+        import org.locationtech.geomesa.fs.storage.common.RichSimpleFeatureType
+
+        val sft: SimpleFeatureType = ???
+        // use the implicit method from RichSimpleFeatureType
+        sft.setTargetFileSize("1GB")
+        // or set directly in the user data as a string
+        sft.getUserData.put("geomesa.fs.file-size", "1GB")
+
+Note that target file size can also be specified in some operations, which will override any default configured
+in the feature type. See :ref:`fsds_compact_command` and :ref:`fsds_ingest_command` for details. See
+:ref:`fsds_size_threshold_prop` for controlling the file size error margin.
+
 .. _fsds_metadata_config:
 
 Configuring Metadata Persistence
@@ -145,6 +180,11 @@ Metadata persistence can be specified through the user data key ``geomesa.fs.met
         // or set directly in the user data as JSON
         sft.getUserData.put("geomesa.fs.metadata",
             """{ "name": "jdbc", "options": { "jdbc.url": "jdbc:postgresql://localhost/geomesa" } }""")
+
+.. note::
+
+  The metadata configuration supports property substitution using environment variables and Java system
+  properties. Property substitutions are specified using ``${}`` syntax, e.g. ``${HOME}`` or ``${user.home}``.
 
 Configuring Custom Observer Callbacks
 -------------------------------------
@@ -211,3 +251,24 @@ Observers can be specified through the user data key ``geomesa.fs.observers``:
         // or set directly in the user data as a comma-delimited string
         sft.getUserData.put("geomesa.fs.observers", factories.mkString(","))
 
+Configuring Path Filters
+------------------------
+
+.. note::
+
+  Path filtering is supported for ``converter`` encoding only.
+
+The FSDS can filter paths within a partition for more granular control of queries. Path filtering is configured
+through the user data key ``geomesa.fs.path-filter.name``.
+
+Currently, the only implementation is the ``dtg`` path filter, whose purpose is to parse a datetime from the given
+path and compare it to the query filter to include or exclude the file from the query. The following options are
+required for the ``dtg`` path filter, configured through the key ``geomesa.fs.path-filter.opts``:
+
+* ``attribute`` - The ``Date`` attribute in the query to compare against.
+* ``pattern`` - The regular expression, with a single capturing group, to extract a datetime string from the path.
+* ``format`` - The datetime formatting pattern to parse a date from the regex capture.
+* ``buffer`` - The duration to buffer the bounds of the parsed datetime by within the current partition. To buffer time
+  across partitions, see the ``receipt-time`` partition scheme.
+
+Custom path filters can be loaded via SPI.

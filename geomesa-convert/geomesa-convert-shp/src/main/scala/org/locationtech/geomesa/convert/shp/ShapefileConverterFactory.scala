@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,48 +8,51 @@
 
 package org.locationtech.geomesa.convert.shp
 
-import java.io.InputStream
-
-import com.typesafe.config.Config
+import com.typesafe.config.{Config, ConfigFactory, ConfigValueFactory}
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.shapefile.ShapefileDataStore
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.data.shapefile.ShapefileDataStoreFactory
+import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert.shp.ShapefileConverterFactory.TypeToProcess
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicConfig, BasicField, BasicOptions}
 import org.locationtech.geomesa.convert2.AbstractConverterFactory
 import org.locationtech.geomesa.convert2.AbstractConverterFactory._
 import org.locationtech.geomesa.convert2.transforms.Expression.Column
-import org.opengis.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.utils.io.WithClose
 
-import scala.util.control.NonFatal
+import java.io.InputStream
+import java.nio.charset.Charset
+import scala.util.{Failure, Try}
 
 class ShapefileConverterFactory
-  extends AbstractConverterFactory[ShapefileConverter, BasicConfig, BasicField, BasicOptions] {
-
-  import org.locationtech.geomesa.utils.conversions.ScalaImplicits._
+  extends AbstractConverterFactory[ShapefileConverter, BasicConfig, BasicField, BasicOptions](
+    ShapefileConverterFactory.TypeToProcess, BasicConfigConvert, BasicFieldConvert, BasicOptionsConvert) {
 
   import scala.collection.JavaConverters._
-
-  override protected val typeToProcess: String = ShapefileConverterFactory.TypeToProcess
-
-  override protected implicit def configConvert: ConverterConfigConvert[BasicConfig] = BasicConfigConvert
-  override protected implicit def fieldConvert: FieldConvert[BasicField] = BasicFieldConvert
-  override protected implicit def optsConvert: ConverterOptionsConvert[BasicOptions] = BasicOptionsConvert
 
   override def infer(
       is: InputStream,
       sft: Option[SimpleFeatureType],
-      path: Option[String]): Option[(SimpleFeatureType, Config)] = {
+      path: Option[String]): Option[(SimpleFeatureType, Config)] =
+    infer(is, sft, path.fold(Map.empty[String, AnyRef])(EvaluationContext.inputFileParam)).toOption
 
-    is.close() // we don't use the input stream, just close it
+  override def infer(
+      is: InputStream,
+      sft: Option[SimpleFeatureType],
+      hints: Map[String, AnyRef]): Try[(SimpleFeatureType, Config)] = {
+    val url = hints.get(EvaluationContext.InputFilePathKey) match {
+      case Some(p) => p.toString
+      case None => return Failure(new RuntimeException("No file path specified to the input data"))
 
-    path.flatMap { url =>
-      var ds: ShapefileDataStore = null
-      try {
-        ds = ShapefileConverter.getDataStore(url)
+    }
+    Try {
+      WithClose(ShapefileConverter.getDataStore(url, ShapefileConverterFactory.DefaultCharset)) { ds =>
         val fields = sft match {
           case None =>
-            ds.getSchema.getAttributeDescriptors.asScala.mapWithIndex { case (d, i) =>
-              BasicField(d.getLocalName, Some(Column(i + 1)))
+            var i = 0
+            ds.getSchema.getAttributeDescriptors.asScala.map { d =>
+              i += 1
+              BasicField(d.getLocalName, Some(Column(i)))
             }
 
           case Some(s) =>
@@ -67,24 +70,25 @@ class ShapefileConverterFactory
         val shpConfig = BasicConfig(TypeToProcess, Some(Column(0)), Map.empty, Map.empty)
 
         val config = BasicConfigConvert.to(shpConfig)
-            .withFallback(BasicFieldConvert.to(fields))
+            .withFallback(BasicFieldConvert.to(fields.toSeq))
             .withFallback(BasicOptionsConvert.to(BasicOptions.default))
             .toConfig
 
-        Some((sft.getOrElse(ds.getSchema), config))
-      } catch {
-        case NonFatal(e) =>
-          logger.debug(s"Could not infer Shapefile converter from path '$path':", e)
-          None
-      } finally {
-        if (ds != null) {
-          ds.dispose()
-        }
+        (sft.getOrElse(ds.getSchema), config)
       }
     }
   }
+
+  override protected def withDefaults(conf: Config): Config =
+    super.withDefaults(conf.withFallback(ShapefileConverterFactory.ShpConfigDefaults))
 }
 
 object ShapefileConverterFactory extends LazyLogging {
+
   val TypeToProcess: String = "shp"
+
+  private val DefaultCharset: Charset = ShapefileDataStoreFactory.DBFCHARSET.getDefaultValue.asInstanceOf[Charset]
+
+  private val ShpConfigDefaults: Config =
+    ConfigFactory.empty().withValue("options.encoding", ConfigValueFactory.fromAnyRef(DefaultCharset.name()))
 }

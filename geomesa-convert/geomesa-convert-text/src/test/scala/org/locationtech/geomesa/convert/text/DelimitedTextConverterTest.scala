@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,6 @@
 
 package org.locationtech.geomesa.convert.text
 
-import java.io.{ByteArrayInputStream, InputStreamReader}
-import java.nio.charset.StandardCharsets
-import java.util.{Collections, Date}
-
-import com.google.common.hash.Hashing
-import com.google.common.io.Resources
 import com.typesafe.config.{ConfigFactory, ConfigValueFactory}
 import org.apache.commons.csv.CSVFormat
 import org.geotools.util.factory.Hints
@@ -27,60 +21,62 @@ import org.locationtech.jts.geom.{Coordinate, GeometryFactory, Point}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import java.io.{ByteArrayInputStream, InputStreamReader}
+import java.nio.charset.StandardCharsets
+import java.util.{Collections, Date}
+
 @RunWith(classOf[JUnitRunner])
 class DelimitedTextConverterTest extends Specification {
 
+  import scala.collection.JavaConverters._
+
   sequential
+
+  val data = Seq(
+    """1,hello,45.0,45.0""",
+    """2,world,90.0,90.0""",
+    """willfail,hello""").mkString("\n")
+
+  val conf = ConfigFactory.parseString(
+    """
+      | {
+      |   type         = "delimited-text",
+      |   format       = "DEFAULT",
+      |   id-field     = "md5(string2bytes($0))",
+      |   fields = [
+      |     { name = "oneup",    transform = "$1" },
+      |     { name = "phrase",   transform = "concat($1, $2)" },
+      |     { name = "lat",      transform = "$3::double" },
+      |     { name = "lon",      transform = "$4::double" },
+      |     { name = "lit",      transform = "'hello'" },
+      |     { name = "geom",     transform = "point($lat, $lon)" }
+      |     { name = "l1",       transform = "concat($lit, $lit)" }
+      |     { name = "l2",       transform = "concat($l1,  $lit)" }
+      |     { name = "l3",       transform = "concat($l2,  $lit)" }
+      |   ]
+      | }
+      """.stripMargin)
+
+  val sft = SimpleFeatureTypes.createType(ConfigFactory.load("sft_testsft.conf"))
 
   "DelimitedTextConverter" should {
 
-    val data = Seq(
-      """1,hello,45.0,45.0""",
-      """2,world,90.0,90.0""",
-      """willfail,hello""").mkString("\n")
-
-    val conf = ConfigFactory.parseString(
-      """
-        | {
-        |   type         = "delimited-text",
-        |   format       = "DEFAULT",
-        |   id-field     = "md5(string2bytes($0))",
-        |   fields = [
-        |     { name = "oneup",    transform = "$1" },
-        |     { name = "phrase",   transform = "concat($1, $2)" },
-        |     { name = "lat",      transform = "$3::double" },
-        |     { name = "lon",      transform = "$4::double" },
-        |     { name = "lit",      transform = "'hello'" },
-        |     { name = "geom",     transform = "point($lat, $lon)" }
-        |     { name = "l1",       transform = "concat($lit, $lit)" }
-        |     { name = "l2",       transform = "concat($l1,  $lit)" }
-        |     { name = "l3",       transform = "concat($l2,  $lit)" }
-        |   ]
-        | }
-      """.stripMargin)
-
-    val sft = SimpleFeatureTypes.createType(ConfigFactory.load("sft_testsft.conf"))
-
     "be built from a conf" >> {
+      SimpleFeatureConverter(sft, conf).close() must not(throwAn[Exception])
+    }
+
+    "process some data" >> {
       val res = WithClose(SimpleFeatureConverter(sft, conf)) { converter =>
         WithClose(converter.process(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8))))(_.toList)
       }
-
-      "and process some data" >> {
-        res.size must be equalTo 2
-        res(0).getAttribute("phrase").asInstanceOf[String] must be equalTo "1hello"
-        res(1).getAttribute("phrase").asInstanceOf[String] must be equalTo "2world"
-      }
-
-      "handle more derived fields than input fields" >> {
-        res(0).getAttribute("oneup").asInstanceOf[String] must be equalTo "1"
-      }
-
-      "correctly identify feature IDs based on lines" >> {
-        val hashing = Hashing.md5()
-        res(0).getID mustEqual hashing.hashBytes("1,hello,45.0,45.0".getBytes(StandardCharsets.UTF_8)).toString
-        res(1).getID mustEqual hashing.hashBytes("2,world,90.0,90.0".getBytes(StandardCharsets.UTF_8)).toString
-      }
+      res.size must be equalTo 2
+      res(0).getAttribute("phrase").asInstanceOf[String] must be equalTo "1hello"
+      res(1).getAttribute("phrase").asInstanceOf[String] must be equalTo "2world"
+      // handle more derived fields than input fields
+      res(0).getAttribute("oneup").asInstanceOf[String] must be equalTo "1"
+      // correctly identify feature IDs based on lines
+      res(0).getID mustEqual "924ab432cc82d3442f94f3c4969a2b0e" // hashing.hashBytes("1,hello,45.0,45.0".getBytes(StandardCharsets.UTF_8)).toString
+      res(1).getID mustEqual "cd8bf6a68220d43c9158ff101a30a99d" // hashing.hashBytes("2,world,90.0,90.0".getBytes(StandardCharsets.UTF_8)).toString
     }
 
     "handle tab delimited files" >> {
@@ -205,7 +201,7 @@ class DelimitedTextConverterTest extends Specification {
       val sft = SimpleFeatureTypes.createType(ConfigFactory.load("sft_testsft.conf"))
       WithClose(SimpleFeatureConverter(sft, conf)) { converter =>
         converter must not(beNull)
-        val res = WithClose(converter.process(Resources.getResource("messydata.csv").openStream()))(_.toList)
+        val res = WithClose(converter.process(getClass.getClassLoader.getResourceAsStream("messydata.csv")))(_.toList)
         res.size must be equalTo 2
         res(0).getAttribute("phrase").asInstanceOf[String] must be equalTo "1hello, \"foo\""
         res(1).getAttribute("phrase").asInstanceOf[String] must be equalTo "2world"
@@ -328,9 +324,7 @@ class DelimitedTextConverterTest extends Specification {
             |1,hello,Point(46.0 45.0)
             |2,world,Point(90.0 90.0)
           """.stripMargin
-
-        import scala.collection.JavaConversions._
-        val sz = format.parse(new InputStreamReader(new ByteArrayInputStream(trueData.getBytes(StandardCharsets.UTF_8)))).iterator().toList.size
+        val sz = format.parse(new InputStreamReader(new ByteArrayInputStream(trueData.getBytes(StandardCharsets.UTF_8)))).iterator().asScala.toList.size
 
         // prove that skipHeader and empty lines doesn't work (at least as I think) and that we are safe to
         // consume the header record and empty lines as part of our config
@@ -596,7 +590,6 @@ class DelimitedTextConverterTest extends Specification {
     }
 
     "handle out-of-order attributes" >> {
-      import scala.collection.JavaConversions._
 
       val conf = ConfigFactory.parseString(
         """
@@ -629,8 +622,8 @@ class DelimitedTextConverterTest extends Specification {
         val converted = WithClose(converter.process(new ByteArrayInputStream("myfid,foo,45.0,55.0".getBytes(StandardCharsets.UTF_8))))(_.toList)
         converted must haveLength(1)
         converted.head.getID mustEqual "myfid"
-        converted.head.getAttributes.toSeq mustEqual Seq("hello myfid", WKTUtils.read("POINT(45 55)"))
-        converted.head.getUserData.toMap mustEqual
+        converted.head.getAttributes.asScala mustEqual Seq("hello myfid", WKTUtils.read("POINT(45 55)"))
+        converted.head.getUserData.asScala mustEqual
             Map("my.first.key"              -> "myfid"
               , "my.second.key"             -> "foo"
               , Hints.USE_PROVIDED_FID      -> true
@@ -764,17 +757,18 @@ class DelimitedTextConverterTest extends Specification {
 
       val data =
         """
+          |num,word,lat,lon
           |1,hello,45.0,45.0
           |2,world,90.0,90.0
         """.stripMargin
 
       val factory = new DelimitedTextConverterFactory()
-      val inferred = factory.infer(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8)))
-      inferred must beSome
+      val inferred = factory.infer(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8)), None, Map.empty[String, AnyRef])
+      inferred must beASuccessfulTry
 
       val (sft, config) = inferred.get
       sft.getAttributeDescriptors.asScala.map(_.getType.getBinding) mustEqual
-          Seq(classOf[Integer], classOf[String], classOf[java.lang.Float], classOf[java.lang.Float], classOf[Point])
+          Seq(classOf[Integer], classOf[String], classOf[java.lang.Double], classOf[java.lang.Double], classOf[Point])
 
       val converter = factory.apply(sft, config)
       converter must beSome
@@ -796,12 +790,12 @@ class DelimitedTextConverterTest extends Specification {
         """.stripMargin
 
       val factory = new DelimitedTextConverterFactory()
-      val inferred = factory.infer(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8)))
-      inferred must beSome
+      val inferred = factory.infer(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8)), None, Map.empty[String, AnyRef])
+      inferred must beASuccessfulTry
 
       val (sft, config) = inferred.get
       sft.getAttributeDescriptors.asScala.map(_.getType.getBinding) mustEqual
-          Seq(classOf[Integer], classOf[String], classOf[java.lang.Float], classOf[java.lang.Float], classOf[Point])
+          Seq(classOf[Integer], classOf[String], classOf[java.lang.Double], classOf[java.lang.Double], classOf[Point])
 
       val converter = factory.apply(sft, config)
       converter must beSome
@@ -840,8 +834,8 @@ class DelimitedTextConverterTest extends Specification {
           |""".stripMargin
 
       val factory = new DelimitedTextConverterFactory()
-      val inferred = factory.infer(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8)))
-      inferred must beSome
+      val inferred = factory.infer(new ByteArrayInputStream(data.getBytes(StandardCharsets.UTF_8)), None, Map.empty[String, AnyRef])
+      inferred must beASuccessfulTry
 
       val (sft, config) = inferred.get
 

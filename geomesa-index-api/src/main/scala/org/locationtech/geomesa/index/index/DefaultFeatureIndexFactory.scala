@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,20 +8,20 @@
 
 package org.locationtech.geomesa.index.index
 
-import org.locationtech.geomesa.index.index.s2.S2Index
-import org.locationtech.geomesa.index.index.s3.S3Index
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, GeoMesaFeatureIndexFactory}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.index.attribute.legacy._
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.index.id.legacy.{IdIndexV1, IdIndexV2, IdIndexV3}
+import org.locationtech.geomesa.index.index.s2.S2Index
+import org.locationtech.geomesa.index.index.s3.S3Index
 import org.locationtech.geomesa.index.index.z2.legacy._
 import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index}
 import org.locationtech.geomesa.index.index.z3.legacy._
 import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index}
 import org.locationtech.geomesa.utils.conf.IndexId
-import org.opengis.feature.simple.SimpleFeatureType
 
 import scala.util.Try
 
@@ -58,14 +58,16 @@ object DefaultFeatureIndexFactory extends GeoMesaFeatureIndexFactory {
       case (IdIndex.name, 2)  => Some(new IdIndexV2(ds, sft, index.mode))
       case (IdIndex.name, 1)  => Some(new IdIndexV1(ds, sft, index.mode))
 
-      case (Z3Index.name, 6)  => Some(new Z3Index(ds, sft, geom3, dtg, index.mode))
+      case (Z3Index.name, 7)  => Some(new Z3Index(ds, sft, geom3, dtg, index.mode))
+      case (Z3Index.name, 6)  => Some(new Z3IndexV6(ds, sft, geom3, dtg, index.mode))
       case (Z3Index.name, 5)  => Some(new Z3IndexV5(ds, sft, geom3, dtg, index.mode))
       case (Z3Index.name, 4)  => Some(new Z3IndexV4(ds, sft, geom3, dtg, index.mode))
       case (Z3Index.name, 3)  => Some(new Z3IndexV3(ds, sft, geom3, dtg, index.mode))
       case (Z3Index.name, 2)  => Some(new Z3IndexV2(ds, sft, geom3, dtg, index.mode))
       case (Z3Index.name, 1)  => Some(new Z3IndexV1(ds, sft, geom3, dtg, index.mode))
 
-      case (XZ3Index.name, 2) => Some(new XZ3Index(ds, sft, geom3, dtg, index.mode))
+      case (XZ3Index.name, 3) => Some(new XZ3Index(ds, sft, geom3, dtg, index.mode))
+      case (XZ3Index.name, 2) => Some(new XZ3IndexV2(ds, sft, geom3, dtg, index.mode))
       case (XZ3Index.name, 1) => Some(new XZ3IndexV1(ds, sft, geom3, dtg, index.mode))
 
       case (Z2Index.name, 5)  => Some(new Z2Index(ds, sft, geom2, index.mode))

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,8 @@
 
 package org.locationtech.geomesa.index.utils
 
-import java.io.{File, FileInputStream, FileOutputStream}
-import java.nio.file.Files
-import java.util.concurrent.atomic.AtomicBoolean
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.SimpleFeature
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.SimpleFeatureSerializer
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
@@ -21,8 +18,10 @@ import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureOrdering
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.io.{CloseQuietly, Sizable, WithClose}
-import org.opengis.feature.simple.SimpleFeature
 
+import java.io.{File, FileInputStream, FileOutputStream}
+import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 import scala.util.control.NonFatal
@@ -185,7 +184,7 @@ object SortingSimpleFeatureIterator extends LazyLogging {
       if (files.isEmpty) {
         CloseableIterator(list.iterator.asScala, tail.close())
       } else {
-        new MergeSortingIterator(files, serializer, list.iterator.asScala, tail, ordering)
+        new MergeSortingIterator(files.toIndexedSeq, serializer, list.iterator.asScala, tail, ordering)
       }
     }
   }

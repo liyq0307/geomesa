@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,15 @@
 
 package org.locationtech.geomesa.tools.status
 
+import com.beust.jcommander._
+import org.geotools.api.data.{DataStore, FileDataStore}
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.tools.status.GetSftConfigCommand.{Spec, TypeSafe}
+import org.locationtech.geomesa.tools.{Command, DataStoreCommand, ProvidedTypeNameParam, TypeNameParam}
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+
 import java.util
 import java.util.Collections
-
-import com.beust.jcommander._
-import org.geotools.data.DataStore
-import org.locationtech.geomesa.tools.status.GetSftConfigCommand.{Spec, TypeSafe}
-import org.locationtech.geomesa.tools.{Command, DataStoreCommand, RequiredTypeNameParam}
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.simple.SimpleFeatureType
 
 trait GetSftConfigCommand[DS <: DataStore] extends DataStoreCommand[DS] {
 
@@ -24,8 +24,14 @@ trait GetSftConfigCommand[DS <: DataStore] extends DataStoreCommand[DS] {
 
   override def params: GetSftConfigParams
 
-  override def execute(): Unit = {
-    import scala.collection.JavaConversions._
+  override def execute(): Unit = withDataStore(showSftConfig)
+
+  protected def showSftConfig(ds: DS): Unit = {
+    import scala.collection.JavaConverters._
+    for {
+      p <- Option(params).collect { case p: ProvidedTypeNameParam => p }
+      f <- Option(ds).collect { case f: FileDataStore => f }
+    } { p.featureName = f.getSchema.getTypeName }
 
     Command.user.info(s"Retrieving SFT for type name '${params.featureName}'")
 
@@ -33,7 +39,7 @@ trait GetSftConfigCommand[DS <: DataStore] extends DataStoreCommand[DS] {
     if (sft == null) {
       throw new ParameterException(s"Schema '${params.featureName}' does not exist in the provided datastore")
     }
-    params.format.map(_.toLowerCase).foreach {
+    params.format.asScala.map(_.toLowerCase).foreach {
       case TypeSafe => Command.output.info(SimpleFeatureTypes.toConfigString(sft, !params.excludeUserData, params.concise))
       case Spec => Command.output.info(SimpleFeatureTypes.encodeType(sft, !params.excludeUserData))
       // shouldn't happen due to parameter validation
@@ -42,7 +48,6 @@ trait GetSftConfigCommand[DS <: DataStore] extends DataStoreCommand[DS] {
   }
 
   def getSchema(ds: DS): SimpleFeatureType = ds.getSchema(params.featureName)
-
 }
 
 object GetSftConfigCommand {
@@ -51,11 +56,15 @@ object GetSftConfigCommand {
 }
 
 // @Parameters(commandDescription = "Get the SimpleFeatureType of a feature")
-trait GetSftConfigParams extends RequiredTypeNameParam {
+trait GetSftConfigParams extends TypeNameParam {
   @Parameter(names = Array("--concise"), description = "Render in concise format", required = false)
   var concise: Boolean = false
 
-  @Parameter(names = Array("--format"), description = "Output formats (allowed values are spec or config)", required = false, validateValueWith = classOf[FormatValidator])
+  @Parameter(
+    names = Array("--format"),
+    description = "Output formats (allowed values are spec or config)",
+    required = false,
+    validateValueWith = Array(classOf[FormatValidator]))
   var format: java.util.List[String] = Collections.singletonList(Spec)
 
   @Parameter(names = Array("--exclude-user-data"), description = "Exclude user data", required = false)
@@ -64,9 +73,9 @@ trait GetSftConfigParams extends RequiredTypeNameParam {
 
 class FormatValidator extends IValueValidator[java.util.List[String]] {
   override def validate(name: String, value: util.List[String]): Unit = {
-    import scala.collection.JavaConversions._
-    if (value == null || value.isEmpty || value.map(_.toLowerCase ).exists(v => v != Spec && v != TypeSafe)) {
-      throw new ParameterException(s"Invalid value for format: ${Option(value).map(_.mkString(",")).orNull}")
+    import scala.collection.JavaConverters._
+    if (value == null || value.isEmpty || value.asScala.map(_.toLowerCase ).exists(v => v != Spec && v != TypeSafe)) {
+      throw new ParameterException(s"Invalid value for format: ${Option(value).map(_.asScala.mkString(",")).orNull}")
     }
   }
 }

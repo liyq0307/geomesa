@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,10 @@
 
 package org.locationtech.geomesa.convert.parquet
 
-import java.io.File
-import java.util.{Date, UUID}
-
-import com.typesafe.config.{Config, ConfigFactory}
+import com.typesafe.config.ConfigFactory
 import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
@@ -21,9 +19,11 @@ import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom._
-import org.opengis.feature.simple.SimpleFeatureType
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.File
+import java.util.{Date, UUID}
 
 @RunWith(classOf[JUnitRunner])
 class ParquetConverterTest extends Specification {
@@ -55,8 +55,7 @@ class ParquetConverterTest extends Specification {
       val path = new File(file.toURI).getAbsolutePath
 
       val res = WithClose(SimpleFeatureConverter(sft, conf)) { converter =>
-        val ec = converter.createEvaluationContext()
-        ec.setInputFilePath(path)
+        val ec = converter.createEvaluationContext(EvaluationContext.inputFileParam(path))
         WithClose(converter.process(file.openStream(), ec))(_.toList)
       }
 
@@ -74,8 +73,8 @@ class ParquetConverterTest extends Specification {
       val path = new File(file.toURI).getAbsolutePath
 
       val factory = new ParquetConverterFactory()
-      val inferred: Option[(SimpleFeatureType, Config)] = factory.infer(file.openStream(), path = Some(path))
-      inferred must beSome
+      val inferred = factory.infer(file.openStream(), None, EvaluationContext.inputFileParam(path))
+      inferred must beASuccessfulTry
 
       val (sft, config) = inferred.get
 
@@ -84,8 +83,7 @@ class ParquetConverterTest extends Specification {
           Seq(classOf[java.lang.Integer], classOf[String], classOf[java.lang.Integer], classOf[Date], classOf[Point])
 
       val res = WithClose(SimpleFeatureConverter(sft, config)) { converter =>
-        val ec = converter.createEvaluationContext()
-        ec.setInputFilePath(path)
+        val ec = converter.createEvaluationContext(EvaluationContext.inputFileParam(path))
         WithClose(converter.process(file.openStream(), ec))(_.toList)
       }
 
@@ -104,19 +102,18 @@ class ParquetConverterTest extends Specification {
       val path = new File(file.toURI).getAbsolutePath
 
       val factory = new ParquetConverterFactory()
-      val inferred: Option[(SimpleFeatureType, Config)] = factory.infer(file.openStream(), path = Some(path))
-      inferred must beSome
+      val inferred = factory.infer(file.openStream(), None, EvaluationContext.inputFileParam(path))
+      inferred must beASuccessfulTry
 
       val (sft, config) = inferred.get
 
       SimpleFeatureTypes.encodeType(sft) mustEqual
-          "color:String,id:Long,lat:Double,lon:Double,number:Long,height:String,weight:Double,*geom:Point:srid=4326"
+          "color:String,id_0:Long,lat:Double,lon:Double,number:Long,height:String,weight:Double,*geom:Point:srid=4326"
 
       val converter = factory.apply(sft, config)
       converter must beSome
 
-      val ec = converter.get.createEvaluationContext()
-      ec.setInputFilePath(path)
+      val ec = converter.get.createEvaluationContext(EvaluationContext.inputFileParam(path))
       val features = converter.get.process(file.openStream(), ec).toList
       converter.get.close()
       features must haveLength(3)
@@ -130,8 +127,8 @@ class ParquetConverterTest extends Specification {
       val path = new File(file.toURI).getAbsolutePath
 
       val factory = new ParquetConverterFactory()
-      val inferred: Option[(SimpleFeatureType, Config)] = factory.infer(file.openStream(), path = Some(path))
-      inferred must beSome
+      val inferred = factory.infer(file.openStream(), None, EvaluationContext.inputFileParam(path))
+      inferred must beASuccessfulTry
 
       val (sft, config) = inferred.get
 
@@ -146,8 +143,7 @@ class ParquetConverterTest extends Specification {
             classOf[MultiPolygon], classOf[Date], classOf[Point])
 
       val res = WithClose(SimpleFeatureConverter(sft, config)) { converter =>
-        val ec = converter.createEvaluationContext()
-        ec.setInputFilePath(path)
+        val ec = converter.createEvaluationContext(EvaluationContext.inputFileParam(path))
         WithClose(converter.process(file.openStream(), ec))(_.toList)
       }
 

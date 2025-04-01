@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,16 +8,15 @@
 
 package org.locationtech.geomesa.index.stats
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.util.factory.Hints
 import org.geotools.filter.text.ecql.ECQL
+import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.index.TestGeoMesaDataStore
 import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -35,7 +34,7 @@ class StatsBasedEstimatorTest extends Specification {
   step {
     ds.createSchema(sft)
     features.foreach(_.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE))
-    ds.getFeatureSource(sft.getTypeName).addFeatures(new ListFeatureCollection(sft, features.toArray[SimpleFeature]))
+    ds.getFeatureSource(sft.getTypeName).addFeatures(new ListFeatureCollection(sft, features: _*))
   }
 
   "StatsBasedEstimator" should {
@@ -48,7 +47,7 @@ class StatsBasedEstimatorTest extends Specification {
           "CONTAINS(POLYGON ((44 54, 44 56, 48 56, 48 54, 44 54)), geom) AND " +
           "NOT (dtg IS NULL) AND " +
           "INCLUDE")
-      val plans = ds.getQueryPlan(new Query(sft.getTypeName, filter, Array("trackId", "dtg")))
+      val plans = ds.getQueryPlan(new Query(sft.getTypeName, filter, "trackId", "dtg"))
       plans must haveLength(1)
       plans.head.filter.index must beAnInstanceOf[Z3Index]
     }

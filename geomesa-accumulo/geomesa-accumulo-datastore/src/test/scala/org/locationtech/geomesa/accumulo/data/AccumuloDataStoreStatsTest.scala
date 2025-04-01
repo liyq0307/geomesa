@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,28 +8,35 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import java.time.{Instant, ZoneOffset, ZonedDateTime}
-import java.util.Date
-
-import org.geotools.data._
-import org.geotools.data.simple.SimpleFeatureReader
+import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.data._
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.feature.DefaultFeatureCollection
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.geometry.jts.ReferencedEnvelope
+import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithMultipleSfts
+import org.locationtech.geomesa.accumulo.index.AttributeJoinIndex
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.index.conf.QueryHints.{EXACT_COUNT, QUERY_INDEX}
+import org.locationtech.geomesa.index.index.z2.Z2Index
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{CRS_EPSG_4326, wholeWorldEnvelope}
+import org.locationtech.geomesa.utils.stats.MinMax
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import java.time.{Instant, ZoneOffset, ZonedDateTime}
+import java.util.Date
+
 @RunWith(classOf[JUnitRunner])
-class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts {
+class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts with LazyLogging {
+
+  import scala.collection.JavaConverters._
 
   sequential
 
@@ -45,6 +52,11 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
   }
 
   val dayInMillis = ZonedDateTime.ofInstant(Instant.ofEpochMilli(baseMillis), ZoneOffset.UTC).plusDays(1).toInstant.toEpochMilli - baseMillis
+
+  // cardinality in MinMax is slightly inaccurate, so we do inexact checking for it
+  def beCloseToMinMax[T](min: T, max: T, cardinality: Long, delta: Long = 1) =
+      ((s: MinMax[T]) => (s.min, s.max)) ^^ beEqualTo(min, max) and
+      ((_:MinMax[T]).cardinality) ^^ beCloseTo(cardinality, delta)
 
   "AccumuloDataStore" should {
     "track stats for ingested features" >> {
@@ -114,8 +126,8 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
         ds.stats.getCount(sft) must beSome(2L)
         ds.stats.getBounds(sft) mustEqual new ReferencedEnvelope(0, 10, 0, 10, CRS_EPSG_4326)
         ds.stats.getMinMax[String](sft, "name").map(_.tuple) must beSome(("alpha", "cappa", 2L))
-        ds.stats.getMinMax[Date](sft, "dtg").map(_.tuple) must
-            beSome((new Date(baseMillis), new Date(baseMillis + dayInMillis / 2), 2L))
+        ds.stats.getMinMax[Date](sft, "dtg") must
+            beSome(beCloseToMinMax(new Date(baseMillis), new Date(baseMillis + dayInMillis / 2), 2L))
       }
 
       "through feature source add features" >> {
@@ -135,8 +147,8 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
         ds.stats.getCount(sft) must beSome(3L)
         ds.stats.getBounds(sft) mustEqual new ReferencedEnvelope(-10, 10, -10, 10, CRS_EPSG_4326)
         ds.stats.getMinMax[String](sft, "name").map(_.tuple) must beSome (("alpha", "gamma", 3L))
-        ds.stats.getMinMax[Date](sft, "dtg").map(_.tuple) must
-            beSome((new Date(baseMillis), new Date(baseMillis + dayInMillis), 3L))
+        ds.stats.getMinMax[Date](sft, "dtg") must
+            beSome(beCloseToMinMax(new Date(baseMillis), new Date(baseMillis + dayInMillis), 3L))
       }
 
       "not expand bounds when not necessary" >> {
@@ -154,8 +166,8 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
         ds.stats.getCount(sft) must beSome(4L)
         ds.stats.getBounds(sft) mustEqual new ReferencedEnvelope(-10, 10, -10, 10, CRS_EPSG_4326)
         ds.stats.getMinMax[String](sft, "name").map(_.tuple) must beSome(("alpha", "gamma", 4L))
-        ds.stats.getMinMax[Date](sft, "dtg").map(_.tuple) must
-            beSome((new Date(baseMillis), new Date(baseMillis + dayInMillis), 3L))
+        ds.stats.getMinMax[Date](sft, "dtg") must
+            beSome(beCloseToMinMax(new Date(baseMillis), new Date(baseMillis + dayInMillis), 3L))
       }
 
       "through feature source set features" >> {
@@ -227,7 +239,7 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
         ds.stats.getMinMax[String](sft, "name").map(_.tuple) must beSome(("0", "9", 10L))
         ds.stats.getMinMax[Int](sft, "age").map(_.tuple) must beSome((1, 2, 2L))
         ds.stats.getMinMax[Int](sft, "height") must beNone
-        ds.stats.getMinMax[Date](sft, "dtg").map(_.tuple) must beSome((minDate, maxDate, 10L))
+        ds.stats.getMinMax[Date](sft, "dtg") must beSome(beCloseToMinMax(minDate, maxDate, 10L))
 
         val nameTopK = ds.stats.getTopK[String](sft, "name")
         nameTopK must beSome
@@ -366,9 +378,8 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
       }
 
       "not calculate stats when collection is disabled" >> {
-        import scala.collection.JavaConversions._
         val params = dsParams ++ Map(AccumuloDataStoreParams.GenerateStatsParam.key -> false)
-        val dsNoStats =  DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+        val dsNoStats =  DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
 
         val fs = dsNoStats.getFeatureSource(sftName)
 
@@ -388,6 +399,38 @@ class AccumuloDataStoreStatsTest extends Specification with TestWithMultipleSfts
         ds.stats.getMinMax[String](sft, "name").map(_.tuple) must beSome(("0", "9", 10L))
         ds.stats.getMinMax[Int](sft, "age").map(_.tuple) must beSome((1, 2, 2L))
         ds.stats.getMinMax[Int](sft, "height") must beNone
+      }
+
+      "calculate exact counts with index query hints" >> {
+        // mock accumulo seems to really struggle with setting up the stat iterator
+        // the call to batchScanner.iterator can take several seconds
+        // this doesn't seem to happen with regular accumulo
+        // so only test one of each query type here
+
+        // deleting the "name" index table to show that the QUERY_INDEX hint is being passed through
+        ds.manager.indices(sft).collectFirst {
+          case i: AttributeJoinIndex if i.attributes.head == "name" => i.getTableName()
+        }.foreach { ds.connector.tableOperations().delete(_) }
+
+        val filters = Seq("bbox(geom,0,0,10,5)", "name < '7'")
+        forall(filters.map(ECQL.toFilter)) { filter =>
+          val query = new Query(sft.getTypeName, filter)
+          val hints = new Hints()
+          hints.put(QUERY_INDEX, Z2Index.name)
+          hints.put(EXACT_COUNT, java.lang.Boolean.TRUE)
+          query.setHints(hints)
+
+          val fs = ds.getFeatureSource(sftName)
+          val count = fs.getCount(query)
+
+          val reader = ds.getFeatureReader(query, Transaction.AUTO_COMMIT)
+          val exact = SelfClosingIterator(reader).length.toLong
+          exact must beGreaterThan(0L)
+          val calculated = ds.stats.getCount(sft, filter, exact = true, hints)
+          calculated must beSome(exact)
+          logger.debug(s"FS Count: $count reader count: $exact stats count: $calculated")
+          count mustEqual exact
+        }
       }
     }
   }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,8 +8,8 @@
 
 package org.locationtech.geomesa.index.view
 
-import org.geotools.data.{DataStore, Query}
-import org.opengis.feature.simple.SimpleFeatureType
+import org.geotools.api.data.{DataStore, Query}
+import org.geotools.api.feature.simple.SimpleFeatureType
 
 /**
   * Routes queries to one of a set of stores

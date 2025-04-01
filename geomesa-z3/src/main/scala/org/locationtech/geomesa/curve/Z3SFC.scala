@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,24 +10,29 @@ package org.locationtech.geomesa.curve
 
 import org.locationtech.geomesa.curve.NormalizedDimension._
 import org.locationtech.geomesa.curve.TimePeriod.TimePeriod
-import org.locationtech.sfcurve.IndexRange
-import org.locationtech.sfcurve.zorder.{Z3, ZRange}
+import org.locationtech.geomesa.curve.Z3SFC.{Z3Dimensions, StandardZ3Dimensions}
+import org.locationtech.geomesa.zorder.sfcurve.{IndexRange, Z3, ZRange}
 
 /**
   * Z3 space filling curve
   *
-  * @param period time period used to bin results
-  * @param precision bits used per dimension - note all precisions must sum to less than 64
+  * @param dims curve dimensions
   */
-class Z3SFC(period: TimePeriod, precision: Int = 21) extends SpaceTimeFillingCurve {
+class Z3SFC(dims: Z3Dimensions) extends SpaceTimeFillingCurve {
 
-  require(precision > 0 && precision < 22, "Precision (bits) per dimension must be in [1,21]")
+  val lon: NormalizedDimension  = dims.lon
+  val lat: NormalizedDimension  = dims.lat
+  val time: NormalizedDimension = dims.time
 
-  val lon: NormalizedDimension  = NormalizedLon(precision)
-  val lat: NormalizedDimension  = NormalizedLat(precision)
-  val time: NormalizedDimension = NormalizedTime(precision, BinnedTime.maxOffset(period).toDouble)
+  val wholePeriod: Seq[(Long, Long)] = Seq((time.min.toLong, time.max.toLong))
 
-  val wholePeriod = Seq((time.min.toLong, time.max.toLong))
+  /**
+   * Alternate constructor
+   *
+   * @param period    time period used to bin results
+   * @param precision bits used per dimension - note all precisions must sum to less than 64
+   */
+  def this(period: TimePeriod, precision: Int = 21) = this(StandardZ3Dimensions(period, precision))
 
   override def index(x: Double, y: Double, t: Long, lenient: Boolean = false): Long = {
     try {
@@ -58,11 +63,13 @@ class Z3SFC(period: TimePeriod, precision: Int = 21) extends SpaceTimeFillingCur
     val zbounds = for { (xmin, ymin, xmax, ymax) <- xy ; (tmin, tmax) <- t } yield {
       ZRange(index(xmin, ymin, tmin), index(xmax, ymax, tmax))
     }
-    Z3.zranges(zbounds.toArray, precision, maxRanges)
+    Z3.zranges(zbounds.toArray, precision, maxRanges, Z3SFC.MaxRecursion)
   }
 }
 
 object Z3SFC {
+
+  private val MaxRecursion = sys.props.get("geomesa.scan.ranges.recurse").map(_.toInt).orElse(Some(Int.MaxValue))
 
   private val SfcDay   = new Z3SFC(TimePeriod.Day)
   private val SfcWeek  = new Z3SFC(TimePeriod.Week)
@@ -75,4 +82,20 @@ object Z3SFC {
     case TimePeriod.Month => SfcMonth
     case TimePeriod.Year  => SfcYear
   }
+
+  trait Z3Dimensions {
+    def lon: NormalizedDimension
+    def lat: NormalizedDimension
+    def time: NormalizedDimension
+  }
+
+  case class StandardZ3Dimensions(period: TimePeriod, precision: Int = 21) extends Z3Dimensions {
+
+    require(precision > 0 && precision < 22, "Precision (bits) per dimension must be in [1,21]")
+
+    override val lon: NormalizedDimension = NormalizedLon(precision)
+    override val lat: NormalizedDimension = NormalizedLat(precision)
+    override val time: NormalizedDimension = NormalizedTime(precision, BinnedTime.maxOffset(period).toDouble)
+  }
 }
+

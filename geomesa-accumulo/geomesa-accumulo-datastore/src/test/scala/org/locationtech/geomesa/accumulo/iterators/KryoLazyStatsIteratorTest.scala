@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,7 @@
 
 package org.locationtech.geomesa.accumulo.iterators
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -24,16 +24,16 @@ class KryoLazyStatsIteratorTest extends Specification with TestWithFeatureType {
 
   import org.locationtech.geomesa.index.iterators.StatsScan.decodeStat
 
-  sequential
-
   override val spec = "idt:java.lang.Integer:index=full,attr:java.lang.Long:index=join,dtg:Date,*geom:Point:srid=4326"
 
-  addFeatures((0 until 150).toArray.map { i =>
-    val attrs = Array(i.asInstanceOf[AnyRef], (i * 2).asInstanceOf[AnyRef], "2012-01-01T19:00:00Z", "POINT(-77 38)")
-    val sf = new ScalaSimpleFeature(sft, i.toString)
-    sf.setAttributes(attrs)
-    sf
-  })
+  step {
+    addFeatures((0 until 150).toArray.map { i =>
+      val attrs = Array(i.asInstanceOf[AnyRef], (i * 2).asInstanceOf[AnyRef], "2012-01-01T19:00:00Z", "POINT(-77 38)")
+      val sf = new ScalaSimpleFeature(sft, i.toString)
+      sf.setAttributes(attrs)
+      sf
+    })
+  }
 
   def getQuery(statString: String, ecql: Option[String] = None): Query = {
     val query = new Query(sftName, ECQL.toFilter("dtg DURING 2012-01-01T18:30:00.000Z/2012-01-01T19:30:00.000Z " +
@@ -47,6 +47,15 @@ class KryoLazyStatsIteratorTest extends Specification with TestWithFeatureType {
    * Not testing too much here stat-wise, as most of the stat testing is in geomesa-utils
    */
   "StatsIterator" should {
+
+    "return correctly for exclude filter" in {
+      val q = getQuery("MinMax(attr)", Some("EXCLUDE"))
+      val results = SelfClosingIterator(fs.getFeatures(q).features).toList
+      val sf = results.head
+
+      val minMaxStat = decodeStat(sft)(sf.getAttribute(0).asInstanceOf[String]).asInstanceOf[MinMax[java.lang.Long]]
+      minMaxStat.bounds mustEqual (Long.MinValue, Long.MaxValue)
+    }
 
     "work with the MinMax stat" in {
       val q = getQuery("MinMax(attr)")
@@ -170,6 +179,5 @@ class KryoLazyStatsIteratorTest extends Specification with TestWithFeatureType {
       val minMaxStat = decodeStat(sft)(sf.getAttribute(0).asInstanceOf[String]).asInstanceOf[MinMax[java.lang.Long]]
       minMaxStat.bounds mustEqual (22, 298)
     }
-
   }
 }

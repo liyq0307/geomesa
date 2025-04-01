@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2020 IBM
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2025 IBM
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,6 +10,7 @@
 package org.locationtech.geomesa.cassandra.data
 
 import com.datastax.driver.core.{Row, Statement}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.cassandra.utils.CassandraBatchScan
 import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFeatures}
 import org.locationtech.geomesa.index.api.{FilterStrategy, QueryPlan}
@@ -17,7 +18,6 @@ import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.index.utils.Reprojection.QueryReferenceSystems
 import org.locationtech.geomesa.index.utils.ThreadManagement.Timeout
 import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.opengis.filter.Filter
 
 sealed trait CassandraQueryPlan extends QueryPlan[CassandraDataStore] {
 
@@ -43,7 +43,8 @@ object CassandraQueryPlan {
     explainer.pushLevel(s"${prefix}Plan: ${plan.getClass.getName}")
     explainer(s"Tables: ${plan.tables.mkString(", ")}")
     explainer(s"Ranges (${plan.ranges.size}): ${plan.ranges.take(5).map(_.toString).mkString(", ")}")
-    explainer(s"Client-side filter: ${plan.clientSideFilter.map(filterToString).getOrElse("None")}")
+    explainer(s"Client-side filter: ${plan.clientSideFilter.map(filterToString).getOrElse("none")}")
+    explainer(s"Reduce: ${plan.reducer.getOrElse("none")}")
     explainer.popLevel()
   }
 }

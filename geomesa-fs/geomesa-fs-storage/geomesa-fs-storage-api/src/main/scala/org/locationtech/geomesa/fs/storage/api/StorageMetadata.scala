@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,12 @@
 
 package org.locationtech.geomesa.fs.storage.api
 
-import java.io.Closeable
-
 import org.apache.hadoop.fs.Path
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.PartitionMetadata
-import org.locationtech.geomesa.fs.storage.api.StorageMetadata.StorageFileAction.StorageFileAction
 import org.locationtech.jts.geom.Envelope
-import org.opengis.feature.simple.SimpleFeatureType
+
+import java.io.Closeable
 
 /**
   * Metadata interface for managing storage partitions. Metadata implementations can be fairly expensive to
@@ -55,6 +54,22 @@ trait StorageMetadata extends Compactable with Closeable {
   def leafStorage: Boolean
 
   /**
+   * Get a previously set key-value pair
+   *
+   * @param key key
+   * @return
+   */
+  def get(key: String): Option[String] = None
+
+  /**
+   * Set a key-value pair
+   *
+   * @param key key
+   * @param value value
+   */
+  def set(key: String, value: String): Unit = throw new NotImplementedError()
+
+  /**
     * Get a partition by name. Ensure that `reload` has been invoked at least once before calling this method
     *
     * @param name partition name
@@ -85,8 +100,17 @@ trait StorageMetadata extends Compactable with Closeable {
     */
   def removePartition(partition: PartitionMetadata): Unit
 
-  @deprecated("deprecated with no replacement")
-  def reload(): Unit = {}
+  /**
+   * Overwrite any existing partitions
+   *
+   * @param partitions partitions
+   */
+  def setPartitions(partitions: Seq[PartitionMetadata]): Unit
+
+  /**
+   * Invalidate any cached state
+   */
+  def invalidate(): Unit
 }
 
 object StorageMetadata {
@@ -130,13 +154,21 @@ object StorageMetadata {
   }
 
   /**
-    * Holds a storage file
-    *
-    * @param name file name (relative to the root path)
-    * @param timestamp timestamp for the file
-    * @param action type of file (append, modify, delete)
-    */
-  case class StorageFile(name: String, timestamp: Long, action: StorageFileAction = StorageFileAction.Append)
+   * Holds a storage file
+   *
+   * @param name file name (relative to the root path)
+   * @param timestamp timestamp for the file
+   * @param action type of file (append, modify, delete)
+   * @param sort sort fields, if any, as feature type attribute number
+   * @param bounds known bounds, if any, keyed by feature type attribute number
+   */
+  case class StorageFile(
+      name: String,
+      timestamp: Long,
+      action: StorageFileAction.StorageFileAction = StorageFileAction.Append,
+      sort: Seq[Int] = Seq.empty,
+      bounds: Seq[(Int, String, String)] = Seq.empty
+    )
 
   /**
     * Holds a storage file path
@@ -160,11 +192,11 @@ object StorageMetadata {
     * Note that conversions to/from 'null' envelopes should be handled carefully, as envelopes are considered
     * null if xmin > xmax, however, when instantiating an envelope it will re-order the coordinates:
     *
-    * ```
+    * {{{
     *   val env = new Envelope()
     *   val copy = new Envelope(env.getMinX, env.getMinY, env.getMaxX, env.getMaxY)
     *   copy == env // false
-    * ```
+    * }}}
     *
     * Thus, ensure that 'null' envelopes are converted to `None` and not directly to a bounds object. See
     * `PartitionBounds.apply`

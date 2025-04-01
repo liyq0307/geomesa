@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2020 IBM
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2025 IBM
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,28 +9,30 @@
 
 package org.locationtech.geomesa.cassandra.data
 
-import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
-
 import com.datastax.driver.core.Row
 import com.datastax.driver.core.exceptions.AlreadyExistsException
 import com.datastax.driver.core.querybuilder.{QueryBuilder, Select}
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.cassandra.ColumnSelect
 import org.locationtech.geomesa.cassandra.data.CassandraIndexAdapter.{CassandraIndexWriter, CassandraResultsToFeatures}
 import org.locationtech.geomesa.cassandra.index.CassandraColumnMapper
 import org.locationtech.geomesa.cassandra.index.CassandraColumnMapper.{FeatureIdColumnName, SimpleFeatureColumnName}
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
-import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
+import org.locationtech.geomesa.index.api.IndexAdapter.{BaseIndexWriter, RequiredVisibilityWriter}
 import org.locationtech.geomesa.index.api.QueryPlan.IndexResultsToFeatures
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
 import org.locationtech.geomesa.index.api._
-import org.locationtech.geomesa.index.planning.LocalQueryRunner.{ArrowDictionaryHook, LocalTransformReducer}
+import org.locationtech.geomesa.index.planning.LocalQueryRunner.LocalTransformReducer
 import org.locationtech.geomesa.utils.index.ByteArrays
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 
 class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[CassandraDataStore] with StrictLogging {
+
+  import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
   override val tableNameLimit: Option[Int] = Some(CassandraIndexAdapter.TableNameLimit)
 
@@ -43,7 +45,7 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
 
     if (cluster.getMetadata.getKeyspace(ds.session.getLoggedKeyspace).getTable(table) == null) {
       val columns = CassandraColumnMapper(index).columns
-      require(columns.last.name == SimpleFeatureColumnName, s"Expected final column to be ${SimpleFeatureColumnName}")
+      require(columns.last.name == SimpleFeatureColumnName, s"Expected final column to be $SimpleFeatureColumnName")
       val (partitions, pks) = columns.dropRight(1).partition(_.partition) // drop serialized feature col
       val create = s"CREATE TABLE $table (${columns.map(c => s"${c.name} ${c.cType}").mkString(", ")}, " +
           s"PRIMARY KEY (${partitions.map(_.name).mkString("(", ", ", ")")}" +
@@ -82,8 +84,7 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
 
     val QueryStrategy(filter, _, keyRanges, tieredKeyRanges, ecql, hints, _) = strategy
 
-    val hook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
-    val reducer = Some(new LocalTransformReducer(strategy.index.sft, ecql, None, hints.getTransform, hints, hook))
+    val reducer = Some(new LocalTransformReducer(strategy.index.sft, ecql, None, hints.getTransform, hints))
 
     if (keyRanges.isEmpty) { EmptyPlan(filter, reducer) } else {
       val mapper = CassandraColumnMapper(strategy.index)
@@ -100,10 +101,19 @@ class CassandraIndexAdapter(ds: CassandraDataStore) extends IndexAdapter[Cassand
     }
   }
 
-  override def createWriter(sft: SimpleFeatureType,
-                            indices: Seq[GeoMesaFeatureIndex[_, _]],
-                            partition: Option[String]): CassandraIndexWriter =
-    new CassandraIndexWriter(ds, indices, WritableFeature.wrapper(sft, groups), partition)
+  override def createWriter(
+      sft: SimpleFeatureType,
+      indices: Seq[GeoMesaFeatureIndex[_, _]],
+      partition: Option[String],
+      atomic: Boolean): CassandraIndexWriter = {
+    require(!atomic, "Cassandra data store does not currently support atomic writes")
+    val wrapper = WritableFeature.wrapper(sft, groups)
+    if (sft.isVisibilityRequired) {
+      new CassandraIndexWriter(ds, indices, wrapper, partition) with RequiredVisibilityWriter
+    } else {
+      new CassandraIndexWriter(ds, indices, wrapper, partition)
+    }
+  }
 }
 
 object CassandraIndexAdapter extends LazyLogging {
@@ -178,10 +188,8 @@ object CassandraIndexAdapter extends LazyLogging {
 
     private val mappers = indices.toArray.map { index =>
       val mapper = CassandraColumnMapper(index)
-      val table = index.getTableNames(partition) match {
-        case Seq(t) => t // should always be writing to a single table here
-        case tables => throw new IllegalStateException(s"Expected a single table but got: ${tables.mkString(", ")}")
-      }
+      // should always be writing to a single table here
+      val table = index.getTableName(partition)
       val insert = mapper.insert(ds.session, table)
       val delete = mapper.delete(ds.session, table)
       (mapper, insert, delete)
@@ -189,7 +197,7 @@ object CassandraIndexAdapter extends LazyLogging {
 
     private var i = 0
 
-    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]], update: Boolean): Unit = {
+    override protected def append(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
       i = 0
       while (i < values.length) {
         val (mapper, statement, _) = mappers(i)
@@ -208,6 +216,15 @@ object CassandraIndexAdapter extends LazyLogging {
         }
         i += 1
       }
+    }
+
+    override protected def update(
+        feature: WritableFeature,
+        values: Array[RowKeyValue[_]],
+        previous: WritableFeature,
+        previousValues: Array[RowKeyValue[_]]): Unit = {
+      delete(previous, previousValues)
+      append(feature, values)
     }
 
     override protected def delete(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {

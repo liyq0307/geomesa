@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,7 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import org.geotools.data._
+import org.geotools.api.data._
 import org.geotools.referencing.CRS
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -22,18 +22,18 @@ class AccumuloDataStoreIdlTest extends Specification with TestWithFeatureType {
 
   import org.locationtech.geomesa.filter.ff
 
-  sequential
-
   override val spec = "dtg:Date,*geom:Point:srid=4326"
 
-  addFeatures((-180 to 180).map { lon =>
-    val sf = new ScalaSimpleFeature(sft, lon.toString)
-    sf.setAttribute(0, "2015-01-01T00:00:00.000Z")
-    sf.setAttribute(1, s"POINT($lon ${lon / 10})")
-    sf
-  })
-
   val srs = CRS.toSRS(org.locationtech.geomesa.utils.geotools.CRS_EPSG_4326)
+
+  step {
+    addFeatures((-180 to 180).map { lon =>
+      val sf = new ScalaSimpleFeature(sft, lon.toString)
+      sf.setAttribute(0, "2015-01-01T00:00:00.000Z")
+      sf.setAttribute(1, s"POINT($lon ${lon / 10})")
+      sf
+    })
+  }
 
   "AccumuloDataStore" should {
 

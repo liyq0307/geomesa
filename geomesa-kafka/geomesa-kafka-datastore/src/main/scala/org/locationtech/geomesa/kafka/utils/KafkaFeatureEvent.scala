@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,14 @@
 
 package org.locationtech.geomesa.kafka.utils
 
-import org.locationtech.jts.geom.Geometry
-import org.geotools.data.FeatureEvent
-import org.geotools.data.FeatureEvent.Type
-import org.geotools.data.simple.SimpleFeatureSource
+import org.geotools.api.data.FeatureEvent.Type
+import org.geotools.api.data.{FeatureEvent, SimpleFeatureSource}
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.api.filter.Filter
 import org.geotools.filter.identity.FeatureIdImpl
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.locationtech.geomesa.utils.geotools._
-import org.opengis.feature.simple.SimpleFeature
-import org.opengis.filter.Filter
+import org.locationtech.jts.geom.Geometry
 
 import scala.util.control.NonFatal
 
@@ -44,7 +43,7 @@ object KafkaFeatureEvent {
   private def buildBounds(feature: SimpleFeature): ReferencedEnvelope = {
     try {
       val env = feature.getDefaultGeometry.asInstanceOf[Geometry].getEnvelopeInternal
-      ReferencedEnvelope.create(env, CRS_EPSG_4326)
+      ReferencedEnvelope.envelope(env, CRS_EPSG_4326)
     } catch {
       case NonFatal(e) => wholeWorldEnvelope
     }

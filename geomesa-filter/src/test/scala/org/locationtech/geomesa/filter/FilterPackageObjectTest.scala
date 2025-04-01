@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,21 +9,22 @@
 package org.locationtech.geomesa.filter
 
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.filter._
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.filter.expression.AttributeExpression.FunctionLiteral
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.filter._
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 import org.specs2.specification.core.Fragments
-
-import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
 class FilterPackageObjectTest extends Specification with LazyLogging {
 
   import TestFilters._
+
+  import scala.collection.JavaConverters._
 
   "The partitionGeom function" should {
     val sft = SimpleFeatureTypes.createType("filterPackageTest", "g:Geometry,*geom:Geometry")
@@ -60,7 +61,7 @@ class FilterPackageObjectTest extends Specification with LazyLogging {
 
     "handle ANDs with multiple predicates" in {
       val filters = List(ECQL.toFilter("attr1 = val1"), ECQL.toFilter("attr2 = val2"), geomFilter)
-          .permutations.map(ff.and(_)).toSeq
+          .permutations.map(andFilters(_)).toSeq
 
       forall(filters) { filter => 
         val (geoms, nongeoms) = partitionPrimarySpatials(filter, sft)
@@ -72,7 +73,7 @@ class FilterPackageObjectTest extends Specification with LazyLogging {
 
   "the mergeFilters function" should {
 
-    val ff  = CommonFactoryFinder.getFilterFactory2
+    val ff  = CommonFactoryFinder.getFilterFactory
     val f1 = ff.equals(ff.property("test"), ff.literal("a"))
 
     "ignore Filter.INCLUDE" >> {
@@ -112,7 +113,7 @@ class FilterPackageObjectTest extends Specification with LazyLogging {
         dm.isInstanceOf[Or] must beTrue
         val dmChildren = dm.asInstanceOf[Or].getChildren
 
-        f.getChildren.zip(dmChildren).map {
+        f.getChildren.asScala.zip(dmChildren.asScala).map {
           case (origChild, dmChild) =>
             dmChild.isInstanceOf[Not] must beTrue
             dmChild.asInstanceOf[Not].getFilter mustEqual origChild
@@ -126,7 +127,7 @@ class FilterPackageObjectTest extends Specification with LazyLogging {
         dm.isInstanceOf[And] must beTrue
         val dmChildren = dm.asInstanceOf[And].getChildren
 
-        f.getChildren.zip(dmChildren).map {
+        f.getChildren.asScala.zip(dmChildren.asScala).map {
           case (origChild, dmChild) =>
             dmChild.isInstanceOf[Not] must beTrue
             dmChild.asInstanceOf[Not].getFilter mustEqual origChild
@@ -213,13 +214,57 @@ class FilterPackageObjectTest extends Specification with LazyLogging {
     }
   }
 
+  "The function 'checkOrder'" should {
+    val ff  = CommonFactoryFinder.getFilterFactory
+
+    "handle function expressions correctly" >> {
+      val f1 = ff.function("min", ff.property("f0"), ff.literal(10))
+      val f2 = ff.function("min", ff.literal(5), ff.literal(10))
+      val attrExprOpt = checkOrder(f1, f2)
+      attrExprOpt must not(beNone)
+      attrExprOpt.get must beAnInstanceOf[FunctionLiteral]
+      val attrExpr = attrExprOpt.get.asInstanceOf[FunctionLiteral]
+      attrExpr.function.getName mustEqual("min")
+      attrExpr.name mustEqual("f0")
+      attrExpr.literal.getValue mustEqual(5)
+      attrExpr.flipped must beFalse
+    }
+
+    "handle flipped function expressions correctly" >> {
+      val f1 = ff.function("min", ff.literal(5), ff.literal(10))
+      val f2 = ff.function("min", ff.property("f0"), ff.literal(10))
+      val attrExprOpt = checkOrder(f1, f2)
+      attrExprOpt must not(beNone)
+      attrExprOpt.get must beAnInstanceOf[FunctionLiteral]
+      val attrExpr = attrExprOpt.get.asInstanceOf[FunctionLiteral]
+      attrExpr.function.getName mustEqual("min")
+      attrExpr.name mustEqual("f0")
+      attrExpr.literal.getValue mustEqual(5)
+      attrExpr.flipped must beTrue
+    }
+
+    "don't optimize function expressions containing attributes" >> {
+      val f1 = ff.function("min", ff.property("f1"), ff.literal(10))
+      val f2 = ff.function("min", ff.property("f0"), ff.literal(10))
+      val attrExprOpt = checkOrder(f1, f2)
+      attrExprOpt must beNone
+    }
+
+    "don't optimize function with embedded expressions containing attributes" >> {
+      val f1 = ff.function("min", ff.property("f1"), ff.literal(10))
+      val f2 = ff.function("min", ff.add(ff.property("f0"), ff.literal(10)), ff.literal(10))
+      val attrExprOpt = checkOrder(f1, f2)
+      attrExprOpt must beNone
+    }
+  }
+
   // Function defining rewriteFilter Properties.
   def testRewriteProps(filter: Filter): Fragments = {
     logger.debug(s"Filter: ${ECQL.toCQL(filter)}")
 
     def breakUpOr(f: Filter): Seq[Filter] = {
        f match {
-         case or: Or => or.getChildren
+         case or: Or => or.getChildren.asScala.toSeq
          case _ => Seq(f)
        }
     }

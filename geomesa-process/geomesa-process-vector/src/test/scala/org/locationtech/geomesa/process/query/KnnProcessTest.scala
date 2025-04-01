@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,9 +8,9 @@
 
 package org.locationtech.geomesa.process.query
 
-import java.util.Collections
-
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.api.filter.spatial.BBOX
 import org.geotools.data.collection.ListFeatureCollection
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.referencing.GeodeticCalculator
@@ -23,10 +23,10 @@ import org.locationtech.geomesa.utils.geohash.GeoHash
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom.Point
-import org.opengis.feature.simple.SimpleFeature
-import org.opengis.filter.spatial.BBOX
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.util.Collections
 
 @RunWith(classOf[JUnitRunner])
 class KnnProcessTest extends Specification {
@@ -176,10 +176,10 @@ class KnnProcessTest extends Specification {
       bounds must haveLength(4)
       bounds must containTheSameElementsAs {
         Seq(
-          (-78.50444946042865, -78.50105448126463, 38.07071041202179, 38.07971958797821),
-          (-78.48965751873537, -78.48626253957136, 38.07071041202179, 38.07971958797821),
-          (-78.50444946042865, -78.48626253957136, 38.07971958797821, 38.08240328075565),
-          (-78.50444946042865, -78.48626253957136, 38.06802671924435, 38.07071041202179)
+          (-78.50444946042865, -78.50105448126463, 38.07071041202178, 38.07971958797822),
+          (-78.48965751873537, -78.48626253957136, 38.07071041202178, 38.07971958797822),
+          (-78.50444946042865, -78.48626253957136, 38.07971958797822, 38.08240328075565),
+          (-78.50444946042865, -78.48626253957136, 38.06802671924435, 38.07071041202178)
         )
       }
     }

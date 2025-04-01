@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,7 +9,6 @@
 package org.locationtech.geomesa.convert2.transforms
 
 import com.typesafe.scalalogging.StrictLogging
-import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.transforms.Expression._
 import org.locationtech.geomesa.utils.text.BasicParser
 import org.parboiled.errors.{ErrorUtils, ParsingException}
@@ -40,8 +39,6 @@ private [transforms] class ExpressionParser extends BasicParser {
 
   import org.parboiled.scala._
 
-  implicit private val ec: EvaluationContext = EvaluationContext.empty
-
   // full expression
   def expression: Rule1[Expression] = rule("expression") { expr ~ EOI }
 
@@ -54,7 +51,7 @@ private [transforms] class ExpressionParser extends BasicParser {
   }
 
   private def nonCast: Rule1[Expression] = rule {
-    tryFunction | function | column | field | literal
+    tryFunction | withDefaultFunction | function | column | field | literal
   }
 
   private def literal: Rule1[Expression] = rule("literal") {
@@ -74,6 +71,12 @@ private [transforms] class ExpressionParser extends BasicParser {
     ("try" ~ whitespace ~ "(" ~ expr ~ "," ~ expr ~ ")") ~~> { (primary, fallback) => TryExpression(primary, fallback) }
   }
 
+  private def withDefaultFunction: Rule1[Expression] = rule("withDefault") {
+    ("withDefault" ~ whitespace ~ "(" ~ expr ~ "," ~ oneOrMore(expr, ",") ~ ")") ~~> {
+      (primary, fallback) => WithDefaultExpression(Seq(primary) ++ fallback)
+    }
+  }
+
   private def function: Rule1[Expression] = rule("function") {
     (optional(unquotedString ~ ":") ~ unquotedString ~ whitespace ~ "(" ~ zeroOrMore(expr, ",") ~ ")") ~~> {
       (ns, fn, args) => {
@@ -82,7 +85,7 @@ private [transforms] class ExpressionParser extends BasicParser {
           throw new ParsingException(s"Invalid function name: $name"))
         val expr = FunctionExpression(function.getInstance(args), args.toArray)
         if (function.pure && args.forall(a => a.isInstanceOf[Literal[_]])) {
-          LiteralAny(expr.eval(Array.empty))
+          LiteralAny(expr.apply(Array.empty))
         } else {
           expr
         }
@@ -122,7 +125,7 @@ private [transforms] class ExpressionParser extends BasicParser {
     (nonCast ~ ("::integer" | "::int")) ~~> {
       e => {
         val expr = CastToInt(e)
-        if (e.isInstanceOf[Literal[_]]) { LiteralInt(expr.eval(Array.empty)) } else { expr }
+        if (e.isInstanceOf[Literal[_]]) { LiteralInt(expr.apply(Array.empty)) } else { expr }
       }
     }
   }
@@ -131,7 +134,7 @@ private [transforms] class ExpressionParser extends BasicParser {
     (nonCast ~ "::long") ~~> {
       e => {
         val expr = CastToLong(e)
-        if (e.isInstanceOf[Literal[_]]) { LiteralLong(expr.eval(Array.empty)) } else { expr }
+        if (e.isInstanceOf[Literal[_]]) { LiteralLong(expr.apply(Array.empty)) } else { expr }
       }
     }
   }
@@ -140,7 +143,7 @@ private [transforms] class ExpressionParser extends BasicParser {
     (nonCast ~ "::float") ~~> {
       e => {
         val expr = CastToFloat(e)
-        if (e.isInstanceOf[Literal[_]]) { LiteralFloat(expr.eval(Array.empty)) } else { expr }
+        if (e.isInstanceOf[Literal[_]]) { LiteralFloat(expr.apply(Array.empty)) } else { expr }
       }
     }
   }
@@ -149,7 +152,7 @@ private [transforms] class ExpressionParser extends BasicParser {
     (nonCast ~ "::double") ~~> {
       e => {
         val expr = CastToDouble(e)
-        if (e.isInstanceOf[Literal[_]]) { LiteralDouble(expr.eval(Array.empty)) } else { expr }
+        if (e.isInstanceOf[Literal[_]]) { LiteralDouble(expr.apply(Array.empty)) } else { expr }
       }
     }
   }
@@ -158,7 +161,7 @@ private [transforms] class ExpressionParser extends BasicParser {
     (nonCast ~ "::string") ~~> {
       e => {
         val expr = CastToString(e)
-        if (e.isInstanceOf[Literal[_]]) { LiteralString(expr.eval(Array.empty)) } else { expr }
+        if (e.isInstanceOf[Literal[_]]) { LiteralString(expr.apply(Array.empty)) } else { expr }
       }
     }
   }
@@ -167,7 +170,7 @@ private [transforms] class ExpressionParser extends BasicParser {
     (nonCast ~ "::" ~ ("boolean" | "bool")) ~~> {
       e => {
         val expr = CastToBoolean(e)
-        if (e.isInstanceOf[Literal[_]]) { LiteralBoolean(expr.eval(Array.empty)) } else { expr }
+        if (e.isInstanceOf[Literal[_]]) { LiteralBoolean(expr.apply(Array.empty)) } else { expr }
       }
     }
   }

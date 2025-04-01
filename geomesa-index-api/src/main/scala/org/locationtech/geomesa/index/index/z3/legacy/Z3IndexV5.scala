@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,19 @@
 
 package org.locationtech.geomesa.index.index.z3.legacy
 
-import java.util.Date
-
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.curve.BinnedTime
-import org.locationtech.geomesa.index.api.ShardStrategy.ZShardStrategy
+import org.locationtech.geomesa.index.api.ShardStrategy.Z3ShardStrategy
 import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.z3.legacy.Z3IndexV5.Z3IndexKeySpaceV5
-import org.locationtech.geomesa.index.index.z3.{Z3Index, Z3IndexKey, Z3IndexKeySpace}
+import org.locationtech.geomesa.index.index.z3.legacy.Z3IndexV6.Z3IndexKeySpaceV6
+import org.locationtech.geomesa.index.index.z3.{Z3IndexKey, Z3IndexKeySpace}
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
 import org.locationtech.jts.geom.Point
-import org.opengis.feature.simple.SimpleFeatureType
 
+import java.util.Date
 import scala.util.control.NonFatal
 
 // fixed z-curve, still has table sharing
@@ -29,7 +29,7 @@ class Z3IndexV5 protected (ds: GeoMesaDataStore[_],
                            version: Int,
                            geom: String,
                            dtg: String,
-                           mode: IndexMode) extends Z3Index(ds, sft, version: Int, geom, dtg, mode) {
+                           mode: IndexMode) extends Z3IndexV6(ds, sft, version: Int, geom, dtg, mode) {
 
   import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
@@ -38,8 +38,9 @@ class Z3IndexV5 protected (ds: GeoMesaDataStore[_],
 
   override protected val tableNameKey: String = s"table.z3.v$version"
 
+  // noinspection ScalaDeprecation
   override val keySpace: Z3IndexKeySpace =
-    new Z3IndexKeySpaceV5(sft, sft.getTableSharingBytes, ZShardStrategy(sft), geom, dtg)
+    new Z3IndexKeySpaceV5(sft, sft.getTableSharingBytes, Z3ShardStrategy(sft), geom, dtg)
 }
 
 object Z3IndexV5 {
@@ -48,7 +49,7 @@ object Z3IndexV5 {
                           override val sharing: Array[Byte],
                           sharding: ShardStrategy,
                           geomField: String,
-                          dtgField: String) extends Z3IndexKeySpace(sft, sharding, geomField, dtgField) {
+                          dtgField: String) extends Z3IndexKeySpaceV6(sft, sharding, geomField, dtgField) {
 
     private val rangePrefixes = {
       if (sharding.length == 0 && sharing.isEmpty) {

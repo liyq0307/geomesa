@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,16 +8,16 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import org.apache.accumulo.core.client.Connector
+import org.apache.accumulo.core.client.{AccumuloClient, BatchWriter}
 import org.apache.accumulo.core.data.{Mutation, Range, Value}
 import org.apache.accumulo.core.security.Authorizations
 import org.apache.hadoop.io.Text
-import org.locationtech.geomesa.accumulo.util.{GeoMesaBatchWriterConfig, TableUtils}
+import org.locationtech.geomesa.accumulo.util.{GeoMesaBatchWriterConfig, TableManager}
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, KeyValueStoreMetadata, MetadataSerializer}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.{CloseQuietly, CloseWithLogging}
 
-class AccumuloBackedMetadata[T](val connector: Connector, val table: String, val serializer: MetadataSerializer[T])
+class AccumuloBackedMetadata[T](val connector: AccumuloClient, val table: String, val serializer: MetadataSerializer[T])
     extends KeyValueStoreMetadata[T] {
 
   import scala.collection.JavaConverters._
@@ -26,24 +26,26 @@ class AccumuloBackedMetadata[T](val connector: Connector, val table: String, val
 
   private val empty = new Text()
 
-  private var writerCreated = false
+  private var closed = false
 
-  private lazy val writer = synchronized {
-    if (writerCreated) {
-      throw new IllegalStateException("Trying to write using a closed instance")
-    }
-    writerCreated = true
-    connector.createBatchWriter(table, config)
-  }
+  private var writer: BatchWriter = _
 
   override protected def checkIfTableExists: Boolean = connector.tableOperations().exists(table)
 
-  override protected def createTable(): Unit = TableUtils.createTableIfNeeded(connector, table)
+  override protected def createTable(): Unit = new TableManager(connector).ensureTableExists(table)
 
   override protected def createEmptyBackup(timestamp: String): AccumuloBackedMetadata[T] =
     new AccumuloBackedMetadata(connector, s"${table}_${timestamp}_bak", serializer)
 
   override protected def write(rows: Seq[(Array[Byte], Array[Byte])]): Unit = {
+    synchronized {
+      if (writer == null) {
+        if (closed) {
+          throw new IllegalStateException("Trying to write using a closed instance")
+        }
+        writer = connector.createBatchWriter(table, config)
+      }
+    }
     rows.foreach { case (k, v) =>
       val m = new Mutation(k)
       m.put(empty, empty, new Value(v))
@@ -84,10 +86,11 @@ class AccumuloBackedMetadata[T](val connector: Connector, val table: String, val
   }
 
   override def close(): Unit = synchronized {
-    if (writerCreated) {
-      CloseWithLogging(writer)
-    } else {
-      writerCreated = true // indicate that we've closed and don't want to open any more resources
+    if (!closed) {
+      closed = true
+      if (writer != null) {
+        CloseWithLogging(writer)
+      }
     }
   }
 }

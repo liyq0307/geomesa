@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,28 +8,29 @@
 
 package org.locationtech.geomesa.hbase.rpc.filter
 
-import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
-
 import com.typesafe.scalalogging.StrictLogging
 import org.apache.hadoop.hbase.exceptions.DeserializationException
 import org.apache.hadoop.hbase.filter.Filter.ReturnCode
 import org.apache.hadoop.hbase.filter.FilterBase
 import org.apache.hadoop.hbase.{Cell, KeyValue}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.kryo.{KryoBufferSimpleFeature, KryoFeatureSerializer}
+import org.locationtech.geomesa.hbase.filters.JSimpleFeatureFilter
 import org.locationtech.geomesa.hbase.rpc.filter.CqlTransformFilter.DelegateFilter
 import org.locationtech.geomesa.index.api.{FilterStrategy, GeoMesaFeatureIndex, IndexKeySpace}
+import org.locationtech.geomesa.index.conf.FilterCompatibility
 import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 import org.locationtech.geomesa.index.iterators.{IteratorCache, SamplingIterator}
-import org.locationtech.geomesa.index.stats.GeoMesaStats
+import org.locationtech.geomesa.utils.conf.GeoMesaProperties
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.index.{ByteArrays, IndexMode}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import scala.util.control.NonFatal
 
 /**
@@ -64,7 +65,7 @@ class CqlTransformFilter(delegate: DelegateFilter) extends FilterBase {
   override def toString: String = delegate.toString
 }
 
-object CqlTransformFilter extends StrictLogging with SamplingIterator {
+object CqlTransformFilter extends StrictLogging {
 
   val Priority: Int = 30
 
@@ -97,7 +98,7 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
       index: GeoMesaFeatureIndex[_, _],
       filter: Option[Filter],
       transform: Option[(String, SimpleFeatureType)],
-      hints:Hints): CqlTransformFilter = {
+      hints: Hints): CqlTransformFilter = {
     if (filter.isEmpty && transform.isEmpty && hints.getSampling.isEmpty) {
       throw new IllegalArgumentException("The filter must have a predicate and/or transform")
     }
@@ -106,17 +107,22 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
     feature.setIdParser(index.getIdFromRow(_, _, _, null))
     transform.foreach { case (tdefs, tsft) => feature.setTransforms(tdefs, tsft) }
 
-    val samplingOptions: Option[(Float, Option[String])] = hints.getSampling
+    val samplingOpts: Option[(Float, Option[String])] = hints.getSampling
 
-    val delegate = (filter, transform, samplingOptions) match {
-      case (None, None, Some(_))  => new FilterDelegate(sft, index, feature, Filter.INCLUDE, samplingOptions)
-      case (None, Some(_), Some(_)) => new FilterTransformDelegate(sft, index, feature, Filter.INCLUDE, samplingOptions)
-      case (Some(f), None , _) => new FilterDelegate(sft, index, feature, f, samplingOptions)
-      case (Some(f), Some(_), _) => new FilterTransformDelegate(sft, index, feature, f, samplingOptions)
-      case (None, Some(_), _) => new TransformDelegate(sft, index, feature, samplingOptions)
+    val delegate = (filter, transform, samplingOpts) match {
+      case (None, None, Some(_))    => new FilterDelegate(sft, index, feature, Filter.INCLUDE, samplingOpts)
+      case (None, Some(_), Some(_)) => new FilterTransformDelegate(sft, index, feature, Filter.INCLUDE, samplingOpts)
+      case (Some(f), None , _)      => new FilterDelegate(sft, index, feature, f, samplingOpts)
+      case (Some(f), Some(_), _)    => new FilterTransformDelegate(sft, index, feature, f, samplingOpts)
+      case (None, Some(_), _)       => new TransformDelegate(sft, index, feature, samplingOpts)
     }
 
-    new CqlTransformFilter(delegate)
+    // noinspection ScalaDeprecation
+    hints.getFilterCompatibility match {
+      case None => new CqlTransformFilter(delegate)
+      case Some(FilterCompatibility.`2.3`) => new JSimpleFeatureFilter(delegate)
+      case Some(c) => throw new NotImplementedError(s"Filter compatibility $c is not implemented for this query")
+    }
   }
 
   /**
@@ -138,11 +144,14 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
     val samplingFactorBytes = samplingFactor.map(f => ByteBuffer.allocate(4).putFloat(f).array()).getOrElse(Array.empty)
     val samplingFieldBytes = samplingField.map(field => field.getBytes(StandardCharsets.UTF_8)).getOrElse(Array.empty)
 
+    val version = GeoMesaProperties.ProjectVersion.getBytes(StandardCharsets.UTF_8)
 
     delegate.transform match {
       case None =>
-        val array = Array.ofDim[Byte](sftBytes.length + cqlBytes.length +
-            indexBytes.length + indexSftBytes.length + samplingFactorBytes.length + samplingFieldBytes.length + 4*7) //4 bytes (length info) per 7 fields
+        val array =
+          Array.ofDim[Byte](sftBytes.length + cqlBytes.length +
+              indexBytes.length + indexSftBytes.length + samplingFactorBytes.length +
+              samplingFieldBytes.length + version.length + 4*8) // 4 bytes (length info) per 8 fields
 
         var offset = 0
         ByteArrays.writeInt(sftBytes.length, array, offset)
@@ -161,10 +170,10 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
         System.arraycopy(indexBytes, 0, array, offset, indexBytes.length)
         offset += indexBytes.length
         if (indexSftBytes.isEmpty) {
-          if(delegate.index == NullFeatureIndex) {
+          if (delegate.index == NullFeatureIndex) {
             ByteArrays.writeInt(-1, array, offset)
             offset += 4
-          }else{
+          } else {
             ByteArrays.writeInt(0, array, offset)
             offset += 4
           }
@@ -187,12 +196,18 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
 
         if (samplingFieldBytes.isEmpty) {
           ByteArrays.writeInt(0, array, offset)
+          offset += 4
         } else {
           ByteArrays.writeInt(samplingFieldBytes.length, array, offset)
           offset += 4
           System.arraycopy(samplingFieldBytes, 0, array, offset, samplingFieldBytes.length)
+          offset += samplingFieldBytes.length
         }
 
+        ByteArrays.writeInt(version.length, array, offset)
+        offset += 4
+        System.arraycopy(version, 0, array, offset, version.length)
+        offset += version.length
 
         array
 
@@ -200,8 +215,10 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
         val tdefsBytes = tdefs.getBytes(StandardCharsets.UTF_8)
         val tsftBytes = SimpleFeatureTypes.encodeType(tsft).getBytes(StandardCharsets.UTF_8)
 
-        val array = Array.ofDim[Byte](sftBytes.length + cqlBytes.length + tdefsBytes.length + tsftBytes.length +
-            indexBytes.length + indexSftBytes.length +samplingFactorBytes.length + samplingFieldBytes.length + 4*8) //4 bytes (length info) per 8 fields
+        val array =
+          Array.ofDim[Byte](sftBytes.length + cqlBytes.length + tdefsBytes.length + tsftBytes.length +
+              indexBytes.length + indexSftBytes.length + samplingFactorBytes.length +
+              samplingFieldBytes.length + version.length + 4*9) // 4 bytes (length info) per 9 fields
 
         var offset = 0
         ByteArrays.writeInt(sftBytes.length, array, offset)
@@ -225,10 +242,10 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
         System.arraycopy(indexBytes, 0, array, offset, indexBytes.length)
         offset += indexBytes.length
         if (indexSftBytes.isEmpty) {
-          if(delegate.index == NullFeatureIndex) {
+          if (delegate.index == NullFeatureIndex) {
             ByteArrays.writeInt(-1, array, offset)
             offset += 4
-          }else{
+          } else {
             ByteArrays.writeInt(0, array, offset)
             offset += 4
           }
@@ -251,12 +268,18 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
 
         if (samplingFieldBytes.isEmpty) {
           ByteArrays.writeInt(0, array, offset)
+          offset += 4
         } else {
           ByteArrays.writeInt(samplingFieldBytes.length, array, offset)
           offset += 4
           System.arraycopy(samplingFieldBytes, 0, array, offset, samplingFieldBytes.length)
+          offset += samplingFieldBytes.length
         }
 
+        ByteArrays.writeInt(version.length, array, offset)
+        offset += 4
+        System.arraycopy(version, 0, array, offset, version.length)
+        offset += version.length
 
         array
     }
@@ -275,7 +298,7 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
       var offset = 0
       val sftLength = ByteArrays.readInt(bytes, offset)
       offset += 4
-      val spec = new String(bytes, offset, sftLength)
+      val spec = new String(bytes, offset, sftLength,StandardCharsets.UTF_8)
       offset += sftLength
 
       val sft = IteratorCache.sft(spec)
@@ -284,12 +307,11 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
       val cqlLength = ByteArrays.readInt(bytes, offset)
       offset += 4
       val cql = if (cqlLength == 0) { null } else {
-        IteratorCache.filter(sft, spec, new String(bytes, offset, cqlLength))
+        IteratorCache.filter(sft, spec, new String(bytes, offset, cqlLength,StandardCharsets.UTF_8))
       }
       offset += cqlLength
 
       val tdefsLength = ByteArrays.readInt(bytes, offset)
-
 
       if (tdefsLength == -1) {
         if (cql == null) {
@@ -305,12 +327,12 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
         }
       } else {
         offset += 4
-        val tdefs = new String(bytes, offset, tdefsLength)
+        val tdefs = new String(bytes, offset, tdefsLength,StandardCharsets.UTF_8)
         offset += tdefsLength
 
         val tsftLength = ByteArrays.readInt(bytes, offset)
         offset += 4
-        val tsft = IteratorCache.sft(new String(bytes, offset, tsftLength))
+        val tsft = IteratorCache.sft(new String(bytes, offset, tsftLength,StandardCharsets.UTF_8))
 
         feature.setTransforms(tdefs, tsft)
 
@@ -348,7 +370,7 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
     var offset = start
     val factorLength = ByteArrays.readInt(bytes, offset)
     offset += 4
-    if(factorLength != 0) {
+    if (factorLength != 0) {
       val samplingFactor = ByteBuffer.wrap(bytes,offset,factorLength).getFloat
       offset+=factorLength
       val fieldNameLength = ByteArrays.readInt(bytes, offset)
@@ -382,7 +404,7 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
     if (bytes.length <= start) {
       // we're reading a filter serialized without the index - just use a placeholder instead
       // note: serializing this filter will fail, but it shouldn't ever be serialized
-      (NullFeatureIndex,start)
+      (NullFeatureIndex, start)
     } else {
       var offset = start
       val identifierLength = ByteArrays.readInt(bytes, offset)
@@ -391,9 +413,9 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
       offset += identifierLength
       val indexSftLength = ByteArrays.readInt(bytes, offset)
       offset += 4
-      if(indexSftLength == -1) {
+      if (indexSftLength == -1) {
         (NullFeatureIndex,offset)
-      }else if (indexSftLength == 0) {
+      } else if (indexSftLength == 0) {
         (IteratorCache.index(sft, spec, identifier), offset)
       } else {
         val indexSpec = new String(bytes, offset, indexSftLength, StandardCharsets.UTF_8)
@@ -408,14 +430,17 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
   /**
     * Delegate filter for handling filtering and/or transforming
     */
-  private sealed trait DelegateFilter {
+  private[hbase] sealed trait DelegateFilter extends SamplingIterator {
     def sft: SimpleFeatureType
     def index: GeoMesaFeatureIndex[_, _]
     def filter: Option[Filter]
     def transform: Option[(String, SimpleFeatureType)]
     def filterKeyValue(v: Cell): ReturnCode
     def transformCell(v: Cell): Cell
-    def samplingOptions:Option[(Float,Option[String])]
+    def samplingOptions: Option[(Float,Option[String])]
+
+    protected val sampling: Option[SimpleFeature => Boolean] =
+      samplingOptions.flatMap(opt => sample(SamplingIterator.configure(sft, opt)))
   }
 
   /**
@@ -424,31 +449,27 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
     * @param sft simple feature type
     * @param feature reusable feature
     * @param filt filter
-    * @param samplingOpt sampling options
+    * @param samplingOptions sampling options
     */
-  private class FilterDelegate(
+  private[hbase] class FilterDelegate(
       val sft: SimpleFeatureType,
       val index: GeoMesaFeatureIndex[_, _],
       feature: KryoBufferSimpleFeature,
       filt: Filter,
-      samplingOpt:Option[(Float,Option[String])]
-    ) extends DelegateFilter {
-
+      val samplingOptions: Option[(Float, Option[String])]
+    ) extends DelegateFilter with SamplingIterator {
 
     override def filter: Option[Filter] = Some(filt)
     override def transform: Option[(String, SimpleFeatureType)] = None
-
-    override def samplingOptions: Option[(Float,Option[String])] = samplingOpt
-    val sampling = createSamplingFunction(sft,samplingOptions)
 
     override def filterKeyValue(v: Cell): ReturnCode = {
       try {
         feature.setIdBuffer(v.getRowArray, v.getRowOffset, v.getRowLength)
         feature.setBuffer(v.getValueArray, v.getValueOffset, v.getValueLength)
-        if (filt.evaluate(feature) && sampling(feature)) { ReturnCode.INCLUDE } else { ReturnCode.SKIP }
+        if (filt.evaluate(feature) && sampling.forall(_.apply(feature))) { ReturnCode.INCLUDE } else { ReturnCode.SKIP }
       } catch {
         case NonFatal(e) =>
-          logger.error("Error evaluating filter, skipping:", e)
+          CqlTransformFilter.logger.error("Error evaluating filter, skipping:", e)
           ReturnCode.SKIP
       }
     }
@@ -459,44 +480,30 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
   }
 
   /**
-    * Create the sampling function: return a tautology if sampling is disabled
-    *
-    * @param sft simple feature type
-    * @param samplingOptions
-    */
-  private def createSamplingFunction(sft: SimpleFeatureType,samplingOptions:Option[(Float,Option[String])]) = {
-    samplingOptions
-      .flatMap(it => sample(SamplingIterator.configure(sft, it))).getOrElse({_ :SimpleFeature => true})
-  }
-
-  /**
     * Transforms without filtering
     *
     * @param sft simple feature type
     * @param feature reusable feature, with transforms set
-    * @param samplingOpt sampling options
+    * @param samplingOptions sampling options
     */
-  private class TransformDelegate(
+  private[hbase] class TransformDelegate(
       val sft: SimpleFeatureType,
       val index: GeoMesaFeatureIndex[_, _],
       feature: KryoBufferSimpleFeature,
-      samplingOpt:Option[(Float,Option[String])]
+      val samplingOptions: Option[(Float,Option[String])]
     ) extends DelegateFilter {
 
     override def filter: Option[Filter] = None
     override def transform: Option[(String, SimpleFeatureType)] = feature.getTransform
 
-    override def samplingOptions: Option[(Float,Option[String])] = samplingOpt
-    val sampling = createSamplingFunction(sft,samplingOptions)
-
     override def filterKeyValue(v: Cell): ReturnCode = {
       try {
         feature.setIdBuffer(v.getRowArray, v.getRowOffset, v.getRowLength)
         feature.setBuffer(v.getValueArray, v.getValueOffset, v.getValueLength)
-        if(sampling(feature))ReturnCode.INCLUDE else ReturnCode.SKIP
+        if (sampling.forall(_.apply(feature))) { ReturnCode.INCLUDE } else { ReturnCode.SKIP }
       } catch {
         case NonFatal(e) =>
-          logger.error("Error setting feature buffer, skipping:", e)
+          CqlTransformFilter.logger.error("Error setting feature buffer, skipping:", e)
           ReturnCode.SKIP
       }
     }
@@ -517,18 +524,15 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
     * @param sft simple feature type
     * @param feature reusable feature, with transforms set
     * @param filt filter
-    * @param samplingOpt sampling options
+    * @param samplingOptions sampling options
     */
-  private class FilterTransformDelegate(
+  private[hbase] class FilterTransformDelegate(
       val sft: SimpleFeatureType,
       val index: GeoMesaFeatureIndex[_, _],
       feature: KryoBufferSimpleFeature,
       filt: Filter,
-      samplingOpt:Option[(Float,Option[String])]
+      val samplingOptions: Option[(Float,Option[String])]
     ) extends DelegateFilter {
-
-    override def samplingOptions: Option[(Float,Option[String])] = samplingOpt
-    val sampling = createSamplingFunction(sft,samplingOptions)
 
     override def filter: Option[Filter] = Some(filt)
     override def transform: Option[(String, SimpleFeatureType)] = feature.getTransform
@@ -537,10 +541,10 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
       try {
         feature.setIdBuffer(v.getRowArray, v.getRowOffset, v.getRowLength)
         feature.setBuffer(v.getValueArray, v.getValueOffset, v.getValueLength)
-        if (filt.evaluate(feature)&& sampling(feature)) { ReturnCode.INCLUDE } else { ReturnCode.SKIP }
+        if (filt.evaluate(feature)&& sampling.forall(_.apply(feature))) { ReturnCode.INCLUDE } else { ReturnCode.SKIP }
       } catch {
         case NonFatal(e) =>
-          logger.error("Error evaluating filter, skipping:", e)
+          CqlTransformFilter.logger.error("Error evaluating filter, skipping:", e)
           ReturnCode.SKIP
       }
     }
@@ -556,16 +560,15 @@ object CqlTransformFilter extends StrictLogging with SamplingIterator {
   }
 
 
-  private object NullFeatureIndex extends GeoMesaFeatureIndex[Any, Any](null, null, "", 0, Seq.empty, IndexMode.Read) {
+  private[hbase] object NullFeatureIndex
+      extends GeoMesaFeatureIndex[Any, Any](null, null, "", 0, Seq.empty, IndexMode.Read) {
 
     override def keySpace: IndexKeySpace[Any, Any] = throw new NotImplementedError()
 
     override def tieredKeySpace: Option[IndexKeySpace[_, _]] = throw new NotImplementedError()
 
-    override def getFilterStrategy(
-        filter: Filter,
-        transform: Option[SimpleFeatureType],
-        stats: Option[GeoMesaStats]): Option[FilterStrategy] = throw new NotImplementedError()
+    override def getFilterStrategy(filter: Filter, transform: Option[SimpleFeatureType]): Option[FilterStrategy] =
+      throw new NotImplementedError()
 
     override def getIdFromRow(row: Array[Byte], offset: Int, length: Int, feature: SimpleFeature): String = ""
   }

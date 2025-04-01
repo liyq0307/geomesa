@@ -1,35 +1,34 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.tools.export
-
-import java.io.Closeable
-import java.util.Date
+package org.locationtech.geomesa.tools.`export`
 
 import com.beust.jcommander.{Parameter, ParameterException}
 import org.apache.hadoop.mapreduce.Job
+import org.geotools.api.data.{DataStore, Query}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.data.simple.SimpleFeatureCollection
 import org.geotools.data.store.DataFeatureCollection
-import org.geotools.data.{DataStore, Query}
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.temporal.`object`.{DefaultInstant, DefaultPeriod, DefaultPosition}
+import org.locationtech.geomesa.features.exporters.FeatureExporter
 import org.locationtech.geomesa.index.geotools.GeoMesaFeatureCollection
 import org.locationtech.geomesa.tools.RequiredTypeNameParam
 import org.locationtech.geomesa.tools.export.ExportCommand.ExportParams
 import org.locationtech.geomesa.tools.export.PlaybackCommand.PlaybackParams
-import org.locationtech.geomesa.tools.export.formats.FeatureExporter
 import org.locationtech.geomesa.tools.utils.ParameterConverters.{DurationConverter, IntervalConverter}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.iterators.PlaybackIterator
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
+import java.io.Closeable
+import java.util.Date
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
@@ -41,7 +40,11 @@ trait PlaybackCommand[DS <: DataStore] extends ExportCommand[DS] {
   override val name = "playback"
   override def params: PlaybackParams
 
-  override protected def export(ds: DS, query: Query, exporter: FeatureExporter): Option[Long] = {
+  override protected def export(
+      ds: DS,
+      query: Query,
+      exporter: FeatureExporter,
+      writeEmptyFiles: Boolean): Option[Long] = {
     val features: SimpleFeatureCollection = new DataFeatureCollection(GeoMesaFeatureCollection.nextId) {
 
       private val fs = ds.getFeatureSource(query.getTypeName)
@@ -50,6 +53,7 @@ trait PlaybackCommand[DS <: DataStore] extends ExportCommand[DS] {
       private val filter = Option(query.getFilter).filter(_ != Filter.INCLUDE)
       private val window = Option(params.window)
       private val rate = Option(params.rate).map(_.floatValue()).getOrElse(1f)
+      private val live = Option(params.live).exists(_.booleanValue())
 
       private lazy val queryWithInterval = {
         val dtg = Option(params.dtg).orElse(ds.getSchema(query.getTypeName).getDtgField).getOrElse {
@@ -74,7 +78,7 @@ trait PlaybackCommand[DS <: DataStore] extends ExportCommand[DS] {
       override def getCount: Int = fs.getCount(queryWithInterval)
 
       override protected def openIterator(): java.util.Iterator[SimpleFeature] = {
-        val iter = new PlaybackIterator(ds, query.getTypeName, params.interval, dtg, filter, transform, window, rate)
+        val iter = new PlaybackIterator(ds, query.getTypeName, params.interval, dtg, filter, transform, window, rate, live)
 
         // note: result needs to implement Closeable in order to be closed by the DataFeatureCollection
         if (params.maxFeatures != null) {
@@ -95,8 +99,22 @@ trait PlaybackCommand[DS <: DataStore] extends ExportCommand[DS] {
     }
 
     try {
-      exporter.start(features.getSchema)
-      WithClose(CloseableIterator(features.features()))(exporter.export)
+      WithClose(CloseableIterator(features.features())) { iter =>
+        if (writeEmptyFiles || iter.hasNext) {
+          exporter.start(features.getSchema)
+          var count: Option[Long] = None
+          while (iter.hasNext) {
+            val res = exporter.export(Iterator.single(iter.next))
+            count = count match {
+              case None => res
+              case Some(c) => res.map(_ + c).orElse(count)
+            }
+          }
+          count
+        } else {
+          Some(0L)
+        }
+      }
     } catch {
       case NonFatal(e) =>
         throw new RuntimeException("Could not execute export query. Please ensure " +
@@ -121,5 +139,8 @@ object PlaybackCommand {
 
     @Parameter(names = Array("--rate"), description = "Rate multiplier to speed-up (or slow down) features being returned")
     var rate: java.lang.Float = _
+
+    @Parameter(names = Array("--live"), description = "Simulate live data by projecting the dates to current time")
+    var live: java.lang.Boolean = _
   }
 }

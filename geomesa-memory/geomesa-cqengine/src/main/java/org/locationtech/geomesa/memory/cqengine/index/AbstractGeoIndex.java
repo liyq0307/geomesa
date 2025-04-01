@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -17,16 +17,15 @@ import com.googlecode.cqengine.persistence.support.ObjectStore;
 import com.googlecode.cqengine.query.Query;
 import com.googlecode.cqengine.query.option.QueryOptions;
 import com.googlecode.cqengine.resultset.ResultSet;
+import org.geotools.api.feature.simple.SimpleFeature;
+import org.geotools.api.feature.simple.SimpleFeatureType;
 import org.locationtech.geomesa.memory.cqengine.query.Intersects;
 import org.locationtech.geomesa.utils.index.SpatialIndex;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
-import org.opengis.feature.simple.SimpleFeature;
-import org.opengis.feature.simple.SimpleFeatureType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Function1;
-import scala.collection.JavaConversions;
 import scala.runtime.AbstractFunction1;
 
 import java.util.HashSet;
@@ -100,6 +99,10 @@ public abstract class AbstractGeoIndex<A extends Geometry, O extends SimpleFeatu
         this.index.clear();
     }
 
+    public void destroy(QueryOptions queryOptions) {
+        this.index.clear();
+    }
+
     @Override
     public ResultSet<O> retrieve(final Query<O> query, final QueryOptions queryOptions) {
         lastUsed.set(this.index);
@@ -154,7 +157,17 @@ public abstract class AbstractGeoIndex<A extends Geometry, O extends SimpleFeatu
         public Iterator<O> iterator() {
             scala.collection.Iterator<O> iter =
                   getSimpleFeatureIteratorInternal((Intersects) query, queryOptions);
-            return JavaConversions.asJavaIterator(iter);
+            return new Iterator<O>() {
+                @Override
+                public boolean hasNext() {
+                    return iter.hasNext();
+                }
+
+                @Override
+                public O next() {
+                    return iter.next();
+                }
+            };
         }
 
         @Override

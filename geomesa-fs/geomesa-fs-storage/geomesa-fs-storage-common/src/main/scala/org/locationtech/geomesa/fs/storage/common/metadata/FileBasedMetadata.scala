@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,63 +8,55 @@
 
 package org.locationtech.geomesa.fs.storage.common.metadata
 
+import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, LoadingCache}
+import com.typesafe.config._
+import org.apache.hadoop.fs._
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.fs.storage.api.StorageMetadata.PartitionMetadata
+import org.locationtech.geomesa.fs.storage.api._
+import org.locationtech.geomesa.fs.storage.common.utils.PathCache
+import org.locationtech.geomesa.utils.concurrent.{CachedThreadPool, PhaserUtils}
+import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.geomesa.utils.stats.DebugLogProfiling
+import org.locationtech.geomesa.utils.text.StringSerialization
+
 import java.io.{FileNotFoundException, InputStreamReader}
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent._
 import java.util.function.BiFunction
-
-import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, LoadingCache}
-import com.typesafe.config._
-import com.typesafe.scalalogging.LazyLogging
-import org.apache.hadoop.fs.Options.CreateOpts
-import org.apache.hadoop.fs._
-import org.locationtech.geomesa.fs.storage.api.StorageMetadata.PartitionMetadata
-import org.locationtech.geomesa.fs.storage.api.{NamedOptions, PartitionScheme, StorageMetadata}
-import org.locationtech.geomesa.fs.storage.common.utils.PathCache
-import org.locationtech.geomesa.utils.concurrent.CachedThreadPool
-import org.locationtech.geomesa.utils.io.WithClose
-import org.locationtech.geomesa.utils.stats.MethodProfiling
-import org.locationtech.geomesa.utils.text.StringSerialization
-import org.locationtech.jts.geom.Envelope
-import org.opengis.feature.simple.SimpleFeatureType
-
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.parallel.ExecutionContextTaskSupport
-import scala.concurrent.ExecutionContext
 import scala.runtime.BoxedUnit
 import scala.util.control.NonFatal
 
 /**
-  * StorageMetadata implementation. Saves changes as a series of timestamped changelogs to allow
-  * concurrent modifications. The current state is obtained by replaying all the logs.
-  *
-  * Note that state is not read off disk until 'reload' is called.
-  *
-  * When accessed through the standard factory methods, the state will periodically reload from disk
-  * in order to pick up external changes (every 10 minutes by default).
-  *
-  * Note that modifications made to the metadata may not be immediately available, if they occur
-  * simultaneously with a reload. For example, calling `getPartition` immediately after `addPartition` may
-  * not return anything. However, the change is always persisted to disk, and will be available after the next
-  * reload. In general this does not cause problems, as reads and writes happen in different JVMs (ingest
-  * vs query).
-  *
-  * @param fc file context
-  * @param directory metadata root path
-  * @param sft simple feature type
-  * @param encoding file encoding
-  * @param scheme partition scheme
-  * @param leafStorage leaf storage
-  */
+ * StorageMetadata implementation. Saves changes as a series of timestamped changelogs to allow
+ * concurrent modifications. The current state is obtained by replaying all the logs.
+ *
+ * Note that state is not read off disk until 'reload' is called.
+ *
+ * When accessed through the standard factory methods, the state will periodically reload from disk
+ * in order to pick up external changes (every 10 minutes by default).
+ *
+ * Note that modifications made to the metadata may not be immediately available, if they occur
+ * simultaneously with a reload. For example, calling `getPartition` immediately after `addPartition` may
+ * not return anything. However, the change is always persisted to disk, and will be available after the next
+ * reload. In general this does not cause problems, as reads and writes happen in different JVMs (ingest
+ * vs query).
+ *
+ * @param fs file system
+ * @param directory metadata root path
+ * @param sft simple feature type
+ * @param meta basic metadata config
+ * @param converter file converter
+ */
 class FileBasedMetadata(
-    private val fc: FileContext,
+    private val fs: FileSystem,
     val directory: Path,
     val sft: SimpleFeatureType,
-    val encoding: String,
-    val scheme: PartitionScheme,
-    val leafStorage: Boolean
-  ) extends StorageMetadata with MethodProfiling with LazyLogging {
+    private val meta: Metadata,
+    private val converter: MetadataConverter
+  ) extends StorageMetadata with DebugLogProfiling {
 
   import FileBasedMetadata._
 
@@ -90,6 +82,19 @@ class FileBasedMetadata(
       }
     )
 
+  override val scheme: PartitionScheme = PartitionSchemeFactory.load(sft, meta.scheme)
+  override val encoding: String = meta.config(Metadata.Encoding)
+  override val leafStorage: Boolean = meta.config(Metadata.LeafStorage).toBoolean
+
+  private val kvs = new ConcurrentHashMap[String, String](meta.config.asJava)
+
+  override def get(key: String): Option[String] = Option(kvs.get(key))
+
+  override def set(key: String, value: String): Unit = {
+    kvs.put(key, value)
+    FileBasedMetadataFactory.write(fs, directory.getParent, meta.copy(config = kvs.asScala.toMap))
+  }
+
   override def getPartitions(prefix: Option[String]): Seq[PartitionMetadata] = {
     partitions.get(BoxedUnit.UNIT).asScala.toStream.flatMap { case (p, _) =>
       if (prefix.forall(p.startsWith)) { Option(metadata.get(p)) } else { None }
@@ -101,9 +106,8 @@ class FileBasedMetadata(
   override def addPartition(partition: PartitionMetadata): Unit = {
     val config = {
       val action = PartitionAction.Add
-      val files = partition.files.toSet
-      val envelope = EnvelopeConfig(partition.bounds.map(_.envelope).getOrElse(new Envelope()))
-      PartitionConfig(partition.name, action, files, partition.count, envelope, System.currentTimeMillis())
+      val envelope = partition.bounds.map(b => EnvelopeConfig(b.envelope)).getOrElse(Seq.empty)
+      PartitionConfig(partition.name, action, partition.files, partition.count, envelope, System.currentTimeMillis())
     }
     val path = writePartition(config)
     // if we have already loaded the partition, merge in the new value
@@ -118,9 +122,8 @@ class FileBasedMetadata(
   override def removePartition(partition: PartitionMetadata): Unit = {
     val config = {
       val action = PartitionAction.Remove
-      val files = partition.files.toSet
-      val envelope = EnvelopeConfig(partition.bounds.map(_.envelope).getOrElse(new Envelope()))
-      PartitionConfig(partition.name, action, files, partition.count, envelope, System.currentTimeMillis())
+      val envelope = partition.bounds.map(b => EnvelopeConfig(b.envelope)).getOrElse(Seq.empty)
+      PartitionConfig(partition.name, action, partition.files, partition.count, envelope, System.currentTimeMillis())
     }
     val path = writePartition(config)
     // if we have already loaded the partition, merge in the new value
@@ -132,7 +135,26 @@ class FileBasedMetadata(
     }
   }
 
-  override def compact(partition: Option[String], threads: Int): Unit = {
+  override def setPartitions(partitions: Seq[PartitionMetadata]): Unit = {
+    val map = new ConcurrentHashMap[String, PartitionFiles]
+    this.partitions.put(BoxedUnit.UNIT, map)
+    this.metadata.invalidateAll()
+
+    val configs = partitions.map { partition =>
+      val action = PartitionAction.Add
+      val envelope = partition.bounds.map(b => EnvelopeConfig(b.envelope)).getOrElse(Seq.empty)
+      val config = PartitionConfig(partition.name, action, partition.files, partition.count, envelope, System.currentTimeMillis())
+      // note: side effects in map
+      this.metadata.put(partition.name, partition)
+      map.put(partition.name, PartitionFiles(config = Seq(config)))
+      config
+    }
+
+    writeCompactedConfig(configs)
+    delete(readPartitionFiles(8).asScala.flatMap { case (_, f) => f.unparsed ++ f.parsed }, 8)
+  }
+
+  override def compact(partition: Option[String], fileSize: Option[Long], threads: Int): Unit = {
     require(threads > 0, "Threads must be a positive number")
 
     // in normal usage, we never pass in a partition to this method
@@ -143,28 +165,25 @@ class FileBasedMetadata(
 
     readPartitionFiles(threads).asScala.foreach { case (name, f) =>
       val config = readPartition(f, threads).filter(_.files.nonEmpty)
-      metadata.put(name, config.map(_.toMetadata).orNull)
-      config.foreach(c => configs += c)
+      config match {
+        case None => metadata.invalidate(name)
+        case Some(c) =>
+          metadata.put(name, c.toMetadata)
+          configs += c
+      }
       paths ++= f.unparsed
       paths ++= f.parsed
     }
 
-    writeCompactedConfig(configs)
-
-    if (threads < 2) {
-      paths.foreach(fc.delete(_, false))
-    } else {
-      val ec = ExecutionContext.fromExecutorService(new CachedThreadPool(threads))
-      try {
-        val parPaths = paths.par
-        parPaths.tasksupport = new ExecutionContextTaskSupport(ec)
-        parPaths.foreach(fc.delete(_, false))
-      } finally {
-        ec.shutdown()
-      }
-    }
+    writeCompactedConfig(configs.toSeq)
+    delete(paths, threads)
 
     partitions.invalidate(BoxedUnit.UNIT)
+  }
+
+  override def invalidate(): Unit = {
+    partitions.invalidateAll()
+    metadata.invalidateAll()
   }
 
   override def close(): Unit = {}
@@ -177,18 +196,18 @@ class FileBasedMetadata(
    */
   private def writePartition(config: PartitionConfig): Path = {
     val data = profile("Serialized partition configuration") {
-      PartitionConfigConvert.to(config).render(options)
+      converter.renderPartition(config)
     }
     profile("Persisted partition configuration") {
       val encoded = StringSerialization.alphaNumericSafeString(config.name)
-      val name = s"$UpdatePartitionPrefix$encoded-${UUID.randomUUID()}$JsonPathSuffix"
+      val name = s"$UpdatePartitionPrefix$encoded-${UUID.randomUUID()}${converter.suffix}"
       val file = new Path(directory, name)
-      WithClose(fc.create(file, java.util.EnumSet.of(CreateFlag.CREATE), CreateOpts.createParent)) { out =>
+      WithClose(fs.create(file, false)) { out =>
         out.write(data.getBytes(StandardCharsets.UTF_8))
         out.hflush()
         out.hsync()
       }
-      PathCache.register(fc, file)
+      PathCache.register(fs, file)
       file
     }
   }
@@ -200,17 +219,23 @@ class FileBasedMetadata(
    */
   private def writeCompactedConfig(config: Seq[PartitionConfig]): Unit = {
     val data = profile("Serialized compacted partition configuration") {
-      CompactedConfigConvert.to(CompactedConfig(config)).render(options)
+      converter.renderCompaction(config)
     }
     profile("Persisted compacted partition configuration") {
-      val file = new Path(directory, CompactedPath)
-      val flags = java.util.EnumSet.of(CreateFlag.CREATE, CreateFlag.OVERWRITE)
-      WithClose(fc.create(file, flags, CreateOpts.createParent)) { out =>
+      val file = new Path(directory, CompactedPrefix + converter.suffix)
+      WithClose(fs.create(file, true)) { out =>
         out.write(data.getBytes(StandardCharsets.UTF_8))
         out.hflush()
         out.hsync()
       }
-      PathCache.register(fc, file)
+      PathCache.register(fs, file)
+      // generally we overwrite the existing file but if we change rendering the name will change
+      val toRemove =
+        new Path(directory, if (converter.suffix == HoconPathSuffix) { CompactedJson } else { CompactedHocon })
+      if (PathCache.exists(fs, toRemove, reload = true)) {
+        fs.delete(toRemove, false)
+        PathCache.invalidate(fs, toRemove)
+      }
     }
   }
 
@@ -229,7 +254,7 @@ class FileBasedMetadata(
       val pool = new CachedThreadPool(threads)
       // use a phaser to track worker thread completion
       val phaser = new Phaser(2) // 1 for the initial directory worker + 1 for this thread
-      pool.submit(new DirectoryWorker(pool, phaser, directory, result))
+      pool.submit(new DirectoryWorker(pool, phaser, fs.listStatusIterator(directory), result))
       // wait for the worker threads to complete
       try {
         phaser.awaitAdvanceInterruptibly(phaser.arrive())
@@ -252,11 +277,16 @@ class FileBasedMetadata(
     val updates = if (threads < 2) {
       files.unparsed.flatMap(readPartitionConfig)
     } else {
-      val ec = ExecutionContext.fromExecutorService(new CachedThreadPool(threads))
+      val ec = new CachedThreadPool(threads)
       try {
-        val unparsed = files.unparsed.par
-        unparsed.tasksupport = new ExecutionContextTaskSupport(ec)
-        unparsed.flatMap(readPartitionConfig).seq
+        val results = Seq.newBuilder[PartitionConfig]
+        def readOne(p: Path): Unit = {
+          readPartitionConfig(p).foreach { c =>
+            results.synchronized(results += c)
+          }
+        }
+        files.unparsed.toList.map(p => ec.submit(new Runnable() { override def run(): Unit = readOne(p)})).foreach(_.get)
+        results.result
       } finally {
         ec.shutdown()
       }
@@ -273,12 +303,12 @@ class FileBasedMetadata(
   private def readPartitionConfig(file: Path): Option[PartitionConfig] = {
     try {
       val config = profile("Loaded partition configuration") {
-        WithClose(new InputStreamReader(fc.open(file), StandardCharsets.UTF_8)) { in =>
-          ConfigFactory.parseReader(in, ConfigParseOptions.defaults().setSyntax(ConfigSyntax.JSON))
+        WithClose(new InputStreamReader(fs.open(file), StandardCharsets.UTF_8)) { in =>
+          ConfigFactory.parseReader(in, ConfigParseOptions.defaults().setSyntax(getSyntax(file.getName)))
         }
       }
       profile("Parsed partition configuration") {
-        Some(pureconfig.loadConfigOrThrow[PartitionConfig](config))
+        Some(converter.parsePartition(config))
       }
     } catch {
       case NonFatal(e) => logger.error(s"Error reading config at path $file:", e); None
@@ -294,48 +324,74 @@ class FileBasedMetadata(
   private def readCompactedConfig(file: Path): Seq[PartitionConfig] = {
     try {
       val config = profile("Loaded compacted partition configuration") {
-        WithClose(new InputStreamReader(fc.open(file), StandardCharsets.UTF_8)) { in =>
-          ConfigFactory.parseReader(in, ConfigParseOptions.defaults().setSyntax(ConfigSyntax.JSON))
+        WithClose(new InputStreamReader(fs.open(file), StandardCharsets.UTF_8)) { in =>
+          ConfigFactory.parseReader(in, ConfigParseOptions.defaults().setSyntax(getSyntax(file.getName)))
         }
       }
       profile("Parsed compacted partition configuration") {
-        pureconfig.loadConfigOrThrow[CompactedConfig](config).partitions
+        converter.parseCompaction(config)
       }
     } catch {
       case NonFatal(e) => logger.error(s"Error reading config at path $file:", e); Seq.empty
     }
   }
 
+  /**
+   * Delete a seq of paths
+   *
+   * @param paths paths to delete
+   * @param threads number of threads to use
+   */
+  private def delete(paths: Iterable[Path], threads: Int): Unit = {
+    if (threads < 2) {
+      paths.foreach(fs.delete(_, false))
+    } else {
+      val ec = new CachedThreadPool(threads)
+      try {
+        paths.toList.map(p => ec.submit(new Runnable() { override def run(): Unit = fs.delete(p, false)})).foreach(_.get)
+      } finally {
+        ec.shutdown()
+      }
+    }
+  }
+
   private class DirectoryWorker(
       es: ExecutorService,
       phaser: Phaser,
-      dir: Path,
+      listDirectory: => RemoteIterator[FileStatus],
       result: ConcurrentHashMap[String, PartitionFiles]
     ) extends Runnable {
 
     override def run(): Unit = {
       try {
-        val iter = fc.listStatus(dir)
-        while (iter.hasNext) {
+        var i = phaser.getRegisteredParties + 1
+        val iter = listDirectory
+        while (iter.hasNext && i < PhaserUtils.MaxParties) {
           val status = iter.next
           val path = status.getPath
           lazy val name = path.getName
           if (status.isDirectory) {
-            phaser.register() // register the new worker thread
-            es.submit(new DirectoryWorker(es, phaser, path, result))
-          } else if (name.startsWith(UpdatePartitionPrefix) && name.endsWith(JsonPathSuffix)) {
+            i += 1
+            // use a tiered phaser on each directory avoid the limit of 65535 registered parties
+            es.submit(new DirectoryWorker(es, new Phaser(phaser, 1), fs.listStatusIterator(path), result))
+          } else if (name.startsWith(UpdatePartitionPrefix)) {
             // pull out the partition name but don't parse the file yet
             val encoded = name.substring(8, name.length - 42) // strip out prefix and suffix
             val partition = StringSerialization.decodeAlphaNumericSafeString(encoded)
             result.merge(partition, PartitionFiles(unparsed = Seq(path)), addFiles)
-          } else if (name == CompactedPath) {
+          } else if (name == CompactedHocon || name == CompactedJson) {
+            i += 1
             phaser.register() // register the new worker thread
             es.submit(new CompactedParser(phaser, path, result))
           } else if (name.startsWith(UpdateFilePrefix) && name.endsWith(JsonPathSuffix)) {
             // old update files - have to parse them to get the partition name
+            i += 1
             phaser.register() // register the new worker thread
             es.submit(new UpdateParser(phaser, path, result))
           }
+        }
+        if (iter.hasNext) {
+          es.submit(new DirectoryWorker(es, new Phaser(phaser, 1), iter, result))
         }
       } catch {
         case _: FileNotFoundException => // the partition dir was deleted... just return
@@ -385,14 +441,23 @@ class FileBasedMetadata(
 object FileBasedMetadata {
 
   val MetadataType = "file"
-  val DefaultOptions: NamedOptions = NamedOptions(MetadataType)
+  val DefaultOptions: NamedOptions = NamedOptions(MetadataType, Map(Config.RenderKey -> Config.RenderCompact))
+  val LegacyOptions : NamedOptions = NamedOptions(MetadataType, Map(Config.RenderKey -> Config.RenderPretty))
 
-  private val CompactedPath         = "compacted.json"
+  object Config {
+    val RenderKey = "render"
+
+    val RenderPretty  = "pretty"
+    val RenderCompact = "compact"
+  }
+
+  private val CompactedPrefix       = "compacted"
   private val UpdateFilePrefix      = "update-"
   private val UpdatePartitionPrefix = UpdateFilePrefix + "$"
-  private val JsonPathSuffix        = ".json"
-
-  private val options = ConfigRenderOptions.concise().setFormatted(true)
+  private val JsonPathSuffix        = RenderPretty.suffix
+  private val HoconPathSuffix       = RenderCompact.suffix
+  private val CompactedJson         = CompactedPrefix + JsonPathSuffix
+  private val CompactedHocon        = CompactedPrefix + HoconPathSuffix
 
   // function to add/merge an existing partition in an atomic call
   private val addMetadata = new BiFunction[PartitionMetadata, PartitionMetadata, PartitionMetadata]() {
@@ -423,7 +488,17 @@ object FileBasedMetadata {
    * @return
    */
   def copy(m: FileBasedMetadata): FileBasedMetadata =
-    new FileBasedMetadata(m.fc, m.directory, m.sft, m.encoding, m.scheme, m.leafStorage)
+    new FileBasedMetadata(m.fs, m.directory, m.sft, m.meta, m.converter)
+
+  private def getSyntax(file: String): ConfigSyntax = {
+    if (file.endsWith(HoconPathSuffix)) {
+      ConfigSyntax.CONF
+    } else if (file.endsWith(JsonPathSuffix)) {
+      ConfigSyntax.JSON
+    } else {
+      ConfigSyntax.JSON
+    }
+  }
 
   /**
    * Holder for metadata files for a partition

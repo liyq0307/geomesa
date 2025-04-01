@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,6 +8,13 @@
 
 package org.locationtech.geomesa.filter.factory
 
+import org.geotools.api.feature.`type`.Name
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.MultiValuedFilter.MatchAction
+import org.geotools.api.filter._
+import org.geotools.api.filter.expression.{Expression, PropertyName}
+import org.geotools.api.filter.spatial.DWithin
+import org.geotools.api.filter.temporal.{After, Before, During}
 import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.filter.visitor.DuplicatingFilterVisitor
@@ -21,14 +28,7 @@ import org.locationtech.geomesa.filter.expression.OrSequentialEquality.OrSequent
 import org.locationtech.geomesa.filter.expression._
 import org.locationtech.geomesa.filter.visitor.QueryPlanFilterVisitor
 import org.locationtech.geomesa.utils.geotools.SimpleFeaturePropertyAccessor
-import org.opengis.feature.`type`.Name
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.MultiValuedFilter.MatchAction
-import org.opengis.filter._
-import org.opengis.filter.expression.{Expression, PropertyName}
-import org.opengis.filter.spatial.DWithin
-import org.opengis.filter.temporal.{After, Before, During}
-import org.opengis.geometry.Geometry
+import org.locationtech.jts.geom.Geometry
 import org.xml.sax.helpers.NamespaceSupport
 
 /**
@@ -37,7 +37,7 @@ import org.xml.sax.helpers.NamespaceSupport
   * Note: usage expects the sft to be set in FastFilterFactory.sfts
   * FastFilterFactory.toFilter will handle this for you
  */
-class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl with FilterFactory2 {
+class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl with FilterFactory {
 
   import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
 
@@ -112,7 +112,7 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
                        exp2: Expression,
                        matchCase: Boolean,
                        matchAction: MatchAction): PropertyIsGreaterThan = {
-    if (matchCase || matchAction != MatchAction.ANY) {
+    if (matchAction != MatchAction.ANY) {
       super.greater(exp1, exp2, matchCase, matchAction)
     } else {
       org.locationtech.geomesa.filter.checkOrder(exp1, exp2) match {
@@ -150,7 +150,7 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
                               exp2: Expression,
                               matchCase: Boolean,
                               matchAction: MatchAction): PropertyIsGreaterThanOrEqualTo = {
-    if (matchCase || matchAction != MatchAction.ANY) {
+    if (matchAction != MatchAction.ANY) {
       super.greaterOrEqual(exp1, exp2, matchCase, matchAction)
     } else {
       org.locationtech.geomesa.filter.checkOrder(exp1, exp2) match {
@@ -186,7 +186,7 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
                     exp2: Expression,
                     matchCase: Boolean,
                     matchAction: MatchAction): PropertyIsLessThan = {
-    if (matchCase || matchAction != MatchAction.ANY) {
+    if (matchAction != MatchAction.ANY) {
       super.less(exp1, exp2, matchCase, matchAction)
     } else {
       org.locationtech.geomesa.filter.checkOrder(exp1, exp2) match {
@@ -224,7 +224,7 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
                            exp2: Expression,
                            matchCase: Boolean,
                            matchAction: MatchAction): PropertyIsLessThanOrEqualTo = {
-    if (matchCase || matchAction != MatchAction.ANY) {
+    if (matchAction != MatchAction.ANY) {
       super.lessOrEqual(exp1, exp2, matchCase, matchAction)
     } else {
       org.locationtech.geomesa.filter.checkOrder(exp1, exp2) match {
@@ -274,10 +274,10 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
 
   override def or(filters: java.util.List[Filter]): Or = {
     if (filters.isEmpty) {
-      return super.or(filters.asInstanceOf[java.util.List[_]])
+      return super.or(filters)
     }
 
-    val predicates = FilterHelper.flattenOr(filters.asScala)
+    val predicates = FilterHelper.flattenOr(filters.asScala.toSeq)
 
     val props = scala.collection.mutable.HashSet.empty[String]
     val literals = scala.collection.immutable.HashSet.newBuilder[AnyRef]
@@ -289,10 +289,10 @@ class FastFilterFactory private extends org.geotools.filter.FilterFactoryImpl wi
         case p: PropertyIsEqualTo if p.getMatchAction == MatchAction.ANY && p.isMatchingCase =>
           org.locationtech.geomesa.filter.checkOrder(p.getExpression1, p.getExpression2) match {
             case Some(PropertyLiteral(name, lit, _)) if !props.add(name) || props.size == 1 => literals += lit.getValue
-            case _ => return super.or(filters.asInstanceOf[java.util.List[_]])
+            case _ => return super.or(filters)
           }
 
-        case _ => return super.or(filters.asInstanceOf[java.util.List[_]])
+        case _ => return super.or(filters)
       }
     }
 
@@ -409,7 +409,7 @@ object FastFilterFactory {
 
   def optimize(sft: SimpleFeatureType, filter: Filter): Filter = {
     sfts.set(sft)
-    try { filter.accept(new QueryPlanFilterVisitor(sft), factory).asInstanceOf[Filter] } finally {
+    try { QueryPlanFilterVisitor(sft, filter, factory) } finally {
       sfts.remove()
     }
   }

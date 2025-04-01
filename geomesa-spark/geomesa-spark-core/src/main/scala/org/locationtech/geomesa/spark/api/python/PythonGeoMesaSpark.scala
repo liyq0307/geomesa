@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,12 +10,12 @@ package org.locationtech.geomesa.spark.api.python
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.api.java.{JavaRDD, JavaSparkContext}
-import org.geotools.data.Query
-import org.locationtech.geomesa.spark.{GeoMesaSpark, Schema, SpatialRDD, SpatialRDDProvider}
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeature
 import org.locationtech.geomesa.spark.api.java.JavaSpatialRDD
-import org.opengis.feature.simple.SimpleFeature
+import org.locationtech.geomesa.spark.{GeoMesaSpark, Schema, SpatialRDD, SpatialRDDProvider}
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 
 object PythonGeoMesaSpark {
   def apply(params: java.util.Map[String, _ <: java.io.Serializable]) =
@@ -31,7 +31,7 @@ class PythonSpatialRDDProvider(provider: SpatialRDDProvider) {
           jsc: JavaSparkContext,
           params: java.util.Map[String, String],
           query: Query): PythonSpatialRDD =
-    provider.rdd(conf, jsc.sc, params.toMap, query)
+    provider.rdd(conf, jsc.sc, params.asScala.toMap, query)
 }
 
 object PythonSpatialRDD {

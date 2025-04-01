@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,6 +9,7 @@
 package org.locationtech.geomesa.memory.cqengine.utils
 
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.filter.Filter
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.memory.cqengine.GeoCQEngine
 import org.locationtech.geomesa.memory.cqengine.index.param.STRtreeIndexParam
@@ -16,7 +17,6 @@ import org.locationtech.geomesa.memory.cqengine.index.{AbstractGeoIndex, GeoInde
 import org.locationtech.geomesa.memory.cqengine.utils.SampleFeatures._
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.index.{BucketIndex, SpatialIndex, WrappedQuadtree, WrappedSTRtree}
-import org.opengis.filter.Filter
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner

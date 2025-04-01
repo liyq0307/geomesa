@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,16 +9,25 @@
 package org.locationtech.geomesa.convert2.transforms
 
 import org.locationtech.geomesa.convert.EvaluationContext
+import org.locationtech.geomesa.convert2.transforms.EnrichmentCacheFunctionFactory.CacheLookup
 import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
 
 class EnrichmentCacheFunctionFactory extends TransformerFunctionFactory {
 
   override def functions: Seq[TransformerFunction] = Seq(cacheLookup)
 
-  private val cacheLookup = new NamedTransformerFunction(Seq("cacheLookup")) {
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
-      val cache = ctx.cache(args(0).asInstanceOf[String])
-      cache.get(Array(args(1).asInstanceOf[String], args(2).asInstanceOf[String]))
+  private val cacheLookup = new CacheLookup(null)
+}
+
+object EnrichmentCacheFunctionFactory {
+
+  class CacheLookup(ec: EvaluationContext) extends NamedTransformerFunction(Seq("cacheLookup")) {
+
+    override def apply(args: Array[AnyRef]): AnyRef = {
+      val cache = ec.cache(args(0).asInstanceOf[String])
+      cache.get(Array(args(1).asInstanceOf[String], args(2).asInstanceOf[String])).asInstanceOf[AnyRef]
     }
+
+    override def withContext(ec: EvaluationContext): TransformerFunction = new CacheLookup(ec)
   }
 }

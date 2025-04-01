@@ -10,7 +10,7 @@ In order to use the density process you must:
 
 * Install the server side code on your HBase cluster :ref:`hbase_deploy_distributed_runtime`
 * Register the coprocessors site wide or for the table you wish to use :ref:`registering_coprocessors`
-* Install the WPS processes in GeoServer :ref:_GeoMesa-process`
+* Install the WPS processes in GeoServer :ref:`geomesa_process`
 * Install the heatmap SLD in GeoServer :ref:`install-heatmap-sld`
 
 .. _install-heatmap-sld:
@@ -23,7 +23,7 @@ In order to style the density result to produce a heatmap, GeoServer needs a Sty
 To start, add a new SLD style to GeoServer named "heatmap" and use this sld
 :download:`heatmap.sld </user/_static/sld/clientside-heatmap.sld>`
 
-Instruction on how to install SLDs can be found here `GeoServer Styles <http://docs.geoserver.org/latest/en/user/styling/webadmin/index.html>`_.
+Instruction on how to install SLDs can be found here `GeoServer Styles <https://docs.geoserver.org/latest/en/user/styling/webadmin/index.html>`_.
 
 Now you can change the style parameter to be ``styles=heatmap`` in the Layer Preview or PNG preview in GeoServer.
 

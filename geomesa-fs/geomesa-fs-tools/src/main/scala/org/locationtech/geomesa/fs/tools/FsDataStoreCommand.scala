@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,20 @@
 
 package org.locationtech.geomesa.fs.tools
 
-import java.io.File
-import java.util
-import java.util.ServiceLoader
-
 import com.beust.jcommander.{IValueValidator, Parameter, ParameterException}
 import org.locationtech.geomesa.fs.data.FileSystemDataStore
 import org.locationtech.geomesa.fs.data.FileSystemDataStoreFactory.FileSystemDataStoreParams
 import org.locationtech.geomesa.fs.storage.api.FileSystemStorageFactory
 import org.locationtech.geomesa.fs.tools.FsDataStoreCommand.FsParams
-import org.locationtech.geomesa.tools.utils.ParameterConverters.KeyValueConverter
+import org.locationtech.geomesa.tools.utils.NoopParameterSplitter
+import org.locationtech.geomesa.tools.utils.ParameterConverters.{BytesValidator, KeyValueConverter}
 import org.locationtech.geomesa.tools.{DataStoreCommand, DistributedCommand}
 import org.locationtech.geomesa.utils.classpath.ClassPathUtils
 import org.locationtech.geomesa.utils.io.PathUtils
+
+import java.io.File
+import java.util
+import java.util.ServiceLoader
 
 /**
  * Abstract class for FSDS commands
@@ -72,7 +73,10 @@ object FsDataStoreCommand {
   }
 
   trait OptionalEncodingParam {
-    @Parameter(names = Array("--encoding", "-e"), description = "Encoding (parquet, orc, converter, etc)", validateValueWith = classOf[EncodingValidator])
+    @Parameter(
+      names = Array("--encoding", "-e"),
+      description = "Encoding (parquet, orc, converter, etc)",
+      validateValueWith = Array(classOf[EncodingValidator]))
     var encoding: String = _
   }
 
@@ -83,8 +87,19 @@ object FsDataStoreCommand {
     @Parameter(names = Array("--leaf-storage"), description = "Use Leaf Storage for Partition Scheme", arity = 1)
     var leafStorage: java.lang.Boolean = true
 
-    @Parameter(names = Array("--storage-opt"), variableArity = true, description = "Additional storage opts (k=v)", converter = classOf[KeyValueConverter])
+    @Parameter(
+      names = Array("--storage-opt"),
+      description = "Additional storage options to set as SimpleFeatureType user data, in the form key=value",
+      variableArity = true,
+      converter = classOf[KeyValueConverter],
+      splitter = classOf[NoopParameterSplitter])
     var storageOpts: java.util.List[(String, String)] = new java.util.ArrayList[(String, String)]()
+
+    @Parameter(
+      names = Array("--target-file-size"),
+      description = "Target size for data files",
+      validateValueWith = Array(classOf[BytesValidator]))
+    var targetFileSize: String = _
   }
 
   class EncodingValidator extends IValueValidator[String] {

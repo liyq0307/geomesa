@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,23 +8,25 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.io.{ByteArrayInputStream, Closeable}
-import java.nio.charset.StandardCharsets
-import java.security.PrivilegedExceptionAction
-
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine, LoadingCache}
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hbase.client.{Connection, ConnectionFactory}
 import org.apache.hadoop.hbase.security.User
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier
 import org.apache.hadoop.hbase.{HBaseConfiguration, HConstants}
 import org.apache.hadoop.security.authentication.util.KerberosUtil
 import org.apache.hadoop.security.{SecurityUtil, UserGroupInformation}
+import org.locationtech.geomesa.hbase.HBaseSystemProperties
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreFactory.{HBaseGeoMesaKeyTab, HBaseGeoMesaPrincipal}
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreParams.{ConfigPathsParam, ConfigsParam, ConnectionParam, ZookeeperParam}
 import org.locationtech.geomesa.hbase.utils.HBaseVersions
-import org.locationtech.geomesa.utils.io.{CloseWithLogging, HadoopUtils}
+import org.locationtech.geomesa.utils.hadoop.HadoopUtils
+import org.locationtech.geomesa.utils.io.CloseWithLogging
 
+import java.io.{ByteArrayInputStream, Closeable}
+import java.nio.charset.StandardCharsets
+import java.security.PrivilegedExceptionAction
 import scala.util.{Failure, Success, Try}
 
 object HBaseConnectionPool extends LazyLogging {
@@ -37,12 +39,14 @@ object HBaseConnectionPool extends LazyLogging {
       // add common resources from system property - lazy to allow object initialization if there's an error
       private lazy val configuration = {
         val base = HBaseConfiguration.create()
-        HBaseDataStoreFactory.ConfigPathProperty.option.foreach(addResources(base, _))
+        HBaseSystemProperties.ConfigPathProperty.option.foreach(addResources(base, _))
         base
       }
 
       override def load(key: ConfigKey): Configuration = {
         val conf = new Configuration(configuration)
+        // Make sure that current user is always logged-in user
+        conf.set("hbase.client.userprovider.class", "org.locationtech.geomesa.hbase.data.LoginUserProvider")
         // add the explicit props first, they may be needed for loading the path resources
         key.xml.foreach(xml => conf.addResource(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))))
         key.paths.foreach(addResources(conf, _))
@@ -100,6 +104,7 @@ object HBaseConnectionPool extends LazyLogging {
       ProvidedConnection(ConnectionParam.lookup(params))
     } else {
       val conf = getConfiguration(params)
+      logger.debug(s"Connecting to HBase instance at ${conf.get(HConstants.ZOOKEEPER_QUORUM)}")
       if (HBaseDataStoreParams.CacheConnectionsParam.lookup(params)) {
         connections.get((conf, validate))
       } else {
@@ -121,8 +126,11 @@ object HBaseConnectionPool extends LazyLogging {
       val action = new PrivilegedExceptionAction[ConnectionWrapper]() {
         override def run(): ConnectionWrapper = doCreateConnection(conf, validate)
       }
-      User.getCurrent.runAs(action)
+      val user = UserGroupInformation.getLoginUser
+      logger.info(s"Creating Secured HBase connection with user $user")
+      user.doAs(action)
     } else {
+      logger.info(s"Creating unsecured HBase connection")
       doCreateConnection(conf, validate)
     }
   }
@@ -146,47 +154,57 @@ object HBaseConnectionPool extends LazyLogging {
    * @param conf conf
    */
   def configureSecurity(conf: Configuration): Unit = synchronized {
+    import AuthenticationTokenIdentifier.AUTH_TOKEN_TYPE
+
     if (User.isHBaseSecurityEnabled(conf)) {
-      val principal = conf.get(HBaseGeoMesaPrincipal)
-      val keytab = conf.get(HBaseGeoMesaKeyTab)
-
-      logger.debug(
-        s"Using Kerberos with principal '$principal', keytab '$keytab', " +
-            s"and Hadoop authentication method '${SecurityUtil.getAuthenticationMethod(conf)}'")
-
-      val currentUser = UserGroupInformation.getCurrentUser
-
-      if (currentUser.hasKerberosCredentials && sameName(currentUser, principal)) {
-        logger.debug(s"User '$principal' is already authenticated")
+      val currentUser = UserGroupInformation.getLoginUser
+      if (currentUser.getCredentials.getAllTokens.asScala.exists(_.getKind == AUTH_TOKEN_TYPE)) {
+        logger.debug("Using existing HBase authentication token")
       } else {
-        if (currentUser.hasKerberosCredentials) {
-          logger.warn(
-            s"Changing global authenticated Hadoop user from '${currentUser.getUserName}' to '$principal' -" +
-                "this will affect any connections still using the old user")
-        }
-        UserGroupInformation.setConfiguration(conf)
-        UserGroupInformation.loginUserFromKeytab(principal, keytab)
+        val keytab = conf.get(HBaseGeoMesaKeyTab)
+        val rawPrincipal = conf.get(HBaseGeoMesaPrincipal)
 
-        logger.debug(s"Logged into Hadoop with user '${UserGroupInformation.getCurrentUser.getUserName}'")
+        if (keytab == null || rawPrincipal == null) {
+          lazy val missing =
+            Seq(HBaseGeoMesaKeyTab -> keytab, HBaseGeoMesaPrincipal -> rawPrincipal).collect { case (k, null) => k }
+          logger.warn(s"Security is enabled but missing credentials under '${missing.mkString("' and '")}'")
+        } else {
+          val principal = fullPrincipal(rawPrincipal)
+
+          lazy val principalMsg =
+            s"'$principal'${if (principal == rawPrincipal) { "" } else { s" (original '$rawPrincipal')"}}"
+          logger.debug(
+            s"Using Kerberos with principal $principalMsg, keytab '$keytab', " +
+                s"and Hadoop authentication method '${SecurityUtil.getAuthenticationMethod(conf)}'")
+
+          if (currentUser.hasKerberosCredentials && currentUser.getUserName == principal) {
+            logger.debug(s"User '$principal' is already authenticated")
+          } else {
+            if (currentUser.hasKerberosCredentials) {
+              logger.warn(
+                s"Changing global authenticated Hadoop user from '${currentUser.getUserName}' to '$principal' -" +
+                    "this will affect any connections still using the old user")
+            }
+            UserGroupInformation.setConfiguration(conf)
+            UserGroupInformation.loginUserFromKeytab(principal, keytab)
+
+            logger.debug(s"Logged into Hadoop with user '${UserGroupInformation.getLoginUser.getUserName}'")
+          }
+        }
       }
     }
   }
 
   /**
-   * Compare two kerberos principals.
+   * Replace _HOST with the current host and add the default realm if nothing is specified.
    *
-   * The existing principal is expected to have a realm and hostname filled out already.
+   * `SecurityUtil.getServerPrincipal` will replace the _HOST but only if there is already a realm.
    *
-   * To compare, we: add the default realm, if there is no realm specified; replace _HOST with the current host.
-   *
-   * `SecurityUtil.getServerPrincipal` will replace the _HOST but only if there is already a realm
-   *
-   * @param current existing user
-   * @param principal new user name
+   * @param principal kerberos principal
    * @return
    */
-  private def sameName(current: UserGroupInformation, principal: String): Boolean = {
-    val fullName = if (principal.indexOf('@') != -1) {
+  private def fullPrincipal(principal: String): String = {
+    if (principal.indexOf('@') != -1) {
       // we have a realm so this should be work to replace _HOST if present
       SecurityUtil.getServerPrincipal(principal, null: String)
     } else {
@@ -194,15 +212,13 @@ object HBaseConnectionPool extends LazyLogging {
       Try(KerberosUtil.getDefaultRealm) match {
         case Success(realm) => SecurityUtil.getServerPrincipal(s"$principal@$realm", null: String)
         case Failure(e) =>
-          logger.debug(s"Unable to get default Kerberos realm: $e")
+          logger.warn(s"Unable to get default Kerberos realm: $e")
           if (!principal.contains(SecurityUtil.HOSTNAME_PATTERN)) { principal } else {
             // append a fake realm so that the _HOST replacement works and then remove it afterwards
             SecurityUtil.getServerPrincipal(s"$principal@foo", null: String).dropRight(4)
           }
       }
     }
-
-    current.getUserName == fullName
   }
 
   /**

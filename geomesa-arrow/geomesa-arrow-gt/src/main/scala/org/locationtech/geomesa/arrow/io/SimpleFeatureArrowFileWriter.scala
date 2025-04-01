@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,22 +8,24 @@
 
 package org.locationtech.geomesa.arrow.io
 
-import java.io.{Closeable, Flushable, OutputStream}
-import java.nio.channels.Channels
-
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.dictionary.{Dictionary, DictionaryProvider}
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.ipc.message.IpcOption
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.arrow.vector.SimpleFeatureVector.SimpleFeatureEncoding
 import org.locationtech.geomesa.arrow.vector.{ArrowDictionary, SimpleFeatureVector}
 import org.locationtech.geomesa.utils.io.CloseWithLogging
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.io.{Closeable, Flushable, OutputStream}
+import java.nio.channels.Channels
 
 /**
   * For writing simple features to an arrow file.
   *
   * Uses arrow streaming format (no footer).
+  * Closing the SimpleFeatureArrowFileWriter closes the given os.
   *
   * @param vector simple feature vector
   * @param provider dictionary provider
@@ -34,11 +36,19 @@ class SimpleFeatureArrowFileWriter private (
     provider: DictionaryProvider with Closeable,
     os: OutputStream,
     ipcOpts: IpcOption,
-    sort: Option[(String, Boolean)]
+    sort: Option[(String, Boolean)],
+    flattenStruct: Boolean = false
   ) extends Closeable with Flushable with LazyLogging {
-
   private val metadata = sort.map { case (field, reverse) => getSortAsMetadata(field, reverse) }.orNull
-  private val root = createRoot(vector.underlying, metadata)
+  private val root = {
+    val potentialRoot = createRoot(vector.underlying, metadata)
+
+    if (flattenStruct) {
+      new VectorSchemaRoot(potentialRoot.getVector(sft.getTypeName))
+    } else {
+      potentialRoot
+    }
+  }
   private val writer = new ArrowStreamWriter(root, provider, Channels.newChannel(os), ipcOpts)
 
   private var index = 0
@@ -86,6 +96,8 @@ class SimpleFeatureArrowFileWriter private (
 
 object SimpleFeatureArrowFileWriter {
 
+  import scala.collection.JavaConverters._
+
   /**
    * For writing simple features to an arrow file.
    *
@@ -103,16 +115,18 @@ object SimpleFeatureArrowFileWriter {
       dictionaries: Map[String, ArrowDictionary],
       encoding: SimpleFeatureEncoding,
       ipcOpts: IpcOption,
-      sort: Option[(String, Boolean)]): SimpleFeatureArrowFileWriter = {
+      sort: Option[(String, Boolean)],
+      flattenStruct: Boolean = false): SimpleFeatureArrowFileWriter = {
     val vector = SimpleFeatureVector.create(sft, dictionaries, encoding)
     // convert the dictionary values into arrow vectors
     // make sure we load dictionaries before instantiating the stream writer
     val provider: DictionaryProvider with Closeable = new DictionaryProvider with Closeable {
       private val dictionaries = vector.dictionaries.collect { case (_, d) => d.id -> d.toDictionary(vector.encoding) }
       override def lookup(id: Long): Dictionary = dictionaries(id)
+      override def getDictionaryIds: java.util.Set[java.lang.Long] = dictionaries.keys.map(Long.box).toSet.asJava
       override def close(): Unit = CloseWithLogging(dictionaries.values)
     }
-    new SimpleFeatureArrowFileWriter(vector, provider, os, ipcOpts, sort)
+    new SimpleFeatureArrowFileWriter(vector, provider, os, ipcOpts, sort, flattenStruct)
   }
 
   // convert the dictionary values into arrow vectors
@@ -122,6 +136,7 @@ object SimpleFeatureArrowFileWriter {
     new DictionaryProvider with Closeable {
       private val dicts = dictionaries.collect { case (_, d) => d.id -> d.toDictionary(encoding) }
       override def lookup(id: Long): Dictionary = dicts(id)
+      override def getDictionaryIds: java.util.Set[java.lang.Long] = dicts.keys.map(Long.box).toSet.asJava
       override def close(): Unit = CloseWithLogging(dicts.values)
     }
   }

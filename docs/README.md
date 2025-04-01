@@ -4,13 +4,14 @@ This is not the GeoMesa documentation itself, but rather notes on how to build i
 
 ## Setup
 
-The documentation is built using Python's [Sphinx](http://sphinx-doc.org/) module.
+The documentation is built using Python's [Sphinx](http://sphinx-doc.org/) module. It is tested to work with Python
+3.10.
 
 Installing Sphinx and its dependencies in a Python ``virtualenv``:
 
     $ virtualenv .sphinx && source .sphinx/bin/activate
     $ pip install -r requirements.txt
-    
+
 Alternatively use ``sudo`` with the ``pip`` command to install the packages in the system Python distribution.
 
     $ sudo pip install -r requirements.txt
@@ -32,6 +33,11 @@ To build HTML versions of the manuals:
 If you do not have Sphinx installed the manual will not be built.
 The outputted files are written to the ``target/html`` directory. 
 
+To view the docs, use the provided ``docs-server.sh`` script (requires Docker), then browse to
+``http://localhost:8080``:
+
+    $ ./docs/docs-server.sh
+
 To build a PDF version:
 
     $ mvn clean install -Pdocs,latex
@@ -43,14 +49,13 @@ when it prompts for input. It should build the whole document. If the
 table of contents doesn't render properly, delete ``GeoMesa.pdf``
 and run ``make`` again.
 
-To build a single HTML file containing all three manuals:
+To build a single HTML file containing all two manuals:
 
     $ mvn clean install -Pdocs,singlehtml
 
 ## About
 
-There are currently three main manuals: the User Manual (``user``), the Developer Manual (``developer``),
-and Tutorials (``tutorials``).
+There are currently two main manuals: the User Manual (``user``) and Tutorials (``tutorials``).
 
 In each manual, the root page of the documentation is ``index.rst``. Any static files included go in
 the ``_static`` directory. 

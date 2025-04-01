@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,6 +8,9 @@
 
 package org.locationtech.geomesa.index.iterators
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
+import org.geotools.api.filter.expression.Expression
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.util.factory.Hints
 import org.geotools.util.factory.Hints.ClassKey
@@ -22,9 +25,6 @@ import org.locationtech.geomesa.utils.geotools.converters.FastConverter
 import org.locationtech.geomesa.utils.geotools.{GeometryUtils, GridSnap, RenderingGrid}
 import org.locationtech.geomesa.utils.interop.SimpleFeatureTypes
 import org.locationtech.jts.geom._
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
-import org.opengis.filter.expression.Expression
 
 trait DensityScan extends AggregatingScan[DensityScanResult] {
 

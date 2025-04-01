@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,17 +8,17 @@
 
 package org.locationtech.geomesa.features.kryo
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
-
 import com.esotericsoftware.kryo.io.{Input, Output}
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.kryo.serialization.KryoGeometrySerialization
+import org.locationtech.geomesa.features.serialization.{GeometryLengthThreshold, GeometryNestingThreshold, TwkbSerialization}
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.locationtech.jts.geom.{Coordinate, Geometry}
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
 import scala.languageFeature.postfixOps
 
 @RunWith(classOf[JUnitRunner])
@@ -135,6 +135,52 @@ class KryoGeometrySerializerTest extends Specification {
           deserialized mustEqual geom
           compare(deserialized.getCoordinates, geom.getCoordinates)
         }
+      }
+    }
+
+    "allow limits on length of geometries" in {
+      GeometryLengthThreshold.threadLocalValue.set("3")
+      try {
+        // create a new deserializer to pick up the sys prop change
+        val deserializer = new TwkbSerialization[Output, Input](){}
+        val out = new Output(512)
+        val serializers = Seq(
+          KryoGeometrySerialization.serialize(out, _: Geometry),
+          KryoGeometrySerialization.serializeWkb(out, _: Geometry)
+        )
+        foreach(serializers) { serializer =>
+          out.clear()
+          serializer.apply(WKTUtils.read("LINESTRING (0 0, 1 1, 2 2)"))
+          deserializer.deserialize(new Input(out.toBytes)) must not(beNull)
+          out.clear()
+          serializer.apply(WKTUtils.read("LINESTRING (0 0, 1 1, 2 2, 3 3)"))
+          deserializer.deserialize(new Input(out.toBytes)) must beNull
+        }
+      } finally {
+        GeometryLengthThreshold.threadLocalValue.remove()
+      }
+    }
+
+    "allow limits on nesting of geometry collections" in {
+      GeometryNestingThreshold.threadLocalValue.set("1")
+      try {
+        // create a new deserializer to pick up the sys prop change
+        val deserializer = new TwkbSerialization[Output, Input](){}
+        val out = new Output(512)
+        val serializers = Seq(
+          KryoGeometrySerialization.serialize(out, _: Geometry),
+          KryoGeometrySerialization.serializeWkb(out, _: Geometry)
+        )
+        foreach(serializers) { serializer =>
+          out.clear()
+          serializer.apply(WKTUtils.read("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (0 0)))"))
+          deserializer.deserialize(new Input(out.toBytes)) must not(beNull)
+          out.clear()
+          serializer.apply(WKTUtils.read("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (0 0))))"))
+          deserializer.deserialize(new Input(out.toBytes)) must beNull
+        }
+      } finally {
+        GeometryNestingThreshold.threadLocalValue.remove()
       }
     }
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,14 @@
 
 package org.locationtech.geomesa.index.filters
 
-import java.nio.ByteBuffer
-
 import org.locationtech.geomesa.index.filters.RowFilter.RowFilterFactory
 import org.locationtech.geomesa.index.filters.Z3Filter._
 import org.locationtech.geomesa.index.index.z2.Z2IndexValues
+import org.locationtech.geomesa.utils.conf.GeoMesaProperties
 import org.locationtech.geomesa.utils.index.ByteArrays
-import org.locationtech.sfcurve.zorder.Z2
+import org.locationtech.geomesa.zorder.sfcurve.Z2
+
+import java.nio.ByteBuffer
 
 class Z2Filter(val xy: Array[Array[Int]]) extends RowFilter {
 
@@ -43,7 +44,7 @@ object Z2Filter extends RowFilterFactory[Z2Filter] {
 
   def apply(values: Z2IndexValues): Z2Filter = {
     val sfc = values.sfc
-    val xy: Array[Array[Int]] = values.bounds.map { case (xmin, ymin, xmax, ymax) =>
+    val xy: Array[Array[Int]] = values.spatialBounds.map { case (xmin, ymin, xmax, ymax) =>
       Array(sfc.lon.normalize(xmin), sfc.lat.normalize(ymin), sfc.lon.normalize(xmax), sfc.lat.normalize(ymax))
     }.toArray
 
@@ -69,7 +70,7 @@ object Z2Filter extends RowFilterFactory[Z2Filter] {
 
   override def serializeToStrings(filter: Z2Filter): Map[String, String] = {
     val xy = filter.xy.map(bounds => bounds.mkString(RangeSeparator)).mkString(TermSeparator)
-    Map(XYKey -> xy)
+    Map(XYKey -> xy, VersionKey -> GeoMesaProperties.ProjectVersion)
   }
 
   override def deserializeFromStrings(serialized: scala.collection.Map[String, String]): Z2Filter = {

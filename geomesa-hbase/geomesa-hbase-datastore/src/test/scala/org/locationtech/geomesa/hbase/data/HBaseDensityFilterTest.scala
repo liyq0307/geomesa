@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,10 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.time.{ZoneOffset, ZonedDateTime}
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.{Query, _}
+import org.geotools.api.data._
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.referencing.crs.DefaultGeographicCRS
@@ -26,16 +25,17 @@ import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.jts.geom.Envelope
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
+import java.time.{ZoneOffset, ZonedDateTime}
+import java.util.Date
 import scala.util.Random
 
 @RunWith(classOf[JUnitRunner])
 class HBaseDensityFilterTest extends Specification with LazyLogging {
+
+  import scala.collection.JavaConverters._
 
   sequential
 
@@ -49,11 +49,11 @@ class HBaseDensityFilterTest extends Specification with LazyLogging {
     HBaseDataStoreParams.DensityCoprocessorParam.key -> true
   )
 
-  lazy val ds = DataStoreFinder.getDataStore(params).asInstanceOf[HBaseDataStore]
-  lazy val dsSemiLocal = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.DensityCoprocessorParam.key -> false)).asInstanceOf[HBaseDataStore]
-  lazy val dsFullLocal = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.RemoteFilteringParam.key -> false)).asInstanceOf[HBaseDataStore]
-  lazy val dsThreads1 = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.CoprocessorThreadsParam.key -> "1")).asInstanceOf[HBaseDataStore]
-  lazy val dsYieldPartials = DataStoreFinder.getDataStore(params ++ Map(HBaseDataStoreParams.YieldPartialResultsParam.key -> true)).asInstanceOf[HBaseDataStore]
+  lazy val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[HBaseDataStore]
+  lazy val dsSemiLocal = DataStoreFinder.getDataStore((params ++ Map(HBaseDataStoreParams.DensityCoprocessorParam.key -> false)).asJava).asInstanceOf[HBaseDataStore]
+  lazy val dsFullLocal = DataStoreFinder.getDataStore((params ++ Map(HBaseDataStoreParams.RemoteFilteringParam.key -> false)).asJava).asInstanceOf[HBaseDataStore]
+  lazy val dsThreads1 = DataStoreFinder.getDataStore((params ++ Map(HBaseDataStoreParams.CoprocessorThreadsParam.key -> "1")).asJava).asInstanceOf[HBaseDataStore]
+  lazy val dsYieldPartials = DataStoreFinder.getDataStore((params ++ Map(HBaseDataStoreParams.YieldPartialResultsParam.key -> true)).asJava).asInstanceOf[HBaseDataStore]
   lazy val dataStores = Seq(ds, dsSemiLocal, dsFullLocal, dsThreads1, dsYieldPartials)
 
   var sft: SimpleFeatureType = _
@@ -223,8 +223,8 @@ class HBaseDensityFilterTest extends Specification with LazyLogging {
   def getDensity(typeName: String, query: String, ds: DataStore): List[(Double, Double, Double)] = {
     val filter = ECQL.toFilter(query)
     val envelope = FilterHelper.extractGeometries(filter, "geom").values.headOption match {
-      case None    => ReferencedEnvelope.create(new Envelope(-180, 180, -90, 90), DefaultGeographicCRS.WGS84)
-      case Some(g) => ReferencedEnvelope.create(g.getEnvelopeInternal,  DefaultGeographicCRS.WGS84)
+      case None    => ReferencedEnvelope.envelope(new Envelope(-180, 180, -90, 90), DefaultGeographicCRS.WGS84)
+      case Some(g) => ReferencedEnvelope.envelope(g.getEnvelopeInternal,  DefaultGeographicCRS.WGS84)
     }
     val q = new Query(typeName, filter)
     q.getHints.put(QueryHints.DENSITY_BBOX, envelope)

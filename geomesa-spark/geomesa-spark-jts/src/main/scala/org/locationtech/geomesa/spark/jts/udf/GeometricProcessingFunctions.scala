@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,10 +9,10 @@
 
 package org.locationtech.geomesa.spark.jts.udf
 
-import org.locationtech.jts.geom._
-import org.locationtech.jts.util.GeometricShapeFactory
 import org.apache.spark.sql.SQLContext
 import org.locationtech.geomesa.spark.jts.util.SQLFunctionHelper._
+import org.locationtech.jts.geom._
+import org.locationtech.jts.util.GeometricShapeFactory
 import org.locationtech.spatial4j.context.jts.JtsSpatialContext
 import org.locationtech.spatial4j.distance.DistanceUtils
 import org.locationtech.spatial4j.shape.Circle
@@ -61,9 +61,15 @@ object GeometricProcessingFunctions {
     fastCircleToGeom(new JtsPoint(p, spatialContext).getBuffered(degrees, spatialContext))
   }
 
+  val ST_MakeValid: Geometry => Geometry = nullableUDF(geom => {
+    val fix = new util.GeometryFixer(geom)
+    fix.getResult
+  })
+
   private[geomesa] val processingNames = Map(
     ST_antimeridianSafeGeom -> "st_antimeridianSafeGeom",
-    ST_BufferPoint -> "st_bufferPoint"
+    ST_BufferPoint -> "st_bufferPoint",
+    ST_MakeValid -> "st_makeValid"
   )
 
 
@@ -71,6 +77,7 @@ object GeometricProcessingFunctions {
     sqlContext.udf.register(processingNames(ST_antimeridianSafeGeom), ST_antimeridianSafeGeom)
     sqlContext.udf.register("st_idlSafeGeom", ST_antimeridianSafeGeom)
     sqlContext.udf.register(processingNames(ST_BufferPoint), ST_BufferPoint)
+    sqlContext.udf.register(processingNames(ST_MakeValid), ST_MakeValid)
   }
 
 }

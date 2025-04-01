@@ -62,6 +62,12 @@ When true, this property has GeoMesa coprocessor calls yield and return to the c
 for that query is reached. When false, the coprocessor will attempt to complete its query (making multiple batches)
 while respecting the ``geomesa.query.timeout``.
 
+geomesa.hbase.delete.vis
+++++++++++++++++++++++++
+
+This property can be used as a work-around to delete features that are written with HBase cell-level security.
+See https://geomesa.atlassian.net/browse/GEOMESA-3113 for details.
+
 geomesa.hbase.remote.filtering
 ++++++++++++++++++++++++++++++
 
@@ -101,8 +107,28 @@ geomesa.hbase.write.batch
 
 Specify the number of bytes that will be buffered before flushing to disk during write operations.
 
+geomesa.hbase.write.flush.timeout.millis
+++++++++++++++++++++++++++++++++++++++++
+
+Specify the maximum number of milliseconds before data will be flushed to disk during write operations.
+
 geomesa.hbase.query.block.caching.enabled
 +++++++++++++++++++++++++++++++++++++++++
 
 Set whether blocks should be cached for scans, true by default. When true, default settings of the table and
 family are used (this will never override caching blocks if the block cache is disabled for that family or entirely).
+
+geomesa.hbase.coprocessor.threads
++++++++++++++++++++++++++++++++++
+
+The number of HBase RPC threads to use per coprocessor query
+
+geomesa.hbase.ranges.max-per-extended-scan
+++++++++++++++++++++++++++++++++++++++++++
+
+Max ranges per extended scan. Ranges will be grouped into scans based on this setting.
+
+geomesa.hbase.ranges.max-per-coprocessor-scan
++++++++++++++++++++++++++++++++++++++++++++++
+
+Max ranges per coprocessor scan. Ranges will be grouped into scans based on this setting

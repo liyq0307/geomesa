@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,10 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.nio.charset.StandardCharsets
-import java.util.regex.Pattern
-import java.util.{Collections, Locale, UUID}
-
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hbase.TableName
 import org.apache.hadoop.hbase.client._
-import org.apache.hadoop.hbase.coprocessor.CoprocessorHost
 import org.apache.hadoop.hbase.filter.MultiRowRangeFilter.RowRange
 import org.apache.hadoop.hbase.filter.{FilterList, KeyOnlyFilter, MultiRowRangeFilter, Filter => HFilter}
 import org.apache.hadoop.hbase.io.compress.Compression
@@ -24,10 +19,16 @@ import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding
 import org.apache.hadoop.hbase.regionserver.BloomType
 import org.apache.hadoop.hbase.security.visibility.CellVisibility
 import org.locationtech.geomesa.hbase.HBaseSystemProperties
-import org.locationtech.geomesa.utils.io.IsFlushableImplicits
+import org.locationtech.geomesa.index.api.IndexAdapter.RequiredVisibilityWriter
+import org.locationtech.geomesa.utils.concurrent.CachedThreadPool
+import org.locationtech.geomesa.utils.io.{IsCloseable, IsFlushableImplicits}
 
+import java.nio.charset.StandardCharsets
+import java.util.regex.Pattern
+import java.util.{Collections, Locale, UUID}
 import scala.util.Try
 // noinspection ScalaDeprecation
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.hbase.HBaseSystemProperties.{CoprocessorPath, CoprocessorUrl, TableAvailabilityTimeout}
 import org.locationtech.geomesa.hbase.aggregators.HBaseArrowAggregator.HBaseArrowResultsToFeatures
 import org.locationtech.geomesa.hbase.aggregators.HBaseBinAggregator.HBaseBinResultsToFeatures
@@ -41,7 +42,7 @@ import org.locationtech.geomesa.hbase.utils.HBaseVersions
 import org.locationtech.geomesa.index.api.IndexAdapter.BaseIndexWriter
 import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, IndexResultsToFeatures}
 import org.locationtech.geomesa.index.api.WritableFeature.FeatureWrapper
-import org.locationtech.geomesa.index.api.{WritableFeature, _}
+import org.locationtech.geomesa.index.api._
 import org.locationtech.geomesa.index.conf.QueryHints
 import org.locationtech.geomesa.index.filters.{S2Filter, S3Filter, Z2Filter, Z3Filter}
 import org.locationtech.geomesa.index.index.id.IdIndex
@@ -50,12 +51,12 @@ import org.locationtech.geomesa.index.index.s3.{S3Index, S3IndexValues}
 import org.locationtech.geomesa.index.index.z2.{Z2Index, Z2IndexValues}
 import org.locationtech.geomesa.index.index.z3.{Z3Index, Z3IndexValues}
 import org.locationtech.geomesa.index.iterators.StatsScan
-import org.locationtech.geomesa.index.planning.LocalQueryRunner.{ArrowDictionaryHook, LocalTransformReducer}
+import org.locationtech.geomesa.index.planning.LocalQueryRunner.LocalTransformReducer
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, FlushWithLogging, WithClose}
 import org.locationtech.geomesa.utils.text.StringSerialization
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
+import java.util.concurrent.TimeUnit
 import scala.util.Random
 import scala.util.control.NonFatal
 
@@ -107,8 +108,10 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
               case NonFatal(e) => logger.warn("Error checking dynamic jar path:", e); None
             }
           }
-          // if the coprocessors are installed site-wide don't register them in the table descriptor
-          val installed = Option(conf.get(CoprocessorHost.USER_REGION_COPROCESSOR_CONF_KEY))
+          // if the coprocessors are installed site-wide don't register them in the table descriptor.
+          // this key is CoprocessorHost.USER_REGION_COPROCESSOR_CONF_KEY - but don't want to pull in
+          // a dependency on hbase-server just for this constant
+          val installed = Option(conf.get("hbase.coprocessor.user.region.classes"))
           val names = installed.map(_.split(":").toSet).getOrElse(Set.empty[String])
           if (names.contains(CoprocessorClass)) { None } else {
             logger.debug(s"Using coprocessor path ${coprocessorUrl.orNull}")
@@ -148,11 +151,11 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
 
   override def deleteTables(tables: Seq[String]): Unit = {
     WithClose(ds.connection.getAdmin) { admin =>
-      tables.par.foreach { name =>
+      def deleteOne(name: String): Unit = {
         val table = TableName.valueOf(name)
         if (admin.tableExists(table)) {
           HBaseVersions.disableTableAsync(admin, table)
-          val timeout = TableAvailabilityTimeout.toDuration.filter(_.isFinite())
+          val timeout = TableAvailabilityTimeout.toUnboundedDuration.filter(_.isFinite)
           logger.debug(s"Waiting for table '$table' to be disabled with " +
               s"${timeout.map(t => s"a timeout of $t").getOrElse("no timeout")}")
           val stop = timeout.map(t => System.currentTimeMillis() + t.toMillis)
@@ -163,11 +166,12 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
           admin.deleteTable(table)
         }
       }
+      tables.toList.map(t => CachedThreadPool.submit(() => deleteOne(t))).foreach(_.get)
     }
   }
 
   override def clearTables(tables: Seq[String], prefix: Option[Array[Byte]]): Unit = {
-    tables.par.foreach { name =>
+    def clearOne(name: String): Unit = {
       val tableName = TableName.valueOf(name)
       WithClose(ds.connection.getTable(tableName)) { table =>
         val scan = new Scan().setFilter(new KeyOnlyFilter)
@@ -183,6 +187,7 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
         }
       }
     }
+    tables.toList.map(t => CachedThreadPool.submit(() => clearOne(t))).foreach(_.get)
   }
 
   override def createQueryPlan(strategy: QueryStrategy): HBaseQueryPlan = {
@@ -212,11 +217,10 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
 
     if (!ds.config.remoteFilter) {
       // everything is done client side
-      val arrowHook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
       // note: we assume visibility filtering is still done server-side as it's part of core hbase
       // note: we use the full filter here, since we can't use the z3 server-side filter
       // for some attribute queries we wouldn't need the full filter...
-      val reducer = Some(new LocalTransformReducer(schema, filter.filter, None, transform, hints, arrowHook))
+      val reducer = Some(new LocalTransformReducer(schema, filter.filter, None, transform, hints))
       empty(reducer).getOrElse {
         val scans = configureScans(tables, ranges, small, colFamily, Seq.empty, coprocessor = false)
         val resultsToFeatures = new HBaseResultsToFeatures(index, schema)
@@ -267,10 +271,7 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
       lazy val coprocessorScans =
         configureScans(tables, ranges, small, colFamily, indexFilter.toSeq.map(_._2), coprocessor = true)
       lazy val resultsToFeatures = new HBaseResultsToFeatures(index, returnSchema)
-      lazy val localReducer = {
-        val arrowHook = Some(ArrowDictionaryHook(ds.stats, filter.filter))
-        Some(new LocalTransformReducer(returnSchema, None, None, None, hints, arrowHook))
-      }
+      lazy val localReducer = Some(new LocalTransformReducer(returnSchema, None, None, None, hints))
 
       if (hints.isDensityQuery) {
         empty(None).getOrElse {
@@ -343,10 +344,19 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
     }
   }
 
-  override def createWriter(sft: SimpleFeatureType,
-                            indices: Seq[GeoMesaFeatureIndex[_, _]],
-                            partition: Option[String]): HBaseIndexWriter =
-    new HBaseIndexWriter(ds, indices, WritableFeature.wrapper(sft, groups), partition)
+  override def createWriter(
+      sft: SimpleFeatureType,
+      indices: Seq[GeoMesaFeatureIndex[_, _]],
+      partition: Option[String],
+      atomic: Boolean): HBaseIndexWriter = {
+    require(!atomic, "HBase data store does not currently support atomic writes")
+    val wrapper = WritableFeature.wrapper(sft, groups)
+    if (sft.isVisibilityRequired) {
+      new HBaseIndexWriter(ds, indices, wrapper, partition) with RequiredVisibilityWriter
+    } else {
+      new HBaseIndexWriter(ds, indices, wrapper, partition)
+    }
+  }
 
   /**
    * Configure the hbase scan
@@ -392,7 +402,8 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
     } else {
       // split and group ranges by region server
       // note: we have to copy the ranges for each table scan anyway
-      val rangesPerTable: Seq[(TableName, collection.Map[String, java.util.List[RowRange]])] = tables.map(t => t -> groupRangesByRegion(t, ranges))
+      val rangesPerTable: Seq[(TableName, collection.Map[String, java.util.List[RowRange]])] =
+        tables.map(t => t -> groupRangesByRegion(t, ranges))
 
       def createGroup(group: java.util.List[RowRange]): Scan = {
         val scan = new Scan(group.get(0).getStartRow, group.get(group.size() - 1).getStopRow)
@@ -481,10 +492,16 @@ class HBaseIndexAdapter(ds: HBaseDataStore) extends IndexAdapter[HBaseDataStore]
     try {
       val regionInfo = locator.getRegionLocation(range.getStartRow).getRegionInfo
       encodedName = regionInfo.getEncodedName
-      val regionEndKey = regionInfo.getEndKey // Note this is exclusive.
+      val regionEndKey = regionInfo.getEndKey // note: this is exclusive
       if (regionEndKey.nonEmpty &&
           (range.getStopRow.isEmpty || ByteArrays.ByteOrdering.compare(regionEndKey, range.getStopRow) <= 0)) {
-        split = regionEndKey
+        if (ByteArrays.ByteOrdering.compare(range.getStartRow, regionEndKey) < 0) {
+          split = regionEndKey
+        } else {
+          logger.warn(s"HBase region location does not correspond to requested range:\n" +
+              s"  requested row: ${ByteArrays.toHex(range.getStartRow)}\n" +
+              s"  region: $encodedName ${ByteArrays.toHex(regionInfo.getStartKey)} :: ${ByteArrays.toHex(regionEndKey)}")
+        }
       }
     } catch {
       case NonFatal(e) => logger.warn(s"Error checking range location for '$range''", e)
@@ -525,7 +542,7 @@ object HBaseIndexAdapter extends LazyLogging {
    */
   def waitForTable(admin: Admin, table: TableName): Unit = {
     if (!admin.isTableAvailable(table)) {
-      val timeout = TableAvailabilityTimeout.toDuration.filter(_.isFinite())
+      val timeout = TableAvailabilityTimeout.toUnboundedDuration.filter(_.isFinite)
       logger.debug(s"Waiting for table '$table' to become available with " +
           s"${timeout.map(t => s"a timeout of $t").getOrElse("no timeout")}")
       val stop = timeout.map(t => System.currentTimeMillis() + t.toMillis)
@@ -567,26 +584,50 @@ object HBaseIndexAdapter extends LazyLogging {
       partition: Option[String]
     ) extends BaseIndexWriter(indices, wrapper) {
 
+    import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+
     private val batchSize = HBaseSystemProperties.WriteBatchSize.toLong
+    private val flushTimeout = HBaseSystemProperties.WriteFlushTimeout.toLong
+    private val deleteVis = HBaseSystemProperties.DeleteVis.option.map(new CellVisibility(_))
+
+    private val pools = {
+      // mimic config from default hbase connection
+      val maxThreads = math.max(1, ds.connection.getConfiguration.getInt("hbase.htable.threads.max", Int.MaxValue))
+      Array.fill(indices.length)(new CachedThreadPool(maxThreads))
+    }
 
     private val mutators = indices.toArray.map { index =>
-      val table = index.getTableNames(partition) match {
-        case Seq(t) => t // should always be writing to a single table here
-        case tables => throw new IllegalStateException(s"Expected a single table but got: ${tables.mkString(", ")}")
-      }
+      // should always be writing to a single table here
+      val table = index.getTableName(partition)
       val params = new BufferedMutatorParams(TableName.valueOf(table))
       batchSize.foreach(params.writeBufferSize)
+      flushTimeout.foreach(params.setWriteBufferPeriodicFlushTimeoutMs)
+
+      // We have to pass a pool explicitly and close it after manually,
+      // cause of HBase issue where pools got leaked and never closed
+      // (in case of long running Spark jobs 24+ hours the workers go out of memory without custom pool)
+      params.pool(pools(indices.indexOf(index)))
       ds.connection.getBufferedMutator(params)
     }
 
+    private val expiration = indices.headOption.flatMap(_.sft.getFeatureExpiration).orNull
+
     private var i = 0
 
-    override protected def write(feature: WritableFeature, values: Array[RowKeyValue[_]], update: Boolean): Unit = {
-      if (update) {
-        // for updates, ensure that our timestamps don't clobber each other
-        flush()
-        Thread.sleep(1)
+    override protected def append(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
+      val ttl = if (expiration != null) {
+        val t = expiration.expires(feature.feature) - System.currentTimeMillis
+        if (t > 0) {
+          t
+        }
+        else {
+          logger.warn("Feature is already past its TTL; not added to database")
+          return
+        }
+      } else {
+        0L
       }
+
       i = 0
       while (i < values.length) {
         val mutator = mutators(i)
@@ -599,6 +640,7 @@ object HBaseIndexAdapter extends LazyLogging {
                 put.setCellVisibility(new CellVisibility(new String(value.vis, StandardCharsets.UTF_8)))
               }
               put.setDurability(durability)
+              if (ttl > 0) put.setTTL(ttl)
               mutator.mutate(put)
             }
 
@@ -611,12 +653,25 @@ object HBaseIndexAdapter extends LazyLogging {
                   put.setCellVisibility(new CellVisibility(new String(value.vis, StandardCharsets.UTF_8)))
                 }
                 put.setDurability(durability)
+                if (ttl > 0) put.setTTL(ttl)
                 mutator.mutate(put)
               }
             }
         }
         i += 1
       }
+    }
+
+    override protected def update(
+        feature: WritableFeature,
+        values: Array[RowKeyValue[_]],
+        previous: WritableFeature,
+        previousValues: Array[RowKeyValue[_]]): Unit = {
+      delete(previous, previousValues)
+      // for updates, ensure that our timestamps don't clobber each other
+      flush()
+      Thread.sleep(1)
+      append(feature, values)
     }
 
     override protected def delete(feature: WritableFeature, values: Array[RowKeyValue[_]]): Unit = {
@@ -630,6 +685,8 @@ object HBaseIndexAdapter extends LazyLogging {
               del.addFamily(value.cf) // note: passing in the column qualifier seems to keep deletes from working
               if (!value.vis.isEmpty) {
                 del.setCellVisibility(new CellVisibility(new String(value.vis, StandardCharsets.UTF_8)))
+              } else {
+                deleteVis.foreach(del.setCellVisibility)
               }
               mutator.mutate(del)
             }
@@ -641,6 +698,8 @@ object HBaseIndexAdapter extends LazyLogging {
                 del.addFamily(value.cf) // note: passing in the column qualifier seems to keep deletes from working
                 if (!value.vis.isEmpty) {
                   del.setCellVisibility(new CellVisibility(new String(value.vis, StandardCharsets.UTF_8)))
+                } else {
+                  deleteVis.foreach(del.setCellVisibility)
                 }
                 mutator.mutate(del)
               }
@@ -652,10 +711,18 @@ object HBaseIndexAdapter extends LazyLogging {
 
     override def flush(): Unit = FlushWithLogging.raise(mutators)(BufferedMutatorIsFlushable.arrayIsFlushable)
 
-    override def close(): Unit = CloseWithLogging.raise(mutators)
+    override def close(): Unit = {
+      try { CloseWithLogging.raise(mutators) } finally {
+        pools.foreach(CloseWithLogging(_)(IsCloseable.executorServiceIsCloseable))
+      }
+      if (!pools.foldLeft(true) { case (terminated, pool) => terminated && pool.awaitTermination(60, TimeUnit.SECONDS) }) {
+        logger.warn("Failed to terminate thread pool after 60 seconds")
+      }
+    }
   }
 
   object BufferedMutatorIsFlushable extends IsFlushableImplicits[BufferedMutator] {
     override protected def flush(f: BufferedMutator): Try[Unit] = Try(f.flush())
   }
+
 }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,15 @@
 
 package org.locationtech.geomesa.index.planning
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.filter.sort.{SortBy, SortOrder}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.index.TestGeoMesaDataStore
 import org.locationtech.geomesa.index.conf.QueryHints
+import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.filter.sort.{SortBy, SortOrder}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -25,7 +26,7 @@ class QueryPlannerTest extends Specification {
   import org.locationtech.geomesa.filter.ff
   import org.locationtech.geomesa.index.conf.QueryHints.RichHints
 
-  val sft = SimpleFeatureTypes.createType("query-planner", "name:String,age:Int,dtg:Date,*geom:Point:srid=4326")
+  val sft = SimpleFeatureTypes.createType("query-planner", "name:String:index=true,age:Int,dtg:Date,*geom:Point:srid=4326")
 
   val ds = new TestGeoMesaDataStore(true)
   ds.createSchema(sft)
@@ -64,44 +65,56 @@ class QueryPlannerTest extends Specification {
       ds.getQueryPlan(query) must throwA[IllegalArgumentException]
     }
 
+    "plan 'attribute is null' filter" in {
+      val filter = ECQL.toFilter("name IS NULL")
+      val query = new Query(sft.getTypeName, filter)
+
+      val plans = ds.getQueryPlan(query)
+      plans must haveLength(1)
+      val plan = plans.head
+      plan.filter.index.name must not(beEqualTo(AttributeIndex.name))
+      plan.filter.primary must beNone
+      plan.filter.secondary must beSome(filter)
+    }
+
     "be able to sort by id asc" >> {
       val query = new Query(sft.getTypeName)
-      query.setSortBy(Array(SortBy.NATURAL_ORDER))
+      query.setSortBy(SortBy.NATURAL_ORDER)
       QueryPlanner.setQuerySort(sft, query)
       query.getHints.getSortFields must beSome(Seq(("", false)))
     }
 
     "be able to sort by id desc" >> {
       val query = new Query(sft.getTypeName)
-      query.setSortBy(Array(SortBy.REVERSE_ORDER))
+      query.setSortBy(SortBy.REVERSE_ORDER)
       QueryPlanner.setQuerySort(sft, query)
       query.getHints.getSortFields must beSome(Seq(("", true)))
     }
 
     "be able to sort by an attribute asc" >> {
       val query = new Query(sft.getTypeName)
-      query.setSortBy(Array(ff.sort("name", SortOrder.ASCENDING)))
+      query.setSortBy(ff.sort("name", SortOrder.ASCENDING))
       QueryPlanner.setQuerySort(sft, query)
       query.getHints.getSortFields must beSome(Seq(("name", false)))
     }
 
     "be able to sort by an attribute desc" >> {
       val query = new Query(sft.getTypeName)
-      query.setSortBy(Array(ff.sort("name", SortOrder.DESCENDING)))
+      query.setSortBy(ff.sort("name", SortOrder.DESCENDING))
       QueryPlanner.setQuerySort(sft, query)
       query.getHints.getSortFields must beSome(Seq(("name", true)))
     }
 
     "be able to sort by an attribute and id" >> {
       val query = new Query(sft.getTypeName)
-      query.setSortBy(Array(ff.sort("name", SortOrder.ASCENDING), SortBy.NATURAL_ORDER))
+      query.setSortBy(ff.sort("name", SortOrder.ASCENDING), SortBy.NATURAL_ORDER)
       QueryPlanner.setQuerySort(sft, query)
       query.getHints.getSortFields must beSome(Seq(("name", false), ("", false)))
     }
 
     "be able to sort by an multiple attributes" >> {
       val query = new Query(sft.getTypeName)
-      query.setSortBy(Array(ff.sort("age", SortOrder.DESCENDING), ff.sort("name", SortOrder.ASCENDING)))
+      query.setSortBy(ff.sort("age", SortOrder.DESCENDING), ff.sort("name", SortOrder.ASCENDING))
       QueryPlanner.setQuerySort(sft, query)
       query.getHints.getSortFields must beSome(Seq(("age", true), ("name", false)))
     }

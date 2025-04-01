@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,10 @@
 
 package org.locationtech.geomesa.kafka.data
 
-import java.nio.charset.StandardCharsets
-
-import org.apache.curator.framework.CuratorFrameworkFactory
-import org.apache.curator.retry.ExponentialBackoffRetry
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.zk.CuratorHelper
+
+import java.nio.charset.StandardCharsets
 
 /**
   * Migrates kafka data store metadata from geomesa 1.3.x to 1.4.x
@@ -24,25 +23,22 @@ import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 class MetadataMigration(ds: KafkaDataStore, zkPath: String, zookeepers: String) extends Runnable {
 
   override def run(): Unit = {
-    import scala.collection.JavaConversions._
+    import scala.collection.JavaConverters._
 
-    val client = CuratorFrameworkFactory.builder()
-        .namespace(zkPath)
-        .connectString(zookeepers)
-        .retryPolicy(new ExponentialBackoffRetry(1000, 3))
-        .build()
+    val client = CuratorHelper.client(zookeepers).namespace(zkPath).build()
 
     try {
       client.start()
       client.blockUntilConnected()
 
       if (client.checkExists().forPath("/") != null) {
-        client.getChildren.forPath("/").foreach { name =>
+        client.getChildren.forPath("/").asScala.foreach { name =>
           if (name != KafkaDataStore.MetadataPath && client.checkExists().forPath(s"/$name/Topic") != null) {
             if (name.indexOf("-REPLAY-") == -1) {
               val schema = new String(client.getData.forPath(s"/$name"), StandardCharsets.UTF_8)
               val sft = SimpleFeatureTypes.createType(name, schema)
               KafkaDataStore.setTopic(sft, new String(client.getData.forPath(s"/$name/Topic"), StandardCharsets.UTF_8))
+              sft.getUserData.put(SimpleFeatureTypes.Configs.OverrideReservedWords, "true")
               ds.createSchema(sft)
             }
             client.delete().deletingChildrenIfNeeded().forPath(s"/$name")

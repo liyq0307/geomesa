@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,9 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.data.{DataStoreFinder, Query, Transaction}
+import org.geotools.api.feature.simple.SimpleFeature
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
@@ -22,7 +21,6 @@ import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
 import org.locationtech.geomesa.utils.stats.CountStat
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -75,7 +73,7 @@ class HBaseSamplingFilterTest extends Specification with LazyLogging {
           val filter = "bbox(geom, -179, -89, 179, 89)"+
             " AND dtg between '2009-05-07T00:00:00.000Z' and '2011-05-08T00:00:00.000Z'"
 
-          val query = new Query(sft.getTypeName, ECQL.toFilter(filter), Array("name","track"))
+          val query = new Query(sft.getTypeName, ECQL.toFilter(filter), "name","track")
 
           val features = runQuery(query)
 
@@ -119,7 +117,7 @@ class HBaseSamplingFilterTest extends Specification with LazyLogging {
           val filter = "bbox(geom, -179, -89, 179, 89)"+
             " AND dtg between '2009-05-07T00:00:00.000Z' and '2011-05-08T00:00:00.000Z'"
 
-          val query = new Query(sft.getTypeName, ECQL.toFilter(filter), Array("name","track"))
+          val query = new Query(sft.getTypeName, ECQL.toFilter(filter), "name","track")
           query.getHints.put(QueryHints.SAMPLING, 0.1f)
           query.getHints.put(QueryHints.SAMPLE_BY, "track")
 
@@ -143,7 +141,7 @@ class HBaseSamplingFilterTest extends Specification with LazyLogging {
           //sample-by enabled
 
           val query = new Query(sft.getTypeName)
-          query.setPropertyNames(Array("name","track"))
+          query.setPropertyNames("name","track")
           query.getHints.put(QueryHints.SAMPLING, 0.1f)
           query.getHints.put(QueryHints.SAMPLE_BY, "track")
 
@@ -214,7 +212,7 @@ class HBaseSamplingFilterTest extends Specification with LazyLogging {
           val filter = "bbox(geom, -179, -89, 179, 89)"+
             " AND dtg between '2009-05-07T00:00:00.000Z' and '2011-05-08T00:00:00.000Z'"
 
-          val query = new Query(sft.getTypeName, ECQL.toFilter(filter), Array("name","track"))
+          val query = new Query(sft.getTypeName, ECQL.toFilter(filter), "name","track")
           query.getHints.put(QueryHints.SAMPLING, 0.1f)
 
           val features = runQuery(query)
@@ -230,7 +228,7 @@ class HBaseSamplingFilterTest extends Specification with LazyLogging {
           //sample-by disabled
 
           val query = new Query(sft.getTypeName)
-          query.setPropertyNames(Array("name","track"))
+          query.setPropertyNames("name","track")
           query.getHints.put(QueryHints.SAMPLING, 0.1f)
 
           val features = runQuery(query)

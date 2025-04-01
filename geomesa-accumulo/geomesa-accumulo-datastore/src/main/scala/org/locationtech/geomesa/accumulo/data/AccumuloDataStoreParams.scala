@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,42 +9,50 @@
 package org.locationtech.geomesa.accumulo.data
 
 
+import org.locationtech.geomesa.accumulo.AccumuloProperties.RemoteProcessingProperties
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.GeoMesaDataStoreParams
 import org.locationtech.geomesa.security.SecurityParams
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.geotools.GeoMesaParam
-import org.locationtech.geomesa.utils.geotools.GeoMesaParam.{SystemPropertyBooleanParam, SystemPropertyStringParam}
+import org.locationtech.geomesa.utils.geotools.GeoMesaParam.{ReadWriteFlag, SystemPropertyBooleanParam, SystemPropertyStringParam}
 
 // keep params in a separate object so we don't require accumulo classes on the build path to access it
 object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParams {
 
-  val InstanceIdParam =
+  val InstanceNameParam =
     new GeoMesaParam[String](
-      "accumulo.instance.id",
-      "Accumulo Instance ID",
-      deprecatedKeys = Seq("instanceId", "accumulo.instanceId"),
-      supportsNiFiExpressions = true)
+      "accumulo.instance.name",
+      "Accumulo Instance Name",
+      deprecatedKeys = Seq("instanceId", "accumulo.instanceId", "accumulo.instance.id"),
+      supportsNiFiExpressions = true
+    )
+
+  @deprecated("InstanceNameParam")
+  val InstanceIdParam: GeoMesaParam[String] = InstanceNameParam
 
   val ZookeepersParam =
     new GeoMesaParam[String](
       "accumulo.zookeepers",
       "Zookeepers",
       deprecatedKeys = Seq("zookeepers"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true
+    )
 
   val ZookeeperTimeoutParam =
     new GeoMesaParam[String](
       "accumulo.zookeepers.timeout",
       "The timeout used for connections to Zookeeper",
       supportsNiFiExpressions = true,
-      systemProperty = Some(SystemPropertyStringParam(SystemProperty("instance.zookeeper.timeout"))))
+      systemProperty = Some(SystemPropertyStringParam(SystemProperty("instance.zookeeper.timeout")))
+    )
 
   val UserParam =
     new GeoMesaParam[String](
       "accumulo.user",
       "Accumulo user",
       deprecatedKeys = Seq("user"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true
+    )
 
   val PasswordParam =
     new GeoMesaParam[String](
@@ -52,22 +60,25 @@ object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParam
       "Accumulo password",
       password = true,
       deprecatedKeys = Seq("password"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true
+    )
 
   val KeytabPathParam =
     new GeoMesaParam[String](
       "accumulo.keytab.path",
       "Path to keytab file",
       deprecatedKeys = Seq("keytabPath", "accumulo.keytabPath"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true
+    )
 
   val CatalogParam =
     new GeoMesaParam[String](
       "accumulo.catalog",
-      "Accumulo catalog table name",
+      "Accumulo catalog table name, including Accumulo namespace (if any) separated with a period",
       optional = false,
       deprecatedKeys = Seq("tableName", "accumulo.tableName"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true
+    )
 
   val RecordThreadsParam =
     new GeoMesaParam[Integer](
@@ -75,7 +86,9 @@ object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParam
       "The number of threads to use for record retrieval",
       default = 10,
       deprecatedKeys = Seq("recordThreads", "accumulo.recordThreads"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true,
+      readWrite = ReadWriteFlag.ReadUpdate
+    )
 
   val WriteThreadsParam =
     new GeoMesaParam[Integer](
@@ -83,14 +96,17 @@ object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParam
       "The number of threads to use for writing records",
       default = 10,
       deprecatedKeys = Seq("writeThreads", "accumulo.writeThreads"),
-      supportsNiFiExpressions = true)
+      supportsNiFiExpressions = true,
+      readWrite = ReadWriteFlag.WriteOnly
+    )
 
   val RemoteArrowParam =
     new GeoMesaParam[java.lang.Boolean](
       "accumulo.remote.arrow.enable",
       "Process Arrow encoding in Accumulo tablets servers as a distributed call",
       default = java.lang.Boolean.TRUE,
-      systemProperty = Some(SystemPropertyBooleanParam(AccumuloDataStoreFactory.RemoteArrowProperty))
+      systemProperty = Some(SystemPropertyBooleanParam(RemoteProcessingProperties.RemoteArrowProperty)),
+      readWrite = ReadWriteFlag.ReadOnly
     )
 
   val RemoteBinParam =
@@ -98,7 +114,8 @@ object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParam
       "accumulo.remote.bin.enable",
       "Process binary encoding in Accumulo tablets servers as a distributed call",
       default = java.lang.Boolean.TRUE,
-      systemProperty = Some(SystemPropertyBooleanParam(AccumuloDataStoreFactory.RemoteBinProperty))
+      systemProperty = Some(SystemPropertyBooleanParam(RemoteProcessingProperties.RemoteBinProperty)),
+      readWrite = ReadWriteFlag.ReadOnly
     )
 
   val RemoteDensityParam =
@@ -106,7 +123,8 @@ object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParam
       "accumulo.remote.density.enable",
       "Process heatmap encoding in Accumulo tablets servers as a distributed call",
       default = java.lang.Boolean.TRUE,
-      systemProperty = Some(SystemPropertyBooleanParam(AccumuloDataStoreFactory.RemoteDensityProperty))
+      systemProperty = Some(SystemPropertyBooleanParam(RemoteProcessingProperties.RemoteDensityProperty)),
+      readWrite = ReadWriteFlag.ReadOnly
     )
 
   val RemoteStatsParam =
@@ -114,6 +132,7 @@ object AccumuloDataStoreParams extends GeoMesaDataStoreParams with SecurityParam
       "accumulo.remote.stats.enable",
       "Process statistical calculations in Accumulo tablets servers as a distributed call",
       default = java.lang.Boolean.TRUE,
-      systemProperty = Some(SystemPropertyBooleanParam(AccumuloDataStoreFactory.RemoteStatsProperty))
+      systemProperty = Some(SystemPropertyBooleanParam(RemoteProcessingProperties.RemoteStatsProperty)),
+      readWrite = ReadWriteFlag.ReadOnly
     )
 }

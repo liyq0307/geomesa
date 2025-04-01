@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,9 @@
 
 package org.locationtech.geomesa.accumulo.index
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.api.filter.{Filter, Id}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -20,8 +22,6 @@ import org.locationtech.geomesa.index.strategies.IdFilterStrategy
 import org.locationtech.geomesa.index.utils.ExplainNull
 import org.locationtech.geomesa.utils.bin.BinaryOutputEncoder
 import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.opengis.feature.simple.SimpleFeature
-import org.opengis.filter.{Filter, Id}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -70,7 +70,7 @@ class RecordIdxStrategyTest extends Specification with TestWithFeatureType {
 
   def runQuery(query: Query): CloseableIterator[SimpleFeature] = {
     query.getHints.put(QUERY_INDEX, IdIndex.name)
-    planner.runQuery(sft, query, ExplainNull)
+    planner.runQuery(sft, query, ExplainNull).iterator()
   }
 
   "RecordIdxStrategy" should {
@@ -110,7 +110,7 @@ class RecordIdxStrategyTest extends Specification with TestWithFeatureType {
     }
 
     "support sampling with transformations" in {
-      val query = new Query(sftName, Filter.INCLUDE, Array("name", "geom"))
+      val query = new Query(sftName, Filter.INCLUDE, "name", "geom")
       query.getHints.put(SAMPLING, new java.lang.Float(.5f))
       val results = runQuery(query).toList
       results.length must beLessThan(20)
@@ -118,7 +118,7 @@ class RecordIdxStrategyTest extends Specification with TestWithFeatureType {
     }
 
     "support sampling with cql and transformations" in {
-      val query = new Query(sftName, ECQL.toFilter("track = 'track2'"), Array("name", "geom"))
+      val query = new Query(sftName, ECQL.toFilter("track = 'track2'"), "name", "geom")
       query.getHints.put(SAMPLING, new java.lang.Float(.2f))
       val results = runQuery(query).toList
       results.length must beLessThan(10)

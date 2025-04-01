@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,22 +8,20 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import java.util.Map.Entry
-
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.accumulo.core.client.{Connector, IteratorSetting, ScannerBase}
+import org.apache.accumulo.core.client.{AccumuloClient, IteratorSetting, ScannerBase}
 import org.apache.accumulo.core.data.{Key, Value}
 import org.apache.accumulo.core.security.Authorizations
 import org.apache.hadoop.io.Text
 import org.locationtech.geomesa.accumulo.util.BatchMultiScanner
-import org.locationtech.geomesa.index.PartitionParallelScan
 import org.locationtech.geomesa.index.api.QueryPlan.{FeatureReducer, ResultsToFeatures}
 import org.locationtech.geomesa.index.api.{FilterStrategy, QueryPlan}
 import org.locationtech.geomesa.index.utils.Explainer
 import org.locationtech.geomesa.index.utils.Reprojection.QueryReferenceSystems
 import org.locationtech.geomesa.index.utils.ThreadManagement.{LowLevelScanner, ManagedScan, Timeout}
 import org.locationtech.geomesa.utils.collection.{CloseableIterator, SelfClosingIterator}
-import org.opengis.filter.Filter
+
+import java.util.Map.Entry
 
 /**
   * Accumulo-specific query plan
@@ -63,6 +61,7 @@ object AccumuloQueryPlan extends LazyLogging {
     explainer(s"Ranges (${plan.ranges.size}): ${plan.ranges.take(5).map(rangeToString).mkString(", ")}")
     explainer(s"Iterators (${plan.iterators.size}):", plan.iterators.map(i => () => i.toString))
     plan.join.foreach { j => explain(j._2, explainer, "Join ") }
+    explainer(s"Reduce: ${plan.reducer.getOrElse("none")}")
     explainer.popLevel()
   }
 
@@ -112,7 +111,7 @@ object AccumuloQueryPlan extends LazyLogging {
       // convert the relative timeout to an absolute timeout up front
       val timeout = ds.config.queries.timeout.map(Timeout.apply)
       // note: calculate authorizations up front so that multi-threading doesn't mess up auth providers
-      scan(ds.connector, ds.auths, timeout)
+      scan(ds.connector, ds.auths, ds.config.queries.parallelPartitionScans, timeout)
     }
 
     /**
@@ -120,16 +119,18 @@ object AccumuloQueryPlan extends LazyLogging {
      *
      * @param connector connector
      * @param auths auths
+     * @param partitionParallelScans parallelize scans across multiple partitions (vs execute them serially)
      * @param timeout absolute stop time, as sys time
      * @return
      */
     def scan(
-        connector: Connector,
+        connector: AccumuloClient,
         auths: Authorizations,
+        partitionParallelScans: Boolean,
         timeout: Option[Timeout]): CloseableIterator[Entry[Key, Value]] = {
-      if (PartitionParallelScan.toBoolean.contains(true)) {
+      if (partitionParallelScans) {
         // kick off all the scans at once
-        tables.map(scanner(connector, _, auths, timeout)).foldLeft(CloseableIterator.empty[Entry[Key, Value]])(_ ++ _)
+        tables.map(scanner(connector, _, auths, timeout)).foldLeft(CloseableIterator.empty[Entry[Key, Value]])(_ concat _)
       } else {
         // kick off the scans sequentially as they finish
         SelfClosingIterator(tables.iterator).flatMap(scanner(connector, _, auths, timeout))
@@ -145,7 +146,7 @@ object AccumuloQueryPlan extends LazyLogging {
      * @return
      */
     private def scanner(
-        connector: Connector,
+        connector: AccumuloClient,
         table: String,
         auths: Authorizations,
         timeout: Option[Timeout]): CloseableIterator[Entry[Key, Value]] = {
@@ -154,7 +155,7 @@ object AccumuloQueryPlan extends LazyLogging {
       configure(scanner)
       timeout match {
         case None => new ScanIterator(scanner)
-        case Some(t) => new ManagedScanIterator(t, new AccumuloScanner(scanner), this)
+        case Some(t) => new ManagedScan(new AccumuloScanner(scanner), t, this)
       }
     }
   }
@@ -184,21 +185,23 @@ object AccumuloQueryPlan extends LazyLogging {
       // calculate authorizations up front so that multi-threading doesn't mess up auth providers
       val auths = ds.auths
       val joinTables = joinQuery.tables.iterator
-      if (PartitionParallelScan.toBoolean.contains(true)) {
+      if (ds.config.queries.parallelPartitionScans) {
         // kick off all the scans at once
-        tables.map(scanner(ds.connector, _, joinTables.next, auths, timeout))
-            .foldLeft(CloseableIterator.empty[Entry[Key, Value]])(_ ++ _)
+        tables.map(scanner(ds.connector, _, joinTables.next, auths, partitionParallelScans = true, timeout))
+            .foldLeft(CloseableIterator.empty[Entry[Key, Value]])(_ concat _)
       } else {
         // kick off the scans sequentially as they finish
-        SelfClosingIterator(tables.iterator).flatMap(scanner(ds.connector, _, joinTables.next, auths, timeout))
+        SelfClosingIterator(tables.iterator)
+            .flatMap(scanner(ds.connector, _, joinTables.next, auths, partitionParallelScans = false, timeout))
       }
     }
 
     private def scanner(
-        connector: Connector,
+        connector: AccumuloClient,
         table: String,
         joinTable: String,
         auths: Authorizations,
+        partitionParallelScans: Boolean,
         timeout: Option[Timeout]): CloseableIterator[Entry[Key, Value]] = {
       val primary = if (ranges.lengthCompare(1) == 0) {
         val scanner = connector.createScanner(table, auths)
@@ -211,7 +214,7 @@ object AccumuloQueryPlan extends LazyLogging {
       }
       configure(primary)
       val join = joinQuery.copy(tables = Seq(joinTable))
-      new BatchMultiScanner(connector, primary, join, joinFunction, auths, timeout)
+      new BatchMultiScanner(connector, primary, join, joinFunction, auths, partitionParallelScans, timeout)
     }
   }
 
@@ -220,15 +223,6 @@ object AccumuloQueryPlan extends LazyLogging {
     override def hasNext: Boolean = iter.hasNext
     override def next(): Entry[Key, Value] = iter.next()
     override def close(): Unit = scanner.close()
-  }
-
-  private class ManagedScanIterator(
-      override val timeout: Timeout,
-      override protected val underlying: AccumuloScanner,
-      plan: AccumuloQueryPlan
-    ) extends ManagedScan[Entry[Key, Value]] {
-    override protected def typeName: String = plan.filter.index.sft.getTypeName
-    override protected def filter: Option[Filter] = plan.filter.filter
   }
 
   private class AccumuloScanner(scanner: ScannerBase) extends LowLevelScanner[Entry[Key, Value]] {

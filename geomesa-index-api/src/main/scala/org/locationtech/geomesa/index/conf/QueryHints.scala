@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,17 +8,20 @@
 
 package org.locationtech.geomesa.index.conf
 
-import org.locationtech.jts.geom.Envelope
-import org.geotools.util.factory.Hints
-import org.geotools.util.factory.Hints.{ClassKey, IntegerKey}
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.sort.{SortBy, SortOrder}
 import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.referencing.CRS
+import org.geotools.util.factory.Hints
+import org.geotools.util.factory.Hints.{ClassKey, IntegerKey}
+import org.locationtech.geomesa.index.conf.FilterCompatibility.FilterCompatibility
 import org.locationtech.geomesa.index.planning.QueryPlanner.CostEvaluation
 import org.locationtech.geomesa.index.planning.QueryPlanner.CostEvaluation.CostEvaluation
 import org.locationtech.geomesa.index.utils.Reprojection.QueryReferenceSystems
 import org.locationtech.geomesa.utils.text.StringSerialization
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.sort.{SortBy, SortOrder}
+import org.locationtech.jts.geom.Envelope
+
+import scala.util.Try
 
 object QueryHints {
 
@@ -55,16 +58,16 @@ object QueryHints {
   val ARROW_SORT_FIELD         = new ClassKey(classOf[java.lang.String])
   val ARROW_SORT_REVERSE       = new ClassKey(classOf[java.lang.Boolean])
   val ARROW_FORMAT_VERSION     = new ClassKey(classOf[String])
-
   val ARROW_DICTIONARY_FIELDS  = new ClassKey(classOf[java.lang.String])
-  val ARROW_DICTIONARY_VALUES  = new ClassKey(classOf[java.lang.String])
-  val ARROW_DICTIONARY_CACHED  = new ClassKey(classOf[java.lang.Boolean])
-
-  val ARROW_MULTI_FILE         = new ClassKey(classOf[java.lang.Boolean])
-  val ARROW_DOUBLE_PASS        = new ClassKey(classOf[java.lang.Boolean])
+  val ARROW_PROCESS_DELTAS     = new ClassKey(classOf[java.lang.Boolean])
+  val ARROW_FLATTEN_STRUCT     = new ClassKey(classOf[java.lang.Boolean])
 
   val LAMBDA_QUERY_PERSISTENT  = new ClassKey(classOf[java.lang.Boolean])
   val LAMBDA_QUERY_TRANSIENT   = new ClassKey(classOf[java.lang.Boolean])
+
+  val FILTER_COMPAT            = new ClassKey(classOf[java.lang.String])
+
+  val FLIP_AXIS_ORDER          = new ClassKey(classOf[java.lang.Boolean])
 
   def sortReadableString(sort: Seq[(String, Boolean)]): String =
     sort.map { case (f, r) => s"$f ${if (r) "DESC" else "ASC" }"}.mkString(", ")
@@ -129,24 +132,19 @@ object QueryHints {
     def getDensityWeight: Option[String] = Option(hints.get(DENSITY_WEIGHT).asInstanceOf[String])
 
     def isArrowQuery: Boolean = Option(hints.get(ARROW_ENCODE).asInstanceOf[java.lang.Boolean]).exists(Boolean.unbox)
-    def isArrowMultiFile: Boolean = Option(hints.get(ARROW_MULTI_FILE).asInstanceOf[java.lang.Boolean]).exists(Boolean.unbox)
-    def isArrowDoublePass: Boolean = Option(hints.get(ARROW_DOUBLE_PASS).asInstanceOf[java.lang.Boolean]).exists(Boolean.unbox)
     def isArrowIncludeFid: Boolean = Option(hints.get(ARROW_INCLUDE_FID).asInstanceOf[java.lang.Boolean]).forall(Boolean.unbox)
     def isArrowProxyFid: Boolean = Option(hints.get(ARROW_PROXY_FID).asInstanceOf[java.lang.Boolean]).exists(Boolean.unbox)
     def getArrowDictionaryFields: Seq[String] =
       Option(hints.get(ARROW_DICTIONARY_FIELDS).asInstanceOf[String]).toSeq.flatMap(_.split(",")).map(_.trim).filter(_.nonEmpty)
-    def isArrowCachedDictionaries: Boolean =
-      Option(hints.get(ARROW_DICTIONARY_CACHED).asInstanceOf[java.lang.Boolean]).forall(Boolean.unbox)
-    def getArrowDictionaryEncodedValues(sft: SimpleFeatureType): Map[String, Array[AnyRef]] =
-      Option(hints.get(ARROW_DICTIONARY_VALUES).asInstanceOf[String]).map(StringSerialization.decodeSeqMap(sft, _)).getOrElse(Map.empty)
-    def setArrowDictionaryEncodedValues(values: Map[String, Seq[AnyRef]]): Unit =
-      hints.put(ARROW_DICTIONARY_VALUES, StringSerialization.encodeSeqMap(values))
     def getArrowBatchSize: Option[Int] = Option(hints.get(ARROW_BATCH_SIZE).asInstanceOf[Integer]).map(_.intValue)
     def getArrowSort: Option[(String, Boolean)] =
       Option(hints.get(ARROW_SORT_FIELD).asInstanceOf[String]).map { field =>
         (field, Option(hints.get(ARROW_SORT_REVERSE)).exists(_.asInstanceOf[Boolean]))
       }
     def getArrowFormatVersion: Option[String] = Option(hints.get(ARROW_FORMAT_VERSION).asInstanceOf[String])
+    def isArrowProcessDeltas: Boolean =
+      Option(hints.get(ARROW_PROCESS_DELTAS).asInstanceOf[java.lang.Boolean]).forall(Boolean.unbox)
+    def isArrowFlatten: Boolean = Option(hints.get(ARROW_FLATTEN_STRUCT).asInstanceOf[java.lang.Boolean]).exists(Boolean.unbox)
 
     def isStatsQuery: Boolean = hints.containsKey(STATS_STRING)
     def getStatsQuery: String = hints.get(STATS_STRING).asInstanceOf[String]
@@ -173,5 +171,17 @@ object QueryHints {
       Option(hints.get(LAMBDA_QUERY_PERSISTENT).asInstanceOf[java.lang.Boolean]).forall(_.booleanValue)
     def isLambdaQueryTransient: Boolean =
       Option(hints.get(LAMBDA_QUERY_TRANSIENT).asInstanceOf[java.lang.Boolean]).forall(_.booleanValue)
+
+    def getFilterCompatibility: Option[FilterCompatibility] = {
+      Option(hints.get(FILTER_COMPAT).asInstanceOf[String]).map { c =>
+        Try(FilterCompatibility.withName(c)).getOrElse {
+          val valid = FilterCompatibility.values.map(_.toString).mkString("'", "', '", "'")
+          throw new IllegalArgumentException(s"Invalid hint for filter compatibility: '$c'. Valid values are: $valid'")
+        }
+      }
+    }
+
+    def isFlipAxisOrder: Boolean =
+      Option(hints.get(FLIP_AXIS_ORDER).asInstanceOf[java.lang.Boolean]).exists(Boolean.unbox)
   }
 }

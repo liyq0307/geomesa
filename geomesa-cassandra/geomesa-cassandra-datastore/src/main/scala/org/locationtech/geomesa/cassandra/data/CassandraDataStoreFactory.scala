@@ -1,6 +1,6 @@
 /***********************************************************************
- * Copyright (c) 2017-2020 IBM
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2017-2025 IBM
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,19 +9,20 @@
 
 package org.locationtech.geomesa.cassandra.data
 
-import java.awt.RenderingHints
-import java.io.Serializable
-import java.util
-
 import com.datastax.driver.core._
 import com.datastax.driver.core.policies.{DCAwareRoundRobinPolicy, DefaultRetryPolicy, TokenAwarePolicy}
-import org.geotools.data.DataAccessFactory.Param
-import org.geotools.data.{DataStore, DataStoreFactorySpi, Parameter}
+import org.geotools.api.data.DataAccessFactory.Param
+import org.geotools.api.data.{DataStore, DataStoreFactorySpi, Parameter}
 import org.locationtech.geomesa.cassandra.data.CassandraDataStoreFactory.{CassandraDataStoreConfig, CassandraQueryConfig}
+import org.locationtech.geomesa.index.audit.AuditWriter
+import org.locationtech.geomesa.index.audit.AuditWriter.AuditLogger
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.{DataStoreQueryConfig, GeoMesaDataStoreConfig, GeoMesaDataStoreInfo, GeoMesaDataStoreParams}
-import org.locationtech.geomesa.utils.audit.{AuditLogger, AuditProvider, AuditWriter, NoOpAuditProvider}
+import org.locationtech.geomesa.security.{AuthorizationsProvider, DefaultAuthorizationsProvider}
+import org.locationtech.geomesa.utils.audit.AuditProvider
 import org.locationtech.geomesa.utils.geotools.GeoMesaParam
 
+import java.awt.RenderingHints
+import java.util
 import scala.util.control.NonFatal
 
 class CassandraDataStoreFactory extends DataStoreFactorySpi {
@@ -29,9 +30,9 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
   import CassandraDataStoreFactory.Params._
 
   // this is a pass-through required of the ancestor interface
-  override def createNewDataStore(params: util.Map[String, Serializable]): DataStore = createDataStore(params)
+  override def createNewDataStore(params: util.Map[String, _]): DataStore = createDataStore(params)
 
-  override def createDataStore(params: util.Map[String, Serializable]): DataStore = {
+  override def createDataStore(params: util.Map[String, _]): DataStore = {
     import org.locationtech.geomesa.cassandra.CassandraSystemProperties.{ConnectionTimeoutMillis, ReadTimeoutMillis}
 
     val (cp, portString) = ContactPointParam.lookup(params).split(":") match {
@@ -46,7 +47,7 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
     val ks = KeySpaceParam.lookup(params)
     val generateStats = GenerateStatsParam.lookup(params)
     val audit = if (AuditQueriesParam.lookup(params)) {
-      Some(AuditLogger, Option(AuditProvider.Loader.load(params)).getOrElse(NoOpAuditProvider), "cassandra")
+      Some(new AuditLogger("cassandra", AuditProvider.Loader.loadOrNone(params)))
     } else {
       None
     }
@@ -87,12 +88,14 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
       threads = QueryThreadsParam.lookup(params),
       timeout = QueryTimeoutParam.lookupOpt(params).map(_.toMillis),
       looseBBox = LooseBBoxParam.lookup(params),
-      caching = CachingParam.lookup(params)
+      parallelPartitionScans = PartitionParallelScansParam.lookup(params)
     )
+
+    val authProvider = new DefaultAuthorizationsProvider()
 
     val ns = Option(NamespaceParam.lookUp(params).asInstanceOf[String])
 
-    val cfg = CassandraDataStoreConfig(catalog, generateStats, audit, queries, ns)
+    val cfg = CassandraDataStoreConfig(catalog, generateStats, authProvider, audit, queries, ns)
 
     new CassandraDataStore(session, cfg)
   }
@@ -107,7 +110,7 @@ class CassandraDataStoreFactory extends DataStoreFactorySpi {
     CassandraDataStoreFactory.ParameterInfo ++
         Array(NamespaceParam, CassandraDataStoreFactory.DeprecatedGeoServerPasswordParam)
 
-  override def canProcess(params: java.util.Map[String,Serializable]): Boolean =
+  override def canProcess(params: java.util.Map[String, _]): Boolean =
     CassandraDataStoreFactory.canProcess(params)
 
   override def getImplementationHints: java.util.Map[RenderingHints.Key, _] = null
@@ -130,7 +133,7 @@ object CassandraDataStoreFactory extends GeoMesaDataStoreInfo {
   override val DisplayName = "Cassandra (GeoMesa)"
   override val Description = "Apache Cassandra\u2122 distributed key/value store"
 
-  override val ParameterInfo: Array[GeoMesaParam[_]] =
+  override val ParameterInfo: Array[GeoMesaParam[_ <: AnyRef]] =
     Array(
       Params.ContactPointParam,
       Params.KeySpaceParam,
@@ -140,12 +143,12 @@ object CassandraDataStoreFactory extends GeoMesaDataStoreInfo {
       Params.GenerateStatsParam,
       Params.AuditQueriesParam,
       Params.LooseBBoxParam,
-      Params.CachingParam,
+      Params.PartitionParallelScansParam,
       Params.QueryThreadsParam,
       Params.QueryTimeoutParam
     )
 
-  override def canProcess(params: java.util.Map[String, _ <: java.io.Serializable]): Boolean =
+  override def canProcess(params: java.util.Map[String, _]): Boolean =
     Params.KeySpaceParam.exists(params)
 
   object Params extends GeoMesaDataStoreParams {
@@ -195,7 +198,8 @@ object CassandraDataStoreFactory extends GeoMesaDataStoreInfo {
   case class CassandraDataStoreConfig(
       catalog: String,
       generateStats: Boolean,
-      audit: Option[(AuditWriter, AuditProvider, String)],
+      authProvider: AuthorizationsProvider,
+      audit: Option[AuditWriter],
       queries: CassandraQueryConfig,
       namespace: Option[String]
     ) extends GeoMesaDataStoreConfig
@@ -204,6 +208,6 @@ object CassandraDataStoreFactory extends GeoMesaDataStoreInfo {
       threads: Int,
       timeout: Option[Long],
       looseBBox: Boolean,
-      caching: Boolean
+      parallelPartitionScans: Boolean
     ) extends DataStoreQueryConfig
 }

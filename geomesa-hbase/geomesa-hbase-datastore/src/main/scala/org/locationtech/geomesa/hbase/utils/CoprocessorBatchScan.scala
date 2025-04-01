@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -17,7 +17,6 @@ import org.locationtech.geomesa.index.utils.AbstractBatchScan
 import org.locationtech.geomesa.index.utils.ThreadManagement.{LowLevelScanner, ManagedScan, Timeout}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.concurrent.CachedThreadPool
-import org.opengis.filter.Filter
 
 private class CoprocessorBatchScan(
     connection: Connection,
@@ -72,17 +71,8 @@ object CoprocessorBatchScan {
     val scanner = new CoprocessorBatchScan(connection, table, ranges, opts, scanThreads, rpcThreads, BufferSize)
     timeout match {
       case None => scanner.start()
-      case Some(t) => new ManagedCoprocessorIterator(t, new CoprocessorScanner(scanner), plan)
+      case Some(t) => new ManagedScan(new CoprocessorScanner(scanner), t, plan)
     }
-  }
-
-  private class ManagedCoprocessorIterator(
-      override val timeout: Timeout,
-      override protected val underlying: CoprocessorScanner,
-      plan: HBaseQueryPlan
-    ) extends ManagedScan[Array[Byte]] {
-    override protected def typeName: String = plan.filter.index.sft.getTypeName
-    override protected def filter: Option[Filter] = plan.filter.filter
   }
 
   private class CoprocessorScanner(scanner: CoprocessorBatchScan) extends LowLevelScanner[Array[Byte]] {

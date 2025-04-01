@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,24 @@
 
 package org.locationtech.geomesa.convert.xml
 
-import java.io._
-import java.nio.charset.Charset
-
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.StrictLogging
+import org.apache.commons.io.IOUtils
+import org.apache.commons.io.input.BOMInputStream
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.convert.Modes.{ErrorMode, LineMode, ParseMode}
+import org.locationtech.geomesa.convert._
+import org.locationtech.geomesa.convert.xml.XmlConverter.{XmlConfig, XmlField, XmlHelper, XmlOptions}
+import org.locationtech.geomesa.convert2._
+import org.locationtech.geomesa.convert2.transforms.Expression
+import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.geomesa.utils.text.TextTools
+import org.w3c.dom.{Element, NodeList}
+import org.xml.sax.{ErrorHandler, InputSource, SAXParseException}
+
+import java.io._
+import java.nio.charset.Charset
 import javax.xml.XMLConstants.W3C_XML_SCHEMA_NS_URI
 import javax.xml.namespace.NamespaceContext
 import javax.xml.parsers.DocumentBuilderFactory
@@ -20,44 +33,30 @@ import javax.xml.transform.dom.DOMSource
 import javax.xml.transform.stream.StreamSource
 import javax.xml.validation.SchemaFactory
 import javax.xml.xpath.{XPath, XPathConstants, XPathExpression, XPathFactory}
-import org.apache.commons.io.IOUtils
-import org.apache.commons.io.input.BOMInputStream
-import org.locationtech.geomesa.convert.Modes.{ErrorMode, LineMode, ParseMode}
-import org.locationtech.geomesa.convert._
-import org.locationtech.geomesa.convert.xml.XmlConverter.{DocParser, XmlConfig, XmlField, XmlOptions}
-import org.locationtech.geomesa.convert2.transforms.Expression
-import org.locationtech.geomesa.convert2.{AbstractConverter, ConverterConfig, ConverterOptions, Field}
-import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.locationtech.geomesa.utils.io.WithClose
-import org.locationtech.geomesa.utils.text.TextTools
-import org.opengis.feature.simple.SimpleFeatureType
-import org.w3c.dom.{Element, NodeList}
-import org.xml.sax.InputSource
-
 import scala.util.control.NonFatal
 
 class XmlConverter(sft: SimpleFeatureType, config: XmlConfig, fields: Seq[XmlField], options: XmlOptions)
     extends AbstractConverter[Element, XmlConfig, XmlField, XmlOptions](sft, config, fields, options) {
 
-  private val parser = new DocParser(config.xsd)
+  private val helper = new ThreadLocal[XmlHelper]() {
+    override def initialValue: XmlHelper =
+      new XmlHelper(config.xpathFactory, config.xmlNamespaces, config.xsd, config.featurePath)
+  }
 
-  private val xpath = XmlConverter.createXPath(config.xpathFactory, config.xmlNamespaces)
-
-  private val rootPath = config.featurePath.map(xpath.compile)
-
-  fields.foreach(_.compile(xpath))
+  fields.foreach(_.compile(helper))
 
   // TODO GEOMESA-1039 more efficient InputStream processing for multi mode
 
   override protected def parse(is: InputStream, ec: EvaluationContext): CloseableIterator[Element] =
-    XmlConverter.iterator(parser, is, options.encoding, options.lineMode, ec)
+    XmlConverter.iterator(helper.get.parser, is, options.encoding, options.lineMode, ec)
 
   override protected def values(
       parsed: CloseableIterator[Element],
       ec: EvaluationContext): CloseableIterator[Array[Any]] = {
 
     val array = Array.ofDim[Any](2)
-    rootPath match {
+
+    helper.get.rootPath match {
       case None =>
         parsed.map { element =>
           array(0) = element
@@ -97,7 +96,7 @@ object XmlConverter extends StrictLogging {
     if (namespaces.nonEmpty) {
       xpath.setNamespaceContext(new NamespaceContext() {
         override def getPrefix(namespaceURI: String): String = null
-        override def getPrefixes(namespaceURI: String): java.util.Iterator[_] = null
+        override def getPrefixes(namespaceURI: String): java.util.Iterator[String] = null
         override def getNamespaceURI(prefix: String): String = namespaces.getOrElse(prefix, null)
       })
     }
@@ -144,25 +143,27 @@ object XmlConverter extends StrictLogging {
     ) extends ConverterConfig
 
   sealed trait XmlField extends Field {
-    def compile(xpath: XPath): Unit
+    def compile(helper: ThreadLocal[XmlHelper]): Unit
   }
 
   case class DerivedField(name: String, transforms: Option[Expression]) extends XmlField {
-    override def compile(xpath: XPath): Unit = {}
+    override def compile(helper: ThreadLocal[XmlHelper]): Unit = {}
+    override val fieldArg: Option[Array[AnyRef] => AnyRef] = None
   }
 
   case class XmlPathField(name: String, path: String, transforms: Option[Expression]) extends XmlField {
 
-    private var expression: XPathExpression = _
+    private var helper: ThreadLocal[XmlHelper] = _
 
-    private val mutableArray = Array.ofDim[Any](1)
-
-    override def compile(xpath: XPath): Unit = expression = xpath.compile(path)
-
-    override def eval(args: Array[Any])(implicit ec: EvaluationContext): Any = {
-      mutableArray(0) = expression.evaluate(args(0))
-      super.eval(mutableArray)
+    private val expression = new ThreadLocal[XPathExpression]() {
+      override def initialValue(): XPathExpression = helper.get.xpath.compile(path)
     }
+
+    override val fieldArg: Option[Array[AnyRef] => AnyRef] = Some(values)
+
+    override def compile(helper: ThreadLocal[XmlHelper]): Unit = this.helper = helper
+
+    private def values(args: Array[AnyRef]): AnyRef = expression.get.evaluate(args(0))
   }
 
   case class XmlOptions(
@@ -175,16 +176,41 @@ object XmlConverter extends StrictLogging {
     ) extends ConverterOptions
 
   /**
-    * Document parser helper
-    *
-    * @param xsd path to an xsd used to validate parsed documents
-    */
+   * XML parser helper - holds non-thread-safe classes
+   *
+   * @param xpathFactory class name to use for creating xpaths
+   * @param namespaces xml namespaces
+   * @param xsd xsd path to an xsd used to validate parsed documents
+   * @param featurePath path to features in the xml doc
+   */
+  class XmlHelper(
+      xpathFactory: String,
+      namespaces: Map[String, String],
+      xsd: Option[String],
+      featurePath: Option[String]) {
+    val parser = new DocParser(xsd)
+    val xpath: XPath = createXPath(xpathFactory, namespaces)
+    val rootPath: Option[XPathExpression] = featurePath.map(xpath.compile)
+  }
+
+  /**
+   * Document parser helper
+   *
+   * @param xsd xsd path to an xsd used to validate parsed documents
+   */
   class DocParser(xsd: Option[String]) {
 
     private val builder = {
       val factory = DocumentBuilderFactory.newInstance()
       factory.setNamespaceAware(true)
-      factory.newDocumentBuilder()
+      val builder = factory.newDocumentBuilder()
+      // override default error handler which prints to stdout/stderr
+      builder.setErrorHandler(new ErrorHandler() {
+        override def warning(e: SAXParseException): Unit = logger.warn("XML parsing error:", e)
+        override def error(e: SAXParseException): Unit = throw e
+        override def fatalError(e: SAXParseException): Unit = throw e
+      })
+      builder
     }
 
     private val validator = xsd.map { path =>

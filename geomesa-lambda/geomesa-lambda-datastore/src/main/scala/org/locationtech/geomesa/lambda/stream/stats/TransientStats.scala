@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,15 @@
 
 package org.locationtech.geomesa.lambda.stream.stats
 
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
+import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.curve.TimePeriod.TimePeriod
 import org.locationtech.geomesa.index.stats.GeoMesaStats.GeoMesaStatWriter
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, NoopStatWriter}
 import org.locationtech.geomesa.lambda.stream.TransientStore
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.stats._
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 
 import scala.reflect.ClassTag
 
@@ -23,8 +24,8 @@ class TransientStats(store: TransientStore) extends GeoMesaStats {
 
   override val writer: GeoMesaStatWriter = NoopStatWriter
 
-  override def getCount(sft: SimpleFeatureType, filter: Filter, exact: Boolean): Option[Long] =
-    Some(SelfClosingIterator(store.read(Option(filter).filter(_ != Filter.INCLUDE))).length)
+  override def getCount(sft: SimpleFeatureType, filter: Filter, exact: Boolean, queryHints: Hints): Option[Long] =
+    Some(SelfClosingIterator(store.read(Option(filter).filter(_ != Filter.INCLUDE)).iterator()).length)
 
   override def getMinMax[T](
       sft: SimpleFeatureType,
@@ -96,7 +97,7 @@ class TransientStats(store: TransientStore) extends GeoMesaStats {
       exact: Boolean): Option[T] = {
     if (!exact) { None } else {
       val stat = Stat(sft, query).asInstanceOf[T]
-      SelfClosingIterator(store.read(Option(filter).filter(_ != Filter.INCLUDE))).foreach(stat.observe)
+      SelfClosingIterator(store.read(Option(filter).filter(_ != Filter.INCLUDE)).iterator()).foreach(stat.observe)
       Some(stat)
     }
   }

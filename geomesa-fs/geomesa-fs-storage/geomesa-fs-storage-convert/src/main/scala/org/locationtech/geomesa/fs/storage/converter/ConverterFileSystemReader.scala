@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,29 +9,55 @@
 package org.locationtech.geomesa.fs.storage.converter
 
 import com.typesafe.scalalogging.StrictLogging
-import org.apache.hadoop.fs.{FileContext, Path}
+import org.apache.commons.compress.archivers.ArchiveStreamFactory
+import org.apache.hadoop.fs.{FileSystem, Path, PathFilter}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
+import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, TransformSimpleFeature}
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
+import org.locationtech.geomesa.fs.storage.converter.pathfilter.PathFiltering
 import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
+import org.locationtech.geomesa.utils.hadoop.HadoopDelegate.{HadoopFileHandle, HadoopTarHandle, HadoopZipHandle}
+import org.locationtech.geomesa.utils.io.PathUtils
 
+import java.util.Locale
 import scala.util.control.NonFatal
 
 class ConverterFileSystemReader(
-    fc: FileContext,
+    fs: FileSystem,
     converter: SimpleFeatureConverter,
     filter: Option[Filter],
-    transform: Option[(String, SimpleFeatureType)]
+    transform: Option[(String, SimpleFeatureType)],
+    pathFiltering: Option[PathFiltering]
   ) extends FileSystemPathReader with StrictLogging {
 
+  import ArchiveStreamFactory.{JAR, TAR, ZIP}
+
+  private lazy val pathFilter: Option[PathFilter] = pathFiltering.flatMap(pf => filter.map(pf.apply))
+
   override def read(path: Path): CloseableIterator[SimpleFeature] = {
-    logger.debug(s"Opening file $path")
-    val iter = try { converter.process(fc.open(path)) } catch {
-      case NonFatal(e) => logger.error(s"Error processing uri '$path'", e); CloseableIterator.empty
+    if (pathFilter.forall(_.accept(path))) {
+      logger.debug(s"Opening file $path")
+      val iter = try {
+        val handle = PathUtils.getUncompressedExtension(path.getName).toLowerCase(Locale.US) match {
+          case TAR => new HadoopTarHandle(fs, path)
+          case ZIP | JAR => new HadoopZipHandle(fs, path)
+          case _ => new HadoopFileHandle(fs, path)
+        }
+        handle.open.flatMap { case (name, is) =>
+          val params = EvaluationContext.inputFileParam(name.getOrElse(handle.path)) ++
+            filter.map(EvaluationContext.FilterKey -> _)
+          converter.process(is, converter.createEvaluationContext(params))
+        }
+      } catch {
+        case NonFatal(e) => logger.error(s"Error processing uri '$path'", e); CloseableIterator.empty
+      }
+      transformed(filtered(iter))
+    } else {
+      CloseableIterator.empty
     }
-    transformed(filtered(iter))
   }
 
   private def filtered(in: CloseableIterator[SimpleFeature]): CloseableIterator[SimpleFeature] = {

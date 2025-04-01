@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,25 +8,26 @@
 
 package org.locationtech.geomesa.accumulo.tools.ingest
 
-import java.io.File
-import java.nio.file.{Files, Path}
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.{Collections, Date}
-
-import org.geotools.data.Transaction
+import org.geotools.api.data.Transaction
 import org.geotools.data.shapefile.ShapefileDataStore
 import org.geotools.data.store.ReprojectingFeatureCollection
 import org.geotools.referencing.CRS
 import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.MiniCluster
+import org.locationtech.geomesa.accumulo.AccumuloContainer
 import org.locationtech.geomesa.convert.Modes
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.tools.Command.CommandException
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.{PathUtils, WithClose, WithStore}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.File
+import java.nio.file.{Files, Path}
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.{Collections, Date}
 
 @RunWith(classOf[JUnitRunner])
 class ShpIngestTest extends Specification {
@@ -48,11 +49,11 @@ class ShpIngestTest extends Specification {
 
   def createCommand(file: String): AccumuloIngestCommand = {
     val command = new AccumuloIngestCommand()
-    command.params.user        = MiniCluster.Users.root.name
-    command.params.instance    = MiniCluster.cluster.getInstanceName
-    command.params.zookeepers  = MiniCluster.cluster.getZooKeepers
-    command.params.password    = MiniCluster.Users.root.password
-    command.params.catalog     = s"${MiniCluster.namespace}.${getClass.getSimpleName}${sftCounter.getAndIncrement()}"
+    command.params.user        = AccumuloContainer.user
+    command.params.instance    = AccumuloContainer.instanceName
+    command.params.zookeepers  = AccumuloContainer.zookeepers
+    command.params.password    = AccumuloContainer.password
+    command.params.catalog     = s"gm.${getClass.getSimpleName}${sftCounter.getAndIncrement()}"
     command.params.force       = true
     command.params.files       = Collections.singletonList(new File(dir.toFile, s"$file.shp").getAbsolutePath)
     command.params.compact     = false
@@ -246,7 +247,9 @@ class ShpIngestTest extends Specification {
       command.params.featureName = "nullDates2"
 
       Modes.ErrorMode.systemProperty.threadLocalValue.set("raise-errors")
-      try { command.execute() } finally {
+      try {
+        command.execute() must throwA[CommandException]
+      } finally {
         Modes.ErrorMode.systemProperty.threadLocalValue.remove()
       }
 
@@ -274,7 +277,9 @@ class ShpIngestTest extends Specification {
 
       Modes.ErrorMode.systemProperty.threadLocalValue.set("raise-errors")
       Modes.ParseMode.systemProperty.threadLocalValue.set("batch")
-      try { command.execute() } finally {
+      try {
+        command.execute() must throwA[CommandException]
+      } finally {
         Modes.ErrorMode.systemProperty.threadLocalValue.remove()
         Modes.ParseMode.systemProperty.threadLocalValue.remove()
       }

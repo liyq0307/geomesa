@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,20 @@
 
 package org.locationtech.geomesa.index.stats
 
-import java.io.{Closeable, Flushable}
-import java.util.Date
-
+import org.geotools.api.feature.`type`.AttributeDescriptor
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.geometry.jts.ReferencedEnvelope
+import org.geotools.util.factory.Hints
 import org.locationtech.geomesa.curve.TimePeriod.TimePeriod
 import org.locationtech.geomesa.filter.visitor.BoundsFilterVisitor
 import org.locationtech.geomesa.index.stats.GeoMesaStats.GeoMesaStatWriter
 import org.locationtech.geomesa.utils.geotools._
 import org.locationtech.geomesa.utils.stats._
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.`type`.AttributeDescriptor
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
+
+import java.io.{Closeable, Flushable}
+import java.util.Date
 
 /**
  * Tracks stats for a schema - spatial/temporal bounds, number of records, etc. Persistence of
@@ -44,9 +45,10 @@ trait GeoMesaStats extends Closeable {
     * @param sft simple feature type
     * @param filter cql filter
     * @param exact rough estimate, or precise count. note: precise count will likely be expensive.
+   *  @param queryHints query hints that should be used for query execution
     * @return count of features, if available - will always be Some if exact == true
     */
-  def getCount(sft: SimpleFeatureType, filter: Filter = Filter.INCLUDE, exact: Boolean = false): Option[Long]
+  def getCount(sft: SimpleFeatureType, filter: Filter = Filter.INCLUDE, exact: Boolean = false, queryHints: Hints = new Hints()): Option[Long]
 
   /**
     * Get the bounds for data that will be returned for a query

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,14 @@
 
 package org.locationtech.geomesa.features
 
-import java.util
-import java.util.Collections
-import java.util.concurrent.atomic.AtomicInteger
-
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.features.AbstractSimpleFeature.{AbstractImmutableSimpleFeature, AbstractMutableSimpleFeature}
 import org.locationtech.geomesa.utils.collection.WordBitSet
 import org.locationtech.geomesa.utils.io.Sizable
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.util
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Simple feature implementation optimized to instantiate from serialization
@@ -61,8 +61,6 @@ class ScalaSimpleFeature private (sft: SimpleFeatureType, values: Array[AnyRef])
 
 object ScalaSimpleFeature {
 
-  import org.locationtech.geomesa.utils.conversions.ScalaImplicits.RichTraversableOnce
-
   import scala.collection.JavaConverters._
 
   /**
@@ -102,13 +100,25 @@ object ScalaSimpleFeature {
   def retype(sft: SimpleFeatureType, in: SimpleFeature): SimpleFeature = {
     if (sft == in.getFeatureType) { in } else {
       val out = new ScalaSimpleFeature(sft, in.getID)
-      sft.getAttributeDescriptors.asScala.foreachIndex { case (d, i) =>
+      var i = 0
+      sft.getAttributeDescriptors.asScala.foreach { d =>
         out.setAttribute(i, in.getAttribute(d.getLocalName))
+        i += 1
       }
       out.getUserData.putAll(in.getUserData)
       out
     }
   }
+
+  /**
+   * Retypes a simple feature by only updating the feature type. The feature type must have
+   * compatible attribute types with the wrapped feature.
+   *
+   * @param sft updated feature type
+   * @param in feature to retyp
+   * @return
+   */
+  def wrap(sft: SimpleFeatureType, in: SimpleFeature): SimpleFeature = new WrappedSimpleFeature(sft, in)
 
   /**
     * Creates a simple feature, converting the values to the appropriate type
@@ -134,6 +144,19 @@ object ScalaSimpleFeature {
   def equalIdAndAttributes(sf1: SimpleFeature, sf2: SimpleFeature): Boolean =
     sf1 != null && sf2 != null && sf1.getIdentifier.equalsExact(sf2.getIdentifier) &&
         java.util.Arrays.equals(sf1.getAttributes.toArray, sf2.getAttributes.toArray)
+
+  /**
+   * Simple re-typing of a simple feature, with all attributes the same
+   *
+   * @param sft simple feature type
+   * @param wrapped wrapped feature
+   */
+  class WrappedSimpleFeature(sft: SimpleFeatureType, wrapped: SimpleFeature)
+    extends AbstractImmutableSimpleFeature(sft) {
+    this.id = wrapped.getID // set id in constructor
+    override def getAttribute(i: Int): AnyRef = wrapped.getAttribute(i)
+    override def getUserData: java.util.Map[AnyRef, AnyRef] = wrapped.getUserData
+  }
 
   /**
     * Immutable simple feature implementation

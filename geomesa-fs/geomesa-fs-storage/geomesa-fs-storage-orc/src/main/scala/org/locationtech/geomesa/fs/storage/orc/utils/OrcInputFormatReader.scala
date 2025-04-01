@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,18 +8,18 @@
 
 package org.locationtech.geomesa.fs.storage.orc.utils
 
-import java.util.UUID
-
-import org.locationtech.jts.geom.{Coordinate, LineString, LinearRing, Polygon}
 import org.apache.hadoop.io._
 import org.apache.orc.mapred.{OrcList, OrcMap, OrcStruct, OrcTimestamp}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.geotools.filter.identity.FeatureIdImpl
 import org.geotools.geometry.jts.JTSFactoryFinder
-import org.locationtech.geomesa.features.serialization.ObjectType
-import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
 import org.locationtech.geomesa.fs.storage.orc.OrcFileSystemStorage
+import org.locationtech.geomesa.utils.geotools.ObjectType
+import org.locationtech.geomesa.utils.geotools.ObjectType.ObjectType
 import org.locationtech.geomesa.utils.text.WKBUtils
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.locationtech.jts.geom.{Coordinate, LineString, LinearRing, Polygon}
+
+import java.util.UUID
 
 trait OrcInputFormatReader {
   def apply(input: OrcStruct, sf: SimpleFeature): Unit
@@ -336,13 +336,13 @@ object OrcInputFormatReader {
     private val converter = getConverter(binding)
 
     override def apply(input: OrcStruct, sf: SimpleFeature): Unit = {
-      import scala.collection.JavaConversions._
+      import scala.collection.JavaConverters._
       val value = input.getFieldValue(attribute).asInstanceOf[OrcList[_ <: WritableComparable[_]]]
       if (value == null) {
         sf.setAttribute(attribute, null)
       } else {
         val list = new java.util.ArrayList[AnyRef](value.size())
-        value.foreach(element => list.add(converter.convert(element)))
+        value.asScala.foreach(element => list.add(converter.convert(element)))
         sf.setAttribute(attribute, list)
       }
     }
@@ -354,13 +354,13 @@ object OrcInputFormatReader {
     private val valueConverter = getConverter(valueBinding)
 
     override def apply(input: OrcStruct, sf: SimpleFeature): Unit = {
-      import scala.collection.JavaConversions._
+      import scala.collection.JavaConverters._
       val value = input.getFieldValue(attribute).asInstanceOf[OrcMap[_ <: WritableComparable[_], _ <: WritableComparable[_]]]
       if (value == null) {
         sf.setAttribute(attribute, null)
       } else {
         val map = new java.util.HashMap[AnyRef, AnyRef](value.size())
-        value.foreach { case (k, v) => map.put(keyConverter.convert(k), valueConverter.convert(v)) }
+        value.asScala.foreach { case (k, v) => map.put(keyConverter.convert(k), valueConverter.convert(v)) }
         sf.setAttribute(attribute, map)
       }
     }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,8 +9,8 @@
 package org.locationtech.geomesa.tools
 
 import com.beust.jcommander.{Parameter, ParameterException}
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.index.stats.GeoMesaStats
-import org.opengis.feature.simple.SimpleFeatureType
 
 package object stats {
 
@@ -18,7 +18,7 @@ package object stats {
 
   // gets attributes to run stats on, based on sft and input params
   def getAttributesFromParams(sft: SimpleFeatureType, params: AttributeStatsParams): Seq[String] = {
-    getAttributes(sft, params.attributes.asScala)
+    getAttributes(sft, params.attributes.asScala.toSeq)
   }
 
   /**
@@ -30,7 +30,7 @@ package object stats {
     */
   def getAttributes(sft: SimpleFeatureType, attributes: Seq[String]): Seq[String] = {
     if (attributes.isEmpty) {
-      sft.getAttributeDescriptors.asScala.filter(GeoMesaStats.okForStats).map(_.getLocalName)
+      sft.getAttributeDescriptors.asScala.filter(GeoMesaStats.okForStats).map(_.getLocalName).toSeq
     } else {
       val descriptors = attributes.map(sft.getDescriptor)
       if (descriptors.contains(null)) {
@@ -52,7 +52,7 @@ package object stats {
     }
   }
 
-  trait StatsParams extends RequiredTypeNameParam with OptionalCqlFilterParam {
+  trait StatsParams extends TypeNameParam with OptionalCqlFilterParam {
     @Parameter(
       names = Array("--no-cache"),
       description = "Calculate against the data set instead of using cached statistics (may be slow)")

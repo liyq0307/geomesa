@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,19 @@
 
 package org.locationtech.geomesa.convert.shp
 
-import java.io.ByteArrayInputStream
-import java.nio.file.Paths
-
 import com.typesafe.config.ConfigFactory
-import org.locationtech.jts.geom.MultiPolygon
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.SimpleFeatureConverter
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.jts.geom.MultiPolygon
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.ByteArrayInputStream
+import java.nio.file.Paths
 
 @RunWith(classOf[JUnitRunner])
 class ShapefileConverterTest extends Specification {
@@ -29,7 +29,7 @@ class ShapefileConverterTest extends Specification {
 
   val sft = SimpleFeatureTypes.createType("states", spec)
 
-  lazy val shp = this.getClass.getClassLoader.getResource("cb_2017_us_state_20m.shp")
+  lazy val shp = this.getClass.getClassLoader.getResource("us_state/cb_2017_us_state_20m.shp")
   lazy val shpFile = Paths.get(shp.toURI).toFile.getAbsolutePath
 
   // fields in the shapefile:
@@ -76,8 +76,9 @@ class ShapefileConverterTest extends Specification {
     }
 
     "infer converters" in {
-      val inferred = new ShapefileConverterFactory().infer(new ByteArrayInputStream(Array.empty), None, Some(shpFile))
-      inferred must beSome
+      val hints = EvaluationContext.inputFileParam(shpFile)
+      val inferred = new ShapefileConverterFactory().infer(new ByteArrayInputStream(Array.empty), None, hints)
+      inferred must beASuccessfulTry
 
       val (sft, conf) = inferred.get
 
@@ -102,6 +103,38 @@ class ShapefileConverterTest extends Specification {
 
         res.map(_.getAttribute("NAME")) must containAllOf(Seq("Alaska", "California", "New York", "Virginia"))
         res.map(_.getAttribute("STUSPS")) must containAllOf(Seq("AK", "CA", "NY", "VA"))
+      }
+    }
+
+    "parse shapefile with cpg file or specific encoding" in {
+      val spec = "*the_geom:Point,name:String"
+      val sft = SimpleFeatureTypes.createType("gis_osm_pofw", spec)
+
+      foreach(Seq("pofw_cpg" -> None, "pofw" -> Some("UTF-8"))) { case (dir, encoding) =>
+        val shp = this.getClass.getClassLoader.getResource(s"$dir/gis_osm_pofw_free_1.shp")
+        val shpFile = Paths.get(shp.toURI).toFile.getAbsolutePath
+
+        val conf = ConfigFactory.parseString(
+          s"""
+            |{
+            |  "id-field" : "$$0",
+            |  "type" : "shp",
+            |  "options": { ${encoding.map(e => s"encoding: $e").getOrElse("")} }
+            |  "fields" : [
+            |    { "name" : "the_geom", "transform" : "$$1" },
+            |    { "name" : "name", "transform" : "$$5" }
+            |  ]
+            |}
+          """.stripMargin)
+
+        WithClose(SimpleFeatureConverter(sft, conf)) { converter =>
+          converter must not(beNull)
+          val ec = converter.createEvaluationContext(EvaluationContext.inputFileParam(shpFile))
+          val res = SelfClosingIterator(converter.process(shp.openStream(), ec)).toList
+
+          // strings should be properly decoded
+          res.map(_.getAttribute("name")) must containAllOf(Seq("法海寺", "རུ་ཐོག་དགོན་ (日多寺)", "Pagoda"))
+        }
       }
     }
   }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,12 @@
 
 package org.locationtech.geomesa.process.transform
 
-import java.io.ByteArrayOutputStream
-
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.arrow.vector.ipc.message.IpcOption
-import org.geotools.data.Query
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureSource}
+import org.geotools.api.data.{Query, SimpleFeatureSource}
+import org.geotools.api.feature.Feature
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.data.simple.SimpleFeatureCollection
 import org.geotools.feature.visitor._
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
 import org.locationtech.geomesa.arrow.ArrowProperties
@@ -29,10 +29,9 @@ import org.locationtech.geomesa.process.GeoMesaProcess
 import org.locationtech.geomesa.process.transform.ArrowConversionProcess.ArrowVisitor
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureOrdering
-import org.locationtech.geomesa.utils.io.CloseWithLogging
-import org.opengis.feature.Feature
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.locationtech.geomesa.utils.io.{CloseWithLogging, WithClose}
 
+import java.io.ByteArrayOutputStream
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.reflect.ClassTag
 
@@ -61,41 +60,39 @@ class ArrowConversionProcess extends GeoMesaProcess with LazyLogging {
               formatVersion: String,
               @DescribeParameter(name = "dictionaryFields", description = "Attributes to dictionary encode", min = 0, max = 128, collectionType = classOf[String])
               dictionaryFields: java.util.List[String],
-              @DescribeParameter(name = "useCachedDictionaries", description = "Use cached top-k stats (if available), or run a dynamic stats query to build dictionaries", min = 0)
-              useCachedDictionaries: java.lang.Boolean,
               @DescribeParameter(name = "sortField", description = "Attribute to sort by", min = 0)
               sortField: String,
               @DescribeParameter(name = "sortReverse", description = "Reverse the default sort order", min = 0)
               sortReverse: java.lang.Boolean,
               @DescribeParameter(name = "batchSize", description = "Number of features to include in each record batch", min = 0)
               batchSize: java.lang.Integer,
-              @DescribeParameter(name = "doublePass", description = "Build dictionaries first, then query results in a separate scan", min = 0)
-              doublePass: java.lang.Boolean
+              @DescribeParameter(name = "flattenStruct", description = "Removes the outer SFT struct yielding top level feature access", min = 0)
+              flattenStruct: java.lang.Boolean,
+              @DescribeParameter(name = "flipAxisOrder", description = "Flip the axis order of returned coordinates from latitude/longitude (default) to longitude/latitude", min = 0, defaultValue = "false")
+              flipAxisOrder: java.lang.Boolean = false
              ): java.util.Iterator[Array[Byte]] = {
 
-    import scala.collection.JavaConversions._
+    import scala.collection.JavaConverters._
 
     logger.debug(s"Running arrow encoding for ${features.getClass.getName}")
 
     val sft = features.getSchema
 
     // validate inputs
-    val toEncode: Seq[String] = Option(dictionaryFields).map(_.toSeq).getOrElse(Seq.empty)
+    val toEncode: Seq[String] = Option(dictionaryFields).map(_.asScala.toSeq).getOrElse(Seq.empty)
     toEncode.foreach { attribute =>
       if (sft.indexOf(attribute) == -1) {
         throw new IllegalArgumentException(s"Attribute $attribute doesn't exist in $sft")
       }
     }
-    val cacheDictionaries = Option(useCachedDictionaries).map(_.booleanValue())
 
-    val encoding = SimpleFeatureEncoding.min(includeFids == null || includeFids, proxyFids != null && proxyFids)
+    val encoding = SimpleFeatureEncoding.min(includeFids == null || includeFids, proxyFids != null && proxyFids, Option(flipAxisOrder).exists(_.booleanValue))
     val ipcVersion = Option(formatVersion).getOrElse(FormatVersion.ArrowFormatVersion.get)
     val reverse = Option(sortReverse).map(_.booleanValue())
     val batch = Option(batchSize).map(_.intValue).getOrElse(ArrowProperties.BatchSize.get.toInt)
-    val double = Option(doublePass).exists(_.booleanValue())
 
     val visitor =
-      new ArrowVisitor(sft, encoding, ipcVersion, toEncode, cacheDictionaries, Option(sortField), reverse, false, batch, double)
+      new ArrowVisitor(sft, encoding, ipcVersion, toEncode, Option(sortField), reverse, false, batch, flattenStruct)
     GeoMesaFeatureCollection.visit(features, visitor)
     visitor.getResult.results
   }
@@ -108,24 +105,23 @@ object ArrowConversionProcess {
       encoding: SimpleFeatureEncoding,
       ipcVersion: String,
       dictionaryFields: Seq[String],
-      cacheDictionaries: Option[Boolean],
       sortField: Option[String],
       sortReverse: Option[Boolean],
       preSorted: Boolean,
       batchSize: Int,
-      doublePass: Boolean
+      flattenStruct: Boolean
     ) extends GeoMesaProcessVisitor with LazyLogging {
 
-    import scala.collection.JavaConversions._
+    import scala.collection.JavaConverters._
 
     // for collecting results manually
     private lazy val manualVisitor: ArrowManualVisitor = {
       val sort = sortField.map(s => (s, sortReverse.getOrElse(false)))
       val ipcOpts = FormatVersion.options(ipcVersion)
       if (dictionaryFields.isEmpty && (sortField.isEmpty || preSorted)) {
-        new SimpleArrowManualVisitor(sft, encoding, ipcOpts, sort, batchSize)
+        new SimpleArrowManualVisitor(sft, encoding, ipcOpts, sort, batchSize, flattenStruct)
       } else {
-        new ComplexArrowManualVisitor(sft, encoding, ipcOpts, dictionaryFields, sort, preSorted, batchSize)
+        new ComplexArrowManualVisitor(sft, encoding, ipcOpts, dictionaryFields, sort, preSorted, batchSize, flattenStruct)
       }
     }
 
@@ -133,9 +129,9 @@ object ArrowConversionProcess {
 
     override def getResult: ArrowResult = {
       if (result != null) {
-        ArrowResult(result)
+        ArrowResult(result.asJava)
       } else {
-        ArrowResult(manualVisitor.results)
+        ArrowResult(manualVisitor.results.asJava)
       }
     }
 
@@ -156,9 +152,9 @@ object ArrowConversionProcess {
       query.getHints.put(QueryHints.ARROW_INCLUDE_FID, encoding.fids.isDefined)
       query.getHints.put(QueryHints.ARROW_PROXY_FID, encoding.fids.contains(Encoding.Min))
       query.getHints.put(QueryHints.ARROW_BATCH_SIZE, batchSize)
-      query.getHints.put(QueryHints.ARROW_DOUBLE_PASS, doublePass)
       query.getHints.put(QueryHints.ARROW_FORMAT_VERSION, ipcVersion)
-      cacheDictionaries.foreach(query.getHints.put(QueryHints.ARROW_DICTIONARY_CACHED, _))
+      query.getHints.put(QueryHints.ARROW_FLATTEN_STRUCT, flattenStruct)
+      query.getHints.put(QueryHints.FLIP_AXIS_ORDER, encoding.flipAxisOrder)
       sortField.foreach(query.getHints.put(QueryHints.ARROW_SORT_FIELD, _))
       sortReverse.foreach(query.getHints.put(QueryHints.ARROW_SORT_REVERSE, _))
 
@@ -185,7 +181,8 @@ object ArrowConversionProcess {
       encoding: SimpleFeatureEncoding,
       ipcOpts: IpcOption,
       sort: Option[(String, Boolean)],
-      batchSize: Int
+      batchSize: Int,
+      flattenStruct: Boolean
     ) extends ArrowManualVisitor {
 
     private val out = new ByteArrayOutputStream()
@@ -193,10 +190,10 @@ object ArrowConversionProcess {
     private var count = 0L
 
     private val writer =
-      SimpleFeatureArrowFileWriter(out, sft, Map.empty[String, ArrowDictionary], encoding, ipcOpts, sort)
+      SimpleFeatureArrowFileWriter(out, sft, Map.empty[String, ArrowDictionary], encoding, ipcOpts, sort, flattenStruct)
 
     override def visit(feature: SimpleFeature): Unit = {
-      writer.add(feature.asInstanceOf[SimpleFeature])
+      writer.add(feature)
       count += 1
       if (count % batchSize == 0) {
         writer.flush()
@@ -228,7 +225,8 @@ object ArrowConversionProcess {
       dictionaryFields: Seq[String],
       sort: Option[(String, Boolean)],
       preSorted: Boolean,
-      batchSize: Int
+      batchSize: Int,
+      flattenStruct: Boolean
     ) extends ArrowManualVisitor {
 
     private val features = ArrayBuffer.empty[SimpleFeature]
@@ -247,41 +245,40 @@ object ArrowConversionProcess {
           indicesAndValues.foreach { case (_, i, v) => v.add(f.getAttribute(i)) }
         }
         indicesAndValues.map { case (n, i, v) =>
-          n -> ArrowDictionary.create(i, v.toArray)(ClassTag[AnyRef](sft.getDescriptor(i).getType.getBinding))
+          n -> ArrowDictionary.create(sft.getTypeName, i, v.toArray)(ClassTag[AnyRef](sft.getDescriptor(i).getType.getBinding))
         }.toMap
       }
 
       val ordering = if (preSorted) { None } else {
-        sort.map { case (field, reverse) =>
-          val o = SimpleFeatureOrdering(sft.indexOf(field))
-          if (reverse) { o.reverse } else { o }
-        }
+        sort.map { case (field, reverse) => SimpleFeatureOrdering(sft, field, reverse) }
       }
       val sorted = ordering match {
         case None    => features.iterator
         case Some(o) => features.sorted(o).iterator
       }
 
-      val out = new ByteArrayOutputStream()
-      val writer = SimpleFeatureArrowFileWriter(out, sft, dictionaries, encoding, ipcOpts, sort)
+      buildResult(dictionaries, sorted)
+    }
 
-      new Iterator[Array[Byte]] {
-        override def hasNext: Boolean = sorted.hasNext
-        override def next(): Array[Byte] = {
-          out.reset()
+    private def buildResult(dictionaries: Map[String, ArrowDictionary],
+                            sorted: Iterator[SimpleFeature]): Iterator[Array[Byte]] = {
+      val out = new ByteArrayOutputStream()
+      val bytes = ListBuffer.empty[Array[Byte]]
+
+      WithClose(SimpleFeatureArrowFileWriter(out, sft, dictionaries, encoding, ipcOpts, sort, flattenStruct)) { writer =>
+        while (sorted.hasNext) { // send batches
           var i = 0
           while (i < batchSize && sorted.hasNext) {
             writer.add(sorted.next)
             i += 1
           }
-          if (sorted.hasNext) {
-            writer.flush()
-          } else {
-            CloseWithLogging(writer)
-          }
-          out.toByteArray
+          writer.flush()
+          bytes.append(out.toByteArray)
+          out.reset()
         }
       }
+      bytes.append(out.toByteArray)
+      bytes.iterator
     }
   }
 

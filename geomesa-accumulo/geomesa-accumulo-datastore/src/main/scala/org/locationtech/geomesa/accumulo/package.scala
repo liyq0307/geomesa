@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,18 @@
 
 package org.locationtech.geomesa
 
+import org.locationtech.geomesa.accumulo.util.TableManager
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 
 package object accumulo {
 
   object AccumuloProperties {
+
+    object TableProperties {
+      val TableCreationSync: SystemProperty =
+        SystemProperty("geomesa.accumulo.table.sync", TableManager.TableSynchronization.ZooKeeper.toString)
+      val TableCacheExpiry: SystemProperty = SystemProperty("geomesa.accumulo.table.cache.expiry", "10 minutes")
+    }
 
     object AccumuloMapperProperties {
       val DESIRED_SPLITS_PER_TSERVER = SystemProperty("geomesa.mapreduce.splits.tserver.max")
@@ -28,6 +35,13 @@ package object accumulo {
 
     object StatsProperties {
       val STAT_COMPACTION_INTERVAL = SystemProperty("geomesa.stats.compact.interval", "1 hour")
+    }
+
+    object RemoteProcessingProperties {
+      val RemoteArrowProperty: SystemProperty = SystemProperty("geomesa.accumulo.remote.arrow.enable")
+      val RemoteBinProperty: SystemProperty = SystemProperty("geomesa.accumulo.remote.bin.enable")
+      val RemoteDensityProperty: SystemProperty = SystemProperty("geomesa.accumulo.remote.density.enable")
+      val RemoteStatsProperty: SystemProperty = SystemProperty("geomesa.accumulo.remote.stats.enable")
     }
   }
 }

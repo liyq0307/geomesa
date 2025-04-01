@@ -18,9 +18,6 @@ in the topic, by setting ``kafka.consumer.read-back`` to a duration, such as ``1
 parameters. This allows a consumer to replay old messages and establish a baseline state. To read the entire
 message queue, use the value ``Inf``.
 
-Reading back by a given interval is only supported in Kafka starting with version 0.10.1. Older versions will fall
-back to reading from the very beginning of the topic.
-
 Note that a feature store will not return any query results during this initial load, until it has caught up to
 head state.
 
@@ -37,6 +34,12 @@ data store may expire features after a certain timeout, by specifying the ``kafk
 parameter. When a producer writes an update to an existing feature, the consumer will reset the expiration timeout.
 Once the timeout is hit without any updates, the feature will be removed from the consumer cache and will no
 longer be returned when querying.
+
+For advanced use cases, the ``kafka.cache.expiry.dynamic`` data store parameter can be used to expire features
+based on matching filter predicates. The value should be a TypeSafe config document where the keys are CQL filter
+strings and the values are expiration duration strings (for example, ``{ "type = 'boat'": "100ms" }``). The filters
+will be evaluated in the order they are declared. Any features which do not match one of the filters will use
+the default ``kafka.cache.expiry`` value, if provided.
 
 If the expiry is set to zero, features will not be indexed or searchable. However, they will still be passed
 to any :ref:`feature listeners <kafka_feature_events>` that are configured.

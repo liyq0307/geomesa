@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,18 +8,16 @@
 
 package org.locationtech.geomesa.redis.tools.schema
 
-import com.beust.jcommander.{JCommander, Parameters}
+import com.beust.jcommander.Parameters
 import org.locationtech.geomesa.redis.data.RedisDataStore
 import org.locationtech.geomesa.redis.tools.RedisDataStoreCommand
 import org.locationtech.geomesa.redis.tools.RedisDataStoreCommand.RedisDataStoreParams
 import org.locationtech.geomesa.redis.tools.schema.RedisManagePartitionsCommand._
 import org.locationtech.geomesa.tools.data.ManagePartitionsCommand
 import org.locationtech.geomesa.tools.data.ManagePartitionsCommand._
-import org.locationtech.geomesa.tools.{OptionalForceParam, RequiredTypeNameParam, Runner}
+import org.locationtech.geomesa.tools.{OptionalForceParam, RequiredTypeNameParam}
 
-class RedisManagePartitionsCommand(runner: Runner, jc: JCommander)
-    extends ManagePartitionsCommand(runner, jc) {
-
+class RedisManagePartitionsCommand extends ManagePartitionsCommand {
   override protected def list: RedisListPartitionsCommand = new RedisListPartitionsCommand
   override protected def add: RedisAddPartitionsCommand = new RedisAddPartitionsCommand
   override protected def adopt: RedisAdoptPartitionCommand = new RedisAdoptPartitionCommand

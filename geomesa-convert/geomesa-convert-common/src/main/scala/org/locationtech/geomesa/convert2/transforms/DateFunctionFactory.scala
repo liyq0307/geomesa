@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,14 @@
 
 package org.locationtech.geomesa.convert2.transforms
 
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.util.{Date, Locale}
-
-import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.transforms.DateFunctionFactory.{CustomFormatDateParser, DateToString, StandardDateParser}
 import org.locationtech.geomesa.convert2.transforms.Expression.LiteralString
 import org.locationtech.geomesa.convert2.transforms.TransformerFunction.NamedTransformerFunction
 import org.locationtech.geomesa.utils.text.DateParsing
+
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.{Date, Locale}
 
 class DateFunctionFactory extends TransformerFunctionFactory {
 
@@ -27,7 +26,7 @@ class DateFunctionFactory extends TransformerFunctionFactory {
   override def functions: Seq[TransformerFunction] =
     Seq(now, customFormatDateParser, datetime, basicDateTimeNoMillis, basicIsoDate, basicDateTime, isoDate,
       isoLocalDate, isoLocalDateTime, isoOffsetDateTime, isoDateTime, dateHourMinuteSecondMillis,
-      millisToDate, secsToDate, dateToString)
+      millisToDate, secsToDate, dateToString, dateToMillis)
 
   private val now = TransformerFunction("now") { _ =>
     Date.from(ZonedDateTime.now(ZoneOffset.UTC).toInstant)
@@ -36,8 +35,7 @@ class DateFunctionFactory extends TransformerFunctionFactory {
   private val millisToDate = TransformerFunction.pure("millisToDate") { args =>
     args(0) match {
       case null => null
-      case d: Long => new Date(d)
-      case d: Int  => new Date(d)
+      case d: Number => new Date(d.longValue)
       case d => throw new IllegalArgumentException(s"Invalid millisecond: $d")
     }
   }
@@ -45,8 +43,7 @@ class DateFunctionFactory extends TransformerFunctionFactory {
   private val secsToDate = TransformerFunction.pure("secsToDate") { args =>
     args(0) match {
       case null => null
-      case d: Long => new Date(d * 1000L)
-      case d: Int  => new Date(d * 1000L)
+      case d: Number => new Date(d.longValue * 1000L)
       case d => throw new IllegalArgumentException(s"Invalid second: $d")
     }
   }
@@ -160,13 +157,17 @@ class DateFunctionFactory extends TransformerFunctionFactory {
   private val customFormatDateParser = new CustomFormatDateParser(null)
 
   private val dateToString = new DateToString(null)
+
+  private val dateToMillis = TransformerFunction.pure("dateToMillis") { args =>
+    if (args(0) == null) { null } else { args(0).asInstanceOf[Date].getTime }
+  }
 }
 
 object DateFunctionFactory {
 
   abstract class StandardDateParser(names: Seq[String]) extends NamedTransformerFunction(names, pure = true) {
-    val format: DateTimeFormatter
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
+    val format: DateTimeFormatter // note: formats are thread safe
+    override def apply(args: Array[AnyRef]): AnyRef = {
       args(0) match {
         case null => null
         case d: String => DateParsing.parseDate(d, format)
@@ -185,7 +186,7 @@ object DateFunctionFactory {
       new CustomFormatDateParser(format)
     }
 
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = {
+    override def apply(args: Array[AnyRef]): AnyRef = {
       args(1) match {
         case null => null
         case d: String => DateParsing.parseDate(d, format)
@@ -204,7 +205,7 @@ object DateFunctionFactory {
       new DateToString(format)
     }
 
-    override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any =
+    override def apply(args: Array[AnyRef]): AnyRef =
       DateParsing.formatDate(args(1).asInstanceOf[java.util.Date], format)
   }
 }

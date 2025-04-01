@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,9 +9,12 @@
 package org.locationtech.geomesa.process.query
 
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.Query
+import org.geotools.api.data.{Query, SimpleFeatureSource}
+import org.geotools.api.feature.Feature
+import org.geotools.api.feature.simple.SimpleFeature
+import org.geotools.api.filter.Filter
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureSource}
+import org.geotools.data.simple.SimpleFeatureCollection
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, TransformSimpleFeature}
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
@@ -19,9 +22,6 @@ import org.locationtech.geomesa.index.geotools.GeoMesaFeatureCollection
 import org.locationtech.geomesa.index.planning.QueryPlanner
 import org.locationtech.geomesa.index.process.GeoMesaProcessVisitor
 import org.locationtech.geomesa.process.{FeatureResult, GeoMesaProcess}
-import org.opengis.feature.Feature
-import org.opengis.feature.simple.SimpleFeature
-import org.opengis.filter.Filter
 
 @DescribeProcess(
   title = "Geomesa Query",
@@ -67,7 +67,10 @@ class QueryVisitor(features: SimpleFeatureCollection, filter: Filter, properties
 
   private val (sft, transformFeature) = if (properties == null) { (features.getSchema, null) } else {
     val original = features.getSchema
-    val query = new Query(original.getTypeName, Filter.INCLUDE, properties)
+    val query = new Query(original.getTypeName, Filter.INCLUDE)
+    if (properties != null) {
+      query.setPropertyNames(properties: _*)
+    }
     QueryPlanner.extractQueryTransforms(original, query) match {
       case None => (original, null)
       case Some((tsft, tdefs, _)) => (tsft, TransformSimpleFeature(tsft, tdefs))
@@ -107,7 +110,7 @@ class QueryVisitor(features: SimpleFeatureCollection, filter: Filter, properties
         logger.warn(s"Overriding inner query's properties (${query.getProperties}) " +
             s"with properties/transforms ${properties.mkString(",")}.")
       }
-      query.setPropertyNames(properties)
+      query.setPropertyNames(properties: _*)
     }
     resultCalc = FeatureResult(source.getFeatures(query))
   }

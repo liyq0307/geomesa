@@ -1,33 +1,34 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.tools.export
+package org.locationtech.geomesa.tools.`export`
+
+import org.geotools.api.data.{DataStore, Query, Transaction}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.data.DataUtilities
+import org.geotools.data.memory.MemoryDataStore
+import org.junit.runner.RunWith
+import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.features.exporters.DelimitedExporter
+import org.locationtech.geomesa.tools.DataStoreRegistration
+import org.locationtech.geomesa.tools.ingest.IngestCommand
+import org.locationtech.geomesa.tools.ingest.IngestCommand.IngestParams
+import org.locationtech.geomesa.utils.collection.SelfClosingIterator
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.locationtech.geomesa.utils.io.WithClose
+import org.specs2.mutable.Specification
+import org.specs2.runner.JUnitRunner
 
 import java.io._
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.{Collections, Locale}
-
-import org.geotools.data.memory.MemoryDataStore
-import org.geotools.data.{DataStore, DataUtilities, Query, Transaction}
-import org.junit.runner.RunWith
-import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.tools.DataStoreRegistration
-import org.locationtech.geomesa.tools.export.formats.{DelimitedExporter, ExportFormat}
-import org.locationtech.geomesa.tools.ingest.IngestCommand
-import org.locationtech.geomesa.tools.ingest.IngestCommand.IngestParams
-import org.locationtech.geomesa.utils.collection.SelfClosingIterator
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
 class DelimitedExportImportTest extends Specification {
@@ -55,8 +56,8 @@ class DelimitedExportImportTest extends Specification {
     val os = new ByteArrayOutputStream()
     // exclude feature ID since the inferred ingestion just treats it as another column
     val export = format match {
-      case ExportFormat.Csv => DelimitedExporter.csv(os, null, withHeader = true, includeIds = false)
-      case ExportFormat.Tsv => DelimitedExporter.tsv(os, null, withHeader = true, includeIds = false)
+      case ExportFormat.Csv => DelimitedExporter.csv(os, withHeader = true, includeIds = false)
+      case ExportFormat.Tsv => DelimitedExporter.tsv(os, withHeader = true, includeIds = false)
     }
     export.start(sft)
     export.export(features)

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,14 @@
 
 package org.locationtech.geomesa.convert2.validators
 
-import java.io.Closeable
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.convert2.metrics.ConverterMetrics
 import org.locationtech.geomesa.utils.classpath.ServiceLoader
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.io.CloseWithLogging
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
+
+import java.io.Closeable
 
 trait SimpleFeatureValidator extends Closeable {
 
@@ -42,15 +42,31 @@ object SimpleFeatureValidator extends LazyLogging {
   def default: Seq[String] = DefaultValidators.get.split(",")
 
   /**
-    * Create validators for the given feature type
-    *
-    * @param sft simple feature type
-    * @param names validator names and options
-    * @param metrics optional metrics registry for tracking validation results
-    * @return
-    */
-  def apply(sft: SimpleFeatureType, names: Seq[String], metrics: ConverterMetrics): SimpleFeatureValidator = {
-    val validators = names.map { full =>
+   * Create validators for the given feature type
+   *
+   * @param sft simple feature type
+   * @param names validator names and options
+   * @param metrics optional metrics registry for tracking validation results
+   * @return
+   */
+  def apply(sft: SimpleFeatureType, names: Seq[String], metrics: ConverterMetrics): SimpleFeatureValidator =
+    apply(sft, names, metrics, includeId = false)
+
+  /**
+   * Create validators for the given feature type
+   *
+   * @param sft simple feature type
+   * @param names validator names and options
+   * @param metrics optional metrics registry for tracking validation results
+   * @param includeId add an id validator
+   * @return
+   */
+  def apply(
+      sft: SimpleFeatureType,
+      names: Seq[String],
+      metrics: ConverterMetrics,
+      includeId: Boolean): SimpleFeatureValidator = {
+    val validators = { if (includeId) { Seq(IdValidator) } else { Seq.empty } } ++ names.map { full =>
       val i = full.indexOf('(')
       val (name, options) = if (i == -1) { (full, None) } else {
         require(full.last == ')', s"Invalid option parentheses: $full")

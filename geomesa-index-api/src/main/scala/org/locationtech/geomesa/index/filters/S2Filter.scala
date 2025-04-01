@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,12 @@
 
 package org.locationtech.geomesa.index.filters
 
-import java.nio.ByteBuffer
-
 import com.google.common.geometry.S2CellId
 import org.locationtech.geomesa.index.filters.RowFilter.RowFilterFactory
 import org.locationtech.geomesa.index.index.s2.S2IndexValues
 import org.locationtech.geomesa.utils.index.ByteArrays
+
+import java.nio.ByteBuffer
 
 class S2Filter(val xy: Array[Array[Double]]) extends RowFilter {
   override def inBounds(buf: Array[Byte], offset: Int): Boolean = {
@@ -40,7 +40,7 @@ object S2Filter extends RowFilterFactory[S2Filter] {
   val XYKey = "sxy"
 
   def apply(values: S2IndexValues): S2Filter = {
-    val xy = values.bounds.map { case (xmin, ymin, xmax, ymax) => Array(xmin, ymin, xmax, ymax) }
+    val xy = values.spatialBounds.map { case (xmin, ymin, xmax, ymax) => Array(xmin, ymin, xmax, ymax) }
     new S2Filter(xy.toArray)
   }
 

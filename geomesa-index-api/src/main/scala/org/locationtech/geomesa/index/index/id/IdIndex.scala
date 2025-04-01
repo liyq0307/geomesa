@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,12 @@
 
 package org.locationtech.geomesa.index.index.id
 
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.index.api.{GeoMesaFeatureIndex, IndexKeySpace}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.index.ConfiguredIndex
 import org.locationtech.geomesa.index.strategies.IdFilterStrategy
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
-import org.opengis.feature.simple.SimpleFeatureType
 
 class IdIndex protected (ds: GeoMesaDataStore[_], sft: SimpleFeatureType, version: Int, mode: IndexMode)
     extends GeoMesaFeatureIndex[Set[Array[Byte]], Array[Byte]](ds, sft, IdIndex.name, version, Seq.empty, mode)
@@ -25,6 +25,8 @@ class IdIndex protected (ds: GeoMesaDataStore[_], sft: SimpleFeatureType, versio
   override val keySpace: IdIndexKeySpace = new IdIndexKeySpace(sft)
 
   override val tieredKeySpace: Option[IndexKeySpace[_, _]] = None
+
+  override def toString: String = getClass.getSimpleName
 }
 
 object IdIndex extends ConfiguredIndex {

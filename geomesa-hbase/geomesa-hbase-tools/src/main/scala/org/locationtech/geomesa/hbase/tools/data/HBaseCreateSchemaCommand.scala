@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,13 +9,13 @@
 package org.locationtech.geomesa.hbase.tools.data
 
 import com.beust.jcommander.{IValueValidator, Parameter, ParameterException, Parameters}
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.hbase.data.HBaseDataStore
 import org.locationtech.geomesa.hbase.tools.HBaseDataStoreCommand
 import org.locationtech.geomesa.hbase.tools.HBaseDataStoreCommand.{HBaseParams, ToggleRemoteFilterParam}
 import org.locationtech.geomesa.hbase.tools.data.HBaseCreateSchemaCommand.HBaseCreateSchemaParams
 import org.locationtech.geomesa.tools.data.CreateSchemaCommand
 import org.locationtech.geomesa.tools.data.CreateSchemaCommand.CreateSchemaParams
-import org.opengis.feature.simple.SimpleFeatureType
 
 class HBaseCreateSchemaCommand extends CreateSchemaCommand[HBaseDataStore] with HBaseDataStoreCommand {
   override val params = new HBaseCreateSchemaParams()
@@ -29,8 +29,11 @@ class HBaseCreateSchemaCommand extends CreateSchemaCommand[HBaseDataStore] with 
 object HBaseCreateSchemaCommand {
   @Parameters(commandDescription = "Create a GeoMesa feature type")
   class HBaseCreateSchemaParams extends CreateSchemaParams with HBaseParams with ToggleRemoteFilterParam {
-    @Parameter(names = Array("--compression"),
-      description = "Enable compression for a feature.  One of \"snappy\", \"lzo\", \"gz\", \"bzip2\", \"lz4\", \"zstd\"", required = false, validateValueWith = classOf[CompressionTypeValidator])
+    @Parameter(
+      names = Array("--compression"),
+      description = "Enable compression for a feature.  One of \"snappy\", \"lzo\", \"gz\", \"bzip2\", \"lz4\", \"zstd\"",
+      required = false,
+      validateValueWith = Array(classOf[CompressionTypeValidator]))
     var compression: String = _
   }
 

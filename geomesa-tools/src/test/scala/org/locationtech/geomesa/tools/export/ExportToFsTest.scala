@@ -1,37 +1,35 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
  * http://www.opensource.org/licenses/apache2.0.php.
  ***********************************************************************/
 
-package org.locationtech.geomesa.tools.export
-
-import java.io._
-import java.nio.file.Files
-import java.util.concurrent.atomic.AtomicInteger
+package org.locationtech.geomesa.tools.`export`
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileContext, Path}
+import org.apache.hadoop.fs.{FileSystem, Path}
+import org.geotools.api.data.{DataStore, Query, SimpleFeatureStore}
 import org.geotools.data.collection.ListFeatureCollection
 import org.geotools.data.memory.MemoryDataStore
-import org.geotools.data.simple.SimpleFeatureStore
-import org.geotools.data.{DataStore, Query}
 import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{PartitionMetadata, StorageFile}
 import org.locationtech.geomesa.fs.storage.api.{FileSystemContext, Metadata, NamedOptions}
 import org.locationtech.geomesa.fs.storage.common.metadata.FileBasedMetadataFactory
-import org.locationtech.geomesa.parquet.ParquetFileSystemStorageFactory
+import org.locationtech.geomesa.fs.storage.parquet.ParquetFileSystemStorageFactory
 import org.locationtech.geomesa.tools.DataStoreRegistration
 import org.locationtech.geomesa.tools.export.ExportCommand.ExportParams
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.{PathUtils, WithClose}
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io._
+import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(classOf[JUnitRunner])
 class ExportToFsTest extends Specification {
@@ -58,10 +56,11 @@ class ExportToFsTest extends Specification {
       }
       ds.createSchema(sft)
       ds.getFeatureSource(sft.getTypeName).asInstanceOf[SimpleFeatureStore]
-          .addFeatures(new ListFeatureCollection(sft, features.toArray[SimpleFeature]))
+          .addFeatures(new ListFeatureCollection(sft, features: _*))
 
       val storage = {
-        val context = FileSystemContext(FileContext.getFileContext, new Configuration(), new Path(out.toUri))
+        val conf = new Configuration()
+        val context = FileSystemContext(new Path(out.toUri), conf)
         val metadata =
           new FileBasedMetadataFactory()
               .create(context, Map.empty, Metadata(sft, "parquet", NamedOptions("daily"), leafStorage = true))

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,21 +8,20 @@
 
 package org.locationtech.geomesa.lambda.data
 
-import java.time.Clock
-
 import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine}
 import com.typesafe.scalalogging.LazyLogging
-import kafka.admin.AdminUtils
-import org.apache.kafka.clients.producer.Producer
+import org.apache.kafka.clients.admin.{AdminClient, NewTopic}
+import org.geotools.api.data._
+import org.geotools.api.feature.`type`.Name
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.geotools.data._
-import org.geotools.data.simple.{SimpleFeatureReader, SimpleFeatureSource, SimpleFeatureWriter}
 import org.geotools.feature.FeatureTypes
-import org.locationtech.geomesa.accumulo.data.AccumuloDataStore
-import org.locationtech.geomesa.index.geotools.{GeoMesaFeatureReader, GeoMesaFeatureStore}
+import org.locationtech.geomesa.index.geotools.GeoMesaFeatureReader.HasGeoMesaFeatureReader
+import org.locationtech.geomesa.index.geotools.{GeoMesaDataStore, GeoMesaFeatureReader, GeoMesaFeatureStore}
 import org.locationtech.geomesa.index.stats.{GeoMesaStats, HasGeoMesaStats, NoopStats}
-import org.locationtech.geomesa.kafka.AdminUtilsVersions
 import org.locationtech.geomesa.lambda.data.LambdaDataStore.LambdaConfig
-import org.locationtech.geomesa.lambda.data.LambdaFeatureWriter.{AppendLambdaFeatureWriter, ModifyLambdaFeatureWriter}
+import org.locationtech.geomesa.lambda.data.LambdaFeatureWriter.{AppendLambdaFeatureWriter, ModifyLambdaFeatureWriter, RequiredVisibilityWriter}
 import org.locationtech.geomesa.lambda.stream.kafka.KafkaStore
 import org.locationtech.geomesa.lambda.stream.{OffsetManager, TransientStore}
 import org.locationtech.geomesa.security.AuthorizationsProvider
@@ -30,33 +29,30 @@ import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
 import org.locationtech.geomesa.utils.geotools.FeatureUtils
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, WithClose}
-import org.opengis.feature.`type`.Name
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 
-import scala.concurrent.duration.Duration
+import java.time.Clock
+import java.util.{Collections, Properties}
+import scala.concurrent.duration.FiniteDuration
 
-class LambdaDataStore(val persistence: DataStore,
-                      producer: Producer[Array[Byte], Array[Byte]],
-                      consumerConfig: Map[String, String],
-                      offsetManager: OffsetManager,
-                      config: LambdaConfig)
-                     (implicit clock: Clock = Clock.systemUTC())
-    extends DataStore with HasGeoMesaStats with LazyLogging {
+class LambdaDataStore(val persistence: DataStore, offsetManager: OffsetManager, config: LambdaConfig)
+    (implicit clock: Clock = Clock.systemUTC()) extends DataStore with HasGeoMesaStats with HasGeoMesaFeatureReader with LazyLogging {
+
+  import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
   import scala.collection.JavaConverters._
 
   private val authProvider: Option[AuthorizationsProvider] = persistence match {
-    case ds: AccumuloDataStore => Some(ds.config.authProvider)
+    // this is a bit of a hack to work around hbase null vs empty auths
+    case ds: GeoMesaDataStore[_] if ds.config.authProvider.getAuthorizations != null => Some(ds.config.authProvider)
     case _ => None
   }
 
-  private [lambda] val transients = Caffeine.newBuilder().build(new CacheLoader[String, TransientStore] {
-    override def load(key: String): TransientStore = {
-      val sft = persistence.getSchema(key)
-      new KafkaStore(persistence, sft, authProvider, offsetManager, producer, consumerConfig, config)
+  private [lambda] val transients = Caffeine.newBuilder().build[String, TransientStore](
+    new CacheLoader[String, TransientStore] {
+      override def load(key: String): TransientStore =
+        new KafkaStore(persistence, persistence.getSchema(key), authProvider, offsetManager, config)
     }
-  })
+  )
 
   override val stats: GeoMesaStats = persistence match {
     case p: HasGeoMesaStats => new LambdaStats(p.stats, transients)
@@ -72,16 +68,23 @@ class LambdaDataStore(val persistence: DataStore,
   override def getNames: java.util.List[Name] = persistence.getNames
 
   override def createSchema(sft: SimpleFeatureType): Unit = {
+    val topic = LambdaDataStore.topic(sft, config.zkNamespace)
+    if (topic.contains("/")) {
+      // note: kafka doesn't allow slashes in topic names
+      throw new IllegalArgumentException(s"Topic cannot contain '/': $topic")
+    }
     persistence.createSchema(sft)
     // TODO for some reason lambda qs consumers don't rebalance when the topic is created after the consumers...
     // transients.get(sft.getTypeName).createSchema()
-    val topic = KafkaStore.topic(config.zkNamespace, sft)
-    KafkaStore.withZk(config.zookeepers) { zk =>
-      if (AdminUtils.topicExists(zk, topic)) {
+    val props = new Properties()
+    config.producerConfig.foreach { case (k, v) => props.put(k, v) }
+    WithClose(AdminClient.create(props)) { admin =>
+      if (admin.listTopics().names().get.contains(topic)) {
         logger.warn(s"Topic [$topic] already exists - it may contain stale data")
       } else {
         val replication = SystemProperty("geomesa.kafka.replication").option.map(_.toInt).getOrElse(1)
-        AdminUtilsVersions.createTopic(zk, topic, config.partitions, replication)
+        val newTopic = new NewTopic(topic, config.partitions, replication.toShort)
+        admin.createTopics(Collections.singletonList(newTopic)).all().get
       }
     }
   }
@@ -106,7 +109,7 @@ class LambdaDataStore(val persistence: DataStore,
       // ensure that we've loaded the entire kafka topic
       logger.debug("Update schema: entering quiet period")
       Thread.sleep(SystemProperty("geomesa.lambda.update.quiet.period", "10 seconds").toDuration.get.toMillis)
-      WithClose(transient.read()) { toPersist =>
+      WithClose(transient.read().iterator()) { toPersist =>
         if (toPersist.nonEmpty) {
           logger.debug("Update schema: persisting transient features")
           WithClose(persistence.getFeatureWriter(typeName, Transaction.AUTO_COMMIT)) { writer =>
@@ -134,13 +137,26 @@ class LambdaDataStore(val persistence: DataStore,
   override def getFeatureSource(typeName: Name): SimpleFeatureSource = getFeatureSource(typeName.getLocalPart)
 
   override def getFeatureSource(typeName: String): SimpleFeatureSource =
-    new GeoMesaFeatureStore(this, getSchema(typeName), runner)
+    new GeoMesaFeatureStore(this, getSchema(typeName))
 
   override def getFeatureReader(query: Query, transaction: Transaction): SimpleFeatureReader =
-    GeoMesaFeatureReader(getSchema(query.getTypeName), query, runner, None, None)
+    getFeatureReader(getSchema(query.getTypeName), transaction, query).reader()
 
-  override def getFeatureWriterAppend(typeName: String, transaction: Transaction): SimpleFeatureWriter =
-    new AppendLambdaFeatureWriter(transients.get(typeName))
+  override private[geomesa] def getFeatureReader(
+      sft: SimpleFeatureType,
+      transaction: Transaction,
+      query: Query): GeoMesaFeatureReader = {
+    GeoMesaFeatureReader(sft, query, runner, None)
+  }
+
+  override def getFeatureWriterAppend(typeName: String, transaction: Transaction): SimpleFeatureWriter = {
+    val transient = transients.get(typeName)
+    if (transient.sft.isVisibilityRequired) {
+      new AppendLambdaFeatureWriter(transient) with RequiredVisibilityWriter
+    } else {
+      new AppendLambdaFeatureWriter(transient)
+    }
+  }
 
   override def getFeatureWriter(typeName: String, transaction: Transaction): SimpleFeatureWriter =
     getFeatureWriter(typeName, Filter.INCLUDE, transaction)
@@ -150,14 +166,18 @@ class LambdaDataStore(val persistence: DataStore,
                                 transaction: Transaction): SimpleFeatureWriter= {
     val query = new Query(typeName, filter)
     val features = SelfClosingIterator(getFeatureReader(query, transaction))
-    new ModifyLambdaFeatureWriter(transients.get(typeName), features)
+    val transient = transients.get(typeName)
+    if (transient.sft.isVisibilityRequired) {
+      new ModifyLambdaFeatureWriter(transient, features) with RequiredVisibilityWriter
+    } else {
+      new ModifyLambdaFeatureWriter(transient, features)
+    }
   }
 
   override def dispose(): Unit = {
     CloseWithLogging(transients.asMap.asScala.values)
     transients.invalidateAll()
     CloseWithLogging(offsetManager)
-    CloseWithLogging(producer)
     persistence.dispose()
   }
 
@@ -172,10 +192,32 @@ class LambdaDataStore(val persistence: DataStore,
 }
 
 object LambdaDataStore {
-  case class LambdaConfig(zookeepers: String,
-                          zkNamespace: String,
-                          partitions: Int,
-                          consumers: Int,
-                          expiry: Duration,
-                          persist: Boolean)
+
+  val TopicKey = "geomesa.lambda.topic"
+
+  /**
+   * Gets the kafka topic configured in the sft, or a default topic if nothing is configured.
+   *
+   * @param sft simple feature type
+   * @param namespace namespace to use for default topic
+   * @return
+   */
+  def topic(sft: SimpleFeatureType, namespace: String): String = {
+    sft.getUserData.get(TopicKey) match {
+      case topic: String => topic
+      case _ => s"${namespace}_${sft.getTypeName}".replaceAll("[^a-zA-Z0-9_\\-]", "_")
+    }
+  }
+
+  case class LambdaConfig(
+      zookeepers: String,
+      zkNamespace: String,
+      producerConfig: Map[String, String],
+      consumerConfig: Map[String, String],
+      partitions: Int,
+      consumers: Int,
+      expiry: Option[FiniteDuration],
+      persistBatchSize: Option[Int] = None,
+      offsetCommitInterval: FiniteDuration,
+    )
 }

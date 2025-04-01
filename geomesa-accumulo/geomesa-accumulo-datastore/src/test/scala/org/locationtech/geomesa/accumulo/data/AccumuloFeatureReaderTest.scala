@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,28 +8,26 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import java.time.ZonedDateTime
-
-import org.geotools.data.{Query, Transaction}
+import org.geotools.api.data.{Query, Transaction}
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
+import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo._
-import org.locationtech.geomesa.accumulo.audit.ParamsAuditProvider
+import org.locationtech.geomesa.accumulo.audit.{AccumuloAuditWriter, ParamsAuditProvider}
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.index.audit.QueryEvent
+import org.locationtech.geomesa.index.api.QueryPlan
+import org.locationtech.geomesa.index.audit.AuditedEvent
+import org.locationtech.geomesa.index.audit.AuditedEvent.QueryEvent
 import org.locationtech.geomesa.index.conf.QueryHints
-import org.locationtech.geomesa.index.planning.QueryPlanner
-import org.locationtech.geomesa.utils.audit.{AuditReader, AuditWriter, AuditedEvent}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
 import scala.collection.mutable.ArrayBuffer
-import scala.reflect.ClassTag
+import scala.concurrent.Future
 
 @RunWith(classOf[JUnitRunner])
 class AccumuloFeatureReaderTest extends Specification with TestWithFeatureType {
-
-  sequential
 
   override def spec = s"name:String,dtg:Date,*geom:Point"
 
@@ -41,17 +39,30 @@ class AccumuloFeatureReaderTest extends Specification with TestWithFeatureType {
     sf
   }
 
-  addFeatures(features)
+  step {
+    addFeatures(features)
+  }
 
   val filter = ECQL.toFilter("bbox(geom, -10, -10, 10, 10) and dtg during 2010-05-07T00:00:00.000Z/2010-05-08T00:00:00.000Z")
 
   def dataStoreWithAudit(events: ArrayBuffer[AuditedEvent]) =
-    new AccumuloDataStore(ds.connector, ds.config.copy(audit = Some(new MockAuditWriter(events), new ParamsAuditProvider, "")))
+    new AccumuloDataStore(ds.connector, ds.config.copy(auditWriter = new MockAuditWriter(events)))
 
-  class MockAuditWriter(events: ArrayBuffer[AuditedEvent]) extends AuditWriter with AuditReader {
-    override def writeEvent[T <: AuditedEvent](stat: T)(implicit ct: ClassTag[T]): Unit = events.append(stat)
-    override def getEvents[T <: AuditedEvent](typeName: String, dates: (ZonedDateTime, ZonedDateTime))(implicit ct: ClassTag[T]): Iterator[T] = null
-    override def close(): Unit = {}
+  class MockAuditWriter(events: ArrayBuffer[AuditedEvent])
+    extends AccumuloAuditWriter(null, "", new ParamsAuditProvider, enabled = false) {
+    override def writeQueryEvent(
+        typeName: String,
+        user: String,
+        filter: Filter,
+        hints: Hints,
+        plans: Seq[QueryPlan[_]],
+        startTime: Long,
+        endTime: Long,
+        planTime: Long,
+        scanTime: Long,
+        hits: Long): Future[Unit] = {
+      Future.successful(events.append(QueryEvent("accumulo-vector", typeName, user, filter, hints, startTime, endTime, planTime, scanTime, hits)))
+    }
   }
 
   "AccumuloFeatureReader" should {
@@ -99,28 +110,6 @@ class AccumuloFeatureReaderTest extends Specification with TestWithFeatureType {
       events.head.asInstanceOf[QueryEvent].hits mustEqual 100
     }
 
-    "be able to count bin results in stats through geoserver" in {
-      val events = ArrayBuffer.empty[AuditedEvent]
-
-      val query = new Query(sftName, filter)
-      val collection = dataStoreWithAudit(events).getFeatureSource(sftName).getFeatures(query)
-
-      // put the hints in the request after getting the feature collection
-      // to mimic the bin output format workflow
-      val hints = Map(QueryHints.BIN_TRACK -> "name", QueryHints.BIN_BATCH_SIZE -> 10)
-      QueryPlanner.setPerThreadQueryHints(hints.asInstanceOf[Map[AnyRef, AnyRef]])
-
-      var count = 0
-      val reader = collection.features()
-      while (reader.hasNext) { reader.next(); count += 1 }
-      reader.close()
-
-      count must beLessThan(100)
-      events must haveLength(1)
-      events.head must beAnInstanceOf[QueryEvent]
-      events.head.asInstanceOf[QueryEvent].hits mustEqual 100
-    }
-
     "be able to limit features" in {
       val query = new Query(sftName, filter)
       query.setMaxFeatures(10)
@@ -141,23 +130,6 @@ class AccumuloFeatureReaderTest extends Specification with TestWithFeatureType {
 
       var count = 0
       val reader = ds.getFeatureReader(query, Transaction.AUTO_COMMIT)
-      while (reader.hasNext) { count += reader.next().getAttribute(0).asInstanceOf[Array[Byte]].length }
-      reader.close()
-
-      count mustEqual 10 * 16 // 16 bytes per bin record
-    }
-
-    "be able to limit features in bin results through geoserver" in {
-      val query = new Query(sftName, filter)
-      query.setMaxFeatures(10)
-
-      val collection = ds.getFeatureSource(sftName).getFeatures(query)
-
-      val hints = Map(QueryHints.BIN_TRACK -> "name", QueryHints.BIN_BATCH_SIZE -> 10)
-      QueryPlanner.setPerThreadQueryHints(hints.asInstanceOf[Map[AnyRef, AnyRef]])
-
-      var count = 0
-      val reader = collection.features()
       while (reader.hasNext) { count += reader.next().getAttribute(0).asInstanceOf[Array[Byte]].length }
       reader.close()
 
@@ -196,29 +168,6 @@ class AccumuloFeatureReaderTest extends Specification with TestWithFeatureType {
       events must haveLength(1)
       events.head must beAnInstanceOf[QueryEvent]
       events.head.asInstanceOf[QueryEvent].hits must beLessThan(20L)
-    }
-
-    "be able to limit  features in bin results and collect stats through geoserver" in {
-      val events = ArrayBuffer.empty[AuditedEvent]
-      val query = new Query(sftName, filter)
-      query.setMaxFeatures(10)
-
-      val collection = dataStoreWithAudit(events).getFeatureSource(sftName).getFeatures(query)
-
-      // put the hints in the request after getting the feature collection
-      // to mimic the bin output format workflow
-      val hints = Map(QueryHints.BIN_TRACK -> "name", QueryHints.BIN_BATCH_SIZE -> 10)
-      QueryPlanner.setPerThreadQueryHints(hints.asInstanceOf[Map[AnyRef, AnyRef]])
-
-      var count = 0
-      val reader = collection.features()
-      while (reader.hasNext) { count += reader.next().getAttribute(0).asInstanceOf[Array[Byte]].length }
-      reader.close()
-
-      count mustEqual 10 * 16 // 16 bytes per bin record
-      events must haveLength(1)
-      events.head must beAnInstanceOf[QueryEvent]
-      events.head.asInstanceOf[QueryEvent].hits mustEqual 10L
     }
   }
 }

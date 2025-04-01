@@ -32,6 +32,17 @@ st_geomFromGeoHash
 Returns the ``Geometry`` of the bounding box corresponding to the Geohash string *geohash* (base-32 encoded) with
 a precision of *prec* bits. See :ref:`geohash` for more information on GeoHashes.
 
+.. _st_geomFromGeoJSON:
+
+st_geomFromGeoJSON
+^^^^^^^^^^^^^^^^^^
+
+::
+
+    Geometry st_geomFromGeoJSON(String geojsonGeometry)
+
+Creates a Geometry from the given GeoJSON Geometry (`GeoJson`_).
+
 .. _st_geomFromText:
 
 st_geomFromText
@@ -560,7 +571,7 @@ st_asGeoJSON
 
 Returns ``Geometry`` *geom* in `GeoJSON`_ representation.
 
-.. _GeoJSON: http://geojson.org/
+.. _GeoJSON: https://geojson.org/
 
 .. _st_asLatLonText:
 
@@ -845,6 +856,18 @@ st_touches
 
 Returns true if the geometries have at least one point in common, but their interiors do not intersect.
 
+.. _st_transform:
+
+st_transform
+^^^^^^^^^^^^
+
+::
+
+    Geometry st_transform(Geometry a, String fromCRS, String toCRS)
+
+Returns a new geometry with its coordinates transformed to a different coordinate reference system (for example from
+EPSG:4326 to EPSG:27700).
+
 .. _st_within:
 
 st_within
@@ -882,6 +905,21 @@ st_bufferPoint
     Geometry st_bufferPoint(Point p, Double buffer)
 
 Returns a ``Geometry`` covering all points within a given *radius* of ``Point`` *p*, where *radius* is given in meters.
+
+.. _st_makeValid:
+
+_st_makeValid
+^^^^^^^^^^^^^
+
+::
+
+    Geometry st_makeValid(Geometry geom)
+
+Returns a valid ``Geometry``.
+The behavior of this function is similar to PostGIS function `st_makeValid(geom, 'method=structure')`.
+The function will not collapse geometries and may return EMPTY geometries instead.
+Invalid MULTI-geometries may be reduced to regular geometries.
+
 
 .. _st_convexHull:
 

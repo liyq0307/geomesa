@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,11 +8,8 @@
 
 package org.locationtech.geomesa.tools.data
 
-import java.io.IOException
-import java.util.Collections
-
 import com.beust.jcommander.{Parameter, ParameterException}
-import org.geotools.data.DataStore
+import org.geotools.api.data.DataStore
 import org.geotools.feature.AttributeTypeBuilder
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.locationtech.geomesa.tools._
@@ -21,6 +18,8 @@ import org.locationtech.geomesa.tools.utils.{NoopParameterSplitter, Prompt}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.sft.SimpleFeatureSpecParser
 
+import java.io.IOException
+import java.util.Collections
 import scala.util.control.NonFatal
 
 /**
@@ -41,10 +40,7 @@ trait UpdateSchemaCommand[DS <: DataStore] extends DataStoreCommand[DS] {
 
   protected def update(ds: DS): Unit = {
     // ensure we have an operation
-    if (params.rename == null &&
-        Seq(params.renameAttributes, params.attributes, params.plusKeywords, params.minusKeywords).forall(_.isEmpty)) {
-      throw new ParameterException("Please specify an update operation")
-    }
+    params.validate().foreach(e => throw e)
 
     val sft = try { ds.getSchema(params.featureName) } catch { case _: IOException => null }
     if (sft == null) {
@@ -70,15 +66,15 @@ trait UpdateSchemaCommand[DS <: DataStore] extends DataStoreCommand[DS] {
     }
 
     params.renameAttributes.asScala.grouped(2).foreach { case Seq(from, to) =>
-      val i = sft.indexOf(from)
+      val i = sft.indexOf(from.asInstanceOf[String])
       if (i == -1) {
         throw new ParameterException(s"Attribute '$from' does not exist in the schema")
       }
       val attribute = new AttributeTypeBuilder()
       attribute.init(sft.getDescriptor(i))
-      builder.set(i, attribute.buildDescriptor(to))
+      builder.set(i, attribute.buildDescriptor(to.asInstanceOf[String]))
       if (sft.getGeomField == from) {
-        builder.setDefaultGeometry(to)
+        builder.setDefaultGeometry(to.asInstanceOf[String])
       }
       prompts.append(s"\n  $number: Renaming attribute '$from' to '$to'")
       canRenameTables = canRenameTables || sft.getIndices.exists(_.attributes.contains(from))
@@ -108,6 +104,18 @@ trait UpdateSchemaCommand[DS <: DataStore] extends DataStoreCommand[DS] {
       val keywords = params.minusKeywords.asScala
       updated.removeKeywords(keywords.toSet)
       prompts.append(s"\n  $number: Removing keywords: '${keywords.mkString("', '")}'")
+    }
+    if (!params.userData.isEmpty) {
+      params.userData.asScala.foreach { ud =>
+        ud.split(":", 2) match {
+          case Array(k, v) =>
+            updated.getUserData.put(k, v) match {
+              case null => prompts.append(s"\n  $number: Adding user data: '$k=$v'")
+              case old  => prompts.append(s"\n  $number: Updating user data: '$k=$v' (was '$old')")
+            }
+          case _ => throw new ParameterException(s"Invalid user data entry - expected 'key:value': $ud")
+        }
+      }
     }
 
     Option(params.enableStats).map(_.booleanValue()).foreach { enable =>
@@ -165,6 +173,12 @@ object UpdateSchemaCommand {
     var minusKeywords: java.util.List[String] = Collections.emptyList()
 
     @Parameter(
+      names = Array("--add-user-data"),
+      description = "Add a new entry or update an existing entry in the feature type user data, delineated with a colon (:)",
+      splitter = classOf[NoopParameterSplitter])
+    var userData: java.util.List[String] = Collections.emptyList()
+
+    @Parameter(
       names = Array("--enable-stats"),
       description = "Enable or disable stats for the feature type",
       arity = 1)
@@ -179,5 +193,14 @@ object UpdateSchemaCommand {
       names = Array("--no-backup"),
       description = "Don't back up data store metadata before updating the schema")
     var noBackup: Boolean = false
+
+    def validate(): Option[ParameterException] = {
+      if (rename == null &&
+          Seq(renameAttributes, attributes, plusKeywords, minusKeywords, userData).forall(_.isEmpty)) {
+        Some(new ParameterException("Please specify an update operation"))
+      } else {
+        None
+      }
+    }
   }
 }

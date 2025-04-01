@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,10 @@
 
 package org.locationtech.geomesa.index.iterators
 
-import java.util.concurrent.TimeUnit
-
 import com.github.benmanes.caffeine.cache.{Cache, Caffeine}
 import com.typesafe.scalalogging.StrictLogging
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.features.SerializationOption.SerializationOption
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
@@ -21,13 +21,16 @@ import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemPropert
 import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.index.IndexMode
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
+
+import java.util.concurrent.TimeUnit
 
 /**
   * Cache for expensive objects used in iterators
   */
 object IteratorCache extends StrictLogging {
+
+  // force evaluation of accessor cache while setting the context classloader to pick up our custm accessors
+  org.locationtech.geomesa.utils.geotools.SimpleFeaturePropertyAccessor.initialize()
 
   private val expiry = SystemProperty("geomesa.filter.remote.cache.expiry", "10 minutes").toDuration.get
 

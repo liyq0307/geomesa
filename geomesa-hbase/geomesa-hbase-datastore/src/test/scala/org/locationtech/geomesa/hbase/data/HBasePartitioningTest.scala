@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,18 +8,16 @@
 
 package org.locationtech.geomesa.hbase.data
 
-import java.time.{ZoneOffset, ZonedDateTime}
-import java.util.Date
-
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data._
+import org.geotools.api.data._
+import org.geotools.api.feature.simple.SimpleFeature
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.SimpleFeatureStore
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.util.factory.Hints
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.hbase.data.HBaseDataStoreParams._
+import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.EmptyPlan
 import org.locationtech.geomesa.index.conf.QueryProperties
 import org.locationtech.geomesa.index.conf.partition.{TablePartition, TimePartition}
 import org.locationtech.geomesa.index.index.attribute.AttributeIndex
@@ -32,16 +30,17 @@ import org.locationtech.geomesa.utils.date.DateUtils.toInstant
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.Configs
 import org.locationtech.geomesa.utils.geotools.{FeatureUtils, SimpleFeatureTypes}
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.SimpleFeature
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
-import scala.collection.JavaConverters._
+import java.time.{ZoneOffset, ZonedDateTime}
+import java.util.Date
 
 @RunWith(classOf[JUnitRunner])
 class HBasePartitioningTest extends Specification with LazyLogging {
+
+  import scala.collection.JavaConverters._
 
   sequential
 
@@ -54,7 +53,7 @@ class HBasePartitioningTest extends Specification with LazyLogging {
         ConnectionParam.getName -> MiniCluster.connection,
         HBaseCatalogParam.getName -> getClass.getSimpleName
       )
-      val ds = DataStoreFinder.getDataStore(params).asInstanceOf[HBaseDataStore]
+      val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[HBaseDataStore]
       ds must not(beNull)
 
       try {
@@ -78,15 +77,15 @@ class HBasePartitioningTest extends Specification with LazyLogging {
           sf.setAttribute(1, s"name$i")
           sf.setAttribute(2, f"2018-01-${i + 1}%02dT00:00:01.000Z")
           sf.setAttribute(3, s"POINT(4$i 5$i)")
-          sf
+          sf: SimpleFeature
         }
 
-        val ids = fs.addFeatures(new ListFeatureCollection(sft, toAdd.take(8)))
+        val ids = fs.addFeatures(new ListFeatureCollection(sft, toAdd.take(8).asJava))
         ids.asScala.map(_.getID) must containTheSameElementsAs((0 until 8).map(_.toString))
 
         val indices = ds.manager.indices(sft)
         indices.map(_.name) must containTheSameElementsAs(Seq(Z3Index.name, Z2Index.name, IdIndex.name, AttributeIndex.name))
-        foreach(indices)(i => i.getTableNames(None) must haveLength(2))
+        foreach(indices)(i => i.getTableNames() must haveLength(2))
 
         // add the last two features to an alternate table and adopt them
         ds.createSchema(SimpleFeatureTypes.createType("testpartitionadoption", spec))
@@ -96,7 +95,7 @@ class HBasePartitioningTest extends Specification with LazyLogging {
         }
         // duplicates the logic in `org.locationtech.geomesa.tools.data.ManagePartitionsCommand.AdoptPartitionCommand`
         ds.manager.indices(ds.getSchema("testpartitionadoption")).foreach { index =>
-          val table = index.getTableNames(None).head
+          val table = index.getTableName()
           ds.metadata.insert(sft.getTypeName, index.tableNameKey(Some("foo")), table)
         }
         def zonedDateTime(sf: SimpleFeature) =
@@ -104,19 +103,32 @@ class HBasePartitioningTest extends Specification with LazyLogging {
         TablePartition(ds, sft).get.asInstanceOf[TimePartition].register("foo", zonedDateTime(toAdd(8)), zonedDateTime(toAdd(9)))
 
         // verify the table was adopted
-        foreach(indices)(i => i.getTableNames(None) must haveLength(3))
+        foreach(indices)(i => i.getTableNames() must haveLength(3))
 
         val transformsList = Seq(null, Array("geom"), Array("geom", "dtg"), Array("name"), Array("dtg", "geom", "attr", "name"))
 
-        foreach(transformsList) { transforms =>
-          testQuery(ds, typeName, "IN('0', '2')", transforms, Seq(toAdd(0), toAdd(2)))
-          testQuery(ds, typeName, "bbox(geom,38,48,52,62) and dtg DURING 2018-01-01T00:00:00.000Z/2018-01-08T12:00:00.000Z", transforms, toAdd.dropRight(2))
-          testQuery(ds, typeName, "bbox(geom,42,48,52,62) and dtg DURING 2017-12-15T00:00:00.000Z/2018-01-15T00:00:00.000Z", transforms, toAdd.drop(2))
-          testQuery(ds, typeName, "bbox(geom,42,48,52,62)", transforms, toAdd.drop(2))
-          testQuery(ds, typeName, "dtg DURING 2018-01-01T00:00:00.000Z/2018-01-08T12:00:00.000Z", transforms, toAdd.dropRight(2))
-          testQuery(ds, typeName, "attr = 'name5' and bbox(geom,38,48,52,62) and dtg DURING 2018-01-01T00:00:00.000Z/2018-01-08T12:00:00.000Z", transforms, Seq(toAdd(5)))
-          testQuery(ds, typeName, "name < 'name5'", transforms, toAdd.take(5))
-          testQuery(ds, typeName, "name = 'name5'", transforms, Seq(toAdd(5)))
+       WithClose(DataStoreFinder.getDataStore((params + (HBaseDataStoreParams.PartitionParallelScansParam.key -> "true")).asJava).asInstanceOf[HBaseDataStore]) { parallelDs =>
+          foreach(Seq(ds, parallelDs)) { ds =>
+            foreach(transformsList) { transforms =>
+              testQuery(ds, typeName, "IN('0', '2')", transforms, Seq(toAdd(0), toAdd(2)))
+              testQuery(ds, typeName, "bbox(geom,38,48,52,62) and dtg DURING 2018-01-01T00:00:00.000Z/2018-01-08T12:00:00.000Z", transforms, toAdd.dropRight(2))
+              testQuery(ds, typeName, "bbox(geom,42,48,52,62) and dtg DURING 2017-12-15T00:00:00.000Z/2018-01-15T00:00:00.000Z", transforms, toAdd.drop(2))
+              testQuery(ds, typeName, "bbox(geom,42,48,52,62)", transforms, toAdd.drop(2))
+              testQuery(ds, typeName, "dtg DURING 2018-01-01T00:00:00.000Z/2018-01-08T12:00:00.000Z", transforms, toAdd.dropRight(2))
+              testQuery(ds, typeName, "attr = 'name5' and bbox(geom,38,48,52,62) and dtg DURING 2018-01-01T00:00:00.000Z/2018-01-08T12:00:00.000Z", transforms, Seq(toAdd(5)))
+              testQuery(ds, typeName, "name < 'name5'", transforms, toAdd.take(5))
+              testQuery(ds, typeName, "name = 'name5'", transforms, Seq(toAdd(5)))
+            }
+          }
+        }
+
+        {
+          val filter = ECQL.toFilter("(bbox(geom,38,48,52,62) and " +
+            "dtg BETWEEN 2018-01-01T00:00:00+00:00 AND 2018-01-04T00:00:00+00:00) OR " +
+            "(bbox(geom,38,48,52,61) and dtg BETWEEN 2018-01-05T00:00:00+00:00 AND 2018-01-08T00:00:00+00:00)")
+          val plans = ds.getQueryPlan(new Query(sft.getTypeName, filter))
+          plans must not(beEmpty)
+          plans.head must not(beAnInstanceOf[EmptyPlan])
         }
 
         ds.getFeatureSource(typeName).removeFeatures(ECQL.toFilter("INCLUDE"))
@@ -140,13 +152,13 @@ class HBasePartitioningTest extends Specification with LazyLogging {
   }
 
   def testQuery(ds: HBaseDataStore, typeName: String, filter: String, transforms: Array[String], results: Seq[SimpleFeature]): MatchResult[Any] = {
-    val query = new Query(typeName, ECQL.toFilter(filter), transforms)
+    val query = new Query(typeName, ECQL.toFilter(filter), transforms: _*)
     val fr = ds.getFeatureReader(query, Transaction.AUTO_COMMIT)
     val features = SelfClosingIterator(fr).toList
     if (features.length != results.length) {
       ds.getQueryPlan(query, explainer = new ExplainPrintln)
     }
-    val attributes = Option(transforms).getOrElse(ds.getSchema(typeName).getAttributeDescriptors.map(_.getLocalName).toArray)
+    val attributes = Option(transforms).getOrElse(ds.getSchema(typeName).getAttributeDescriptors.asScala.map(_.getLocalName).toArray)
     features.map(_.getID) must containTheSameElementsAs(results.map(_.getID))
     forall(features) { feature =>
       feature.getAttributes must haveLength(attributes.length)

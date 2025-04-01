@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,18 +8,18 @@
 
 package org.locationtech.geomesa.convert.parquet
 
-import java.io._
-
 import org.apache.avro.generic.GenericRecord
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.ParquetReader
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicConfig, BasicField, BasicOptions}
 import org.locationtech.geomesa.convert2._
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, PathUtils}
-import org.opengis.feature.simple.SimpleFeatureType
+
+import java.io._
 
 class ParquetConverter(
     sft: SimpleFeatureType,

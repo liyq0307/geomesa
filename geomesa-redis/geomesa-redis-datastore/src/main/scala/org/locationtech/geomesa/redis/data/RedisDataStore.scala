@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,8 @@
 
 package org.locationtech.geomesa.redis.data
 
-import org.geotools.data.Query
+import org.geotools.api.data.Query
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
 import org.locationtech.geomesa.index.metadata.{GeoMesaMetadata, MetadataStringSerializer}
 import org.locationtech.geomesa.index.stats.GeoMesaStats
@@ -18,7 +19,6 @@ import org.locationtech.geomesa.redis.data.index.{RedisAgeOff, RedisIndexAdapter
 import org.locationtech.geomesa.redis.data.util.{RedisBackedMetadata, RedisGeoMesaStats, RedisLocking}
 import org.locationtech.geomesa.utils.index.VisibilityLevel
 import org.locationtech.geomesa.utils.io.CloseWithLogging
-import org.opengis.feature.simple.SimpleFeatureType
 import redis.clients.jedis.JedisPool
 
 /**
@@ -57,7 +57,8 @@ class RedisDataStore(val connection: JedisPool, override val config: RedisDataSt
     }
 
     // disable shards
-    sft.setZShards(0)
+    sft.setZ2Shards(0)
+    sft.setZ3Shards(0)
     sft.setIdShards(0)
     sft.setAttributeShards(0)
 

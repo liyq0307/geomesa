@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,21 +8,23 @@
 
 package org.locationtech.geomesa.kafka.index
 
-import java.io.Closeable
-import java.util.concurrent._
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.data.{FeatureListener, SimpleFeatureSource}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
+import org.geotools.api.filter.expression.Expression
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
 import org.locationtech.geomesa.filter.index.SpatialIndexSupport
 import org.locationtech.geomesa.kafka.data.KafkaDataStore
-import org.locationtech.geomesa.kafka.data.KafkaDataStore.{EventTimeConfig, IndexConfig}
+import org.locationtech.geomesa.kafka.data.KafkaDataStore._
 import org.locationtech.geomesa.memory.cqengine.GeoCQIndexSupport
 import org.locationtech.geomesa.memory.cqengine.utils.CQIndexType
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
-import org.opengis.filter.expression.Expression
+import org.locationtech.geomesa.metrics.core.GeoMesaMetrics
 
-trait KafkaFeatureCache extends Closeable {
+import java.io.Closeable
+import java.util.concurrent._
+
+trait KafkaFeatureCache extends KafkaListeners with Closeable {
   def put(feature: SimpleFeature): Unit
   def remove(id: String): Unit
   def clear(): Unit
@@ -30,6 +32,7 @@ trait KafkaFeatureCache extends Closeable {
   def size(filter: Filter): Int
   def query(id: String): Option[SimpleFeature]
   def query(filter: Filter): Iterator[SimpleFeature]
+  def views: Seq[KafkaFeatureCacheView]
 }
 
 object KafkaFeatureCache extends LazyLogging {
@@ -37,35 +40,57 @@ object KafkaFeatureCache extends LazyLogging {
   import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
   /**
-    * Create a standard feature cache
-    *
-    * @param sft simple feature type
-    * @param config cache config
-    * @return
-    */
-  def apply(sft: SimpleFeatureType, config: IndexConfig): KafkaFeatureCache =
-    if (config.expiry.isFinite() && config.expiry.length == 0) {
-      NoOpFeatureCache
+   * Create a standard feature cache
+   *
+   * @param sft simple feature type
+   * @param config cache config
+   * @param views layer view config
+   * @param metrics optional metrics hook
+   * @return
+   */
+  def apply(
+    sft: SimpleFeatureType,
+    config: IndexConfig,
+    views: Seq[LayerView] = Seq.empty,
+    metrics: Option[GeoMesaMetrics] = None): KafkaFeatureCache = {
+    if (config.expiry == ImmediatelyExpireConfig) {
+      new NoOpFeatureCache(views.map(v => KafkaFeatureCacheView.empty(v.viewSft)))
     } else {
-      new KafkaFeatureCacheImpl(sft, config)
+      metrics match {
+        case None => new KafkaFeatureCacheImpl(sft, config, views)
+        case Some(m) => new KafkaFeatureCacheWithMetrics(sft, config, views, m)
+      }
     }
+  }
 
   /**
     * No-op cache
     *
     * @return
     */
-  def empty(): KafkaFeatureCache = EmptyFeatureCache
+  def empty(views: Seq[LayerView] = Seq.empty): KafkaFeatureCache =
+    new EmptyFeatureCache(views.map(v => KafkaFeatureCacheView.empty(v.viewSft)))
 
   /**
     * Cache that won't spatially index the features
     *
     * @param sft simple feature type
-    * @param eventTime event time config
+    * @param ordering feature ordering
     * @return
     */
-  def nonIndexing(sft: SimpleFeatureType, eventTime: Option[EventTimeConfig] = None): KafkaFeatureCache = {
-    eventTime.collect { case e if e.ordering => FastFilterFactory.toExpression(sft, e.expression) } match {
+  def nonIndexing(sft: SimpleFeatureType, ordering: ExpiryTimeConfig = NeverExpireConfig): KafkaFeatureCache = {
+    val event: PartialFunction[ExpiryTimeConfig, String] = {
+      case EventTimeConfig(_, exp, true) => exp
+    }
+
+    val ord = ordering match {
+      case o if event.isDefinedAt(o) => Some(event.apply(o))
+      // all filters use the same event time ordering
+      case FilteredExpiryConfig(filters) if event.isDefinedAt(filters.head._2) => Some(event.apply(filters.head._2))
+      case _ => None
+    }
+
+    ord.map(FastFilterFactory.toExpression(sft, _)) match {
       case None => new NonIndexingFeatureCache()
       case Some(exp) => new NonIndexingEventTimeFeatureCache(exp)
     }
@@ -85,7 +110,7 @@ object KafkaFeatureCache extends LazyLogging {
     } else {
       config.cqAttributes
     }
-    GeoCQIndexSupport(sft, attributes, config.resolutionX, config.resolutionY)
+    GeoCQIndexSupport(sft, attributes, config.resolution.x, config.resolution.y)
   }
 
   /**
@@ -116,6 +141,8 @@ object KafkaFeatureCache extends LazyLogging {
         features.filter(filter.evaluate)
       }
     }
+
+    override def views: Seq[KafkaFeatureCacheView] = Seq.empty
   }
 
   /**
@@ -161,9 +188,11 @@ object KafkaFeatureCache extends LazyLogging {
         features.filter(filter.evaluate)
       }
     }
+
+    override def views: Seq[KafkaFeatureCacheView] = Seq.empty
   }
 
-  object EmptyFeatureCache extends KafkaFeatureCache {
+  class EmptyFeatureCache(val views: Seq[KafkaFeatureCacheView]) extends KafkaFeatureCache {
     override def put(feature: SimpleFeature): Unit = throw new NotImplementedError("Empty feature cache")
     override def remove(id: String): Unit = throw new NotImplementedError("Empty feature cache")
     override def clear(): Unit = throw new NotImplementedError("Empty feature cache")
@@ -172,9 +201,11 @@ object KafkaFeatureCache extends LazyLogging {
     override def query(id: String): Option[SimpleFeature] = None
     override def query(filter: Filter): Iterator[SimpleFeature] = Iterator.empty
     override def close(): Unit = {}
+    override def addListener(source: SimpleFeatureSource, listener: FeatureListener): Unit = {}
+    override def removeListener(source: SimpleFeatureSource, listener: FeatureListener): Unit = {}
   }
 
-  object NoOpFeatureCache extends KafkaFeatureCache {
+  class NoOpFeatureCache(val views: Seq[KafkaFeatureCacheView]) extends KafkaFeatureCache {
     override def put(feature: SimpleFeature): Unit = {}
     override def remove(id: String): Unit = {}
     override def clear(): Unit = {}

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,7 +8,7 @@
 
 package org.locationtech.geomesa.accumulo.index
 
-import org.geotools.data._
+import org.geotools.api.data._
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -21,20 +21,20 @@ import org.specs2.runner.JUnitRunner
 @RunWith(classOf[JUnitRunner])
 class CoveringAttributeIndexTest extends Specification with TestWithFeatureType {
 
-  sequential
-
   override val spec = "name:String:index=full,age:Integer:index=join,weight:Double:index=join," +
       "height:Double,dtg:Date,*geom:Point:srid=4326"
 
   val geom = WKTUtils.read("POINT(45.0 49.0)")
 
-  addFeatures({
-    (0 until 10).map { i =>
-      val dtg = s"2014-01-1${i}T12:00:00.000Z"
-      val attrs = Array(s"${i}name$i", s"$i", s"${i * 2.0}", s"${i * 3.0}", dtg, geom)
-      ScalaSimpleFeatureFactory.buildFeature(sft, attrs, i.toString)
-    }
-  })
+  step {
+    addFeatures({
+      (0 until 10).map { i =>
+        val dtg = s"2014-01-1${i}T12:00:00.000Z"
+        val attrs = Array(s"${i}name$i", s"$i", s"${i * 2.0}", s"${i * 3.0}", dtg, geom)
+        ScalaSimpleFeatureFactory.buildFeature(sft, attrs, i.toString)
+      }
+    })
+  }
 
   val joinIndicator = "Join Plan:"
 
@@ -55,7 +55,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithFeatureType 
     }
 
     "support transforms in fully covered indices" in {
-      val query = new Query(sftName, ECQL.toFilter("name = '3name3'"), Array("name", "age", "dtg", "geom"))
+      val query = new Query(sftName, ECQL.toFilter("name = '3name3'"), "name", "age", "dtg", "geom")
       explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
@@ -84,7 +84,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithFeatureType 
 
     "support ecql filters and covering transforms in fully covered indices" in {
       val query = new Query(sftName, ECQL.toFilter("name >= '3name3' AND height = '9.0'"),
-        Array("name", "height", "dtg", "geom"))
+        "name", "height", "dtg", "geom")
       explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
@@ -99,7 +99,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithFeatureType 
 
     "support ecql filters and non-covering transforms in fully covered indices" in {
       val query = new Query(sftName, ECQL.toFilter("name >= '3name3' AND height = '9.0'"),
-        Array("name", "age", "dtg", "geom"))
+        "name", "age", "dtg", "geom")
       explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList

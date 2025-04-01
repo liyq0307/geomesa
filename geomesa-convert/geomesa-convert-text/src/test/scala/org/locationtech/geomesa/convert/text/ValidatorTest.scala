@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -7,10 +7,6 @@
  ***********************************************************************/
 
 package org.locationtech.geomesa.convert.text
-
-import java.io.{ByteArrayInputStream, IOException}
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 
 import com.typesafe.config.ConfigFactory
 import org.junit.runner.RunWith
@@ -20,6 +16,10 @@ import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.io.WithClose
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+
+import java.io.{ByteArrayInputStream, IOException}
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 @RunWith(classOf[JUnitRunner])
 class ValidatorTest extends Specification {
@@ -71,7 +71,7 @@ class ValidatorTest extends Specification {
       val conf = baseConf
       WithClose(SimpleFeatureConverter(sft, conf)) { converter =>
         converter must not(beNull)
-  
+
         WithClose(converter.process(is("20160101,Point(2 2)")))(_.toList) must haveLength(1)
         WithClose(converter.process(is(
           """20160101,Point(2 2)

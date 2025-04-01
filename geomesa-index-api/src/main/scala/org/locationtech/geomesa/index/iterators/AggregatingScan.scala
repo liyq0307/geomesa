@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,6 +9,8 @@
 package org.locationtech.geomesa.index.iterators
 
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.geotools.data.DataUtilities
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
@@ -16,9 +18,8 @@ import org.locationtech.geomesa.features.TransformSimpleFeature
 import org.locationtech.geomesa.features.kryo.KryoBufferSimpleFeature
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex
 import org.locationtech.geomesa.index.iterators.AggregatingScan.{AggregateCallback, CqlSampleValidator, CqlValidator, RowValidator, RowValue, SampleValidator, ValidateAll}
+import org.locationtech.geomesa.utils.conf.GeoMesaProperties
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -223,6 +224,7 @@ object AggregatingScan {
     val TransformSchemaOpt = "tsft"
     val TransformDefsOpt   = "tdefs"
     val BatchSizeOpt       = "batch"
+    val VersionOpt         = "v"
   }
 
   def configure(
@@ -243,7 +245,8 @@ object AggregatingScan {
       Configuration.CqlOpt             -> filter.map(ECQL.toCQL),
       Configuration.TransformDefsOpt   -> transform.map(_._1),
       Configuration.TransformSchemaOpt -> transform.map(t => SimpleFeatureTypes.encodeType(t._2)),
-      Configuration.BatchSizeOpt       -> batchSize.toString
+      Configuration.BatchSizeOpt       -> batchSize.toString,
+      Configuration.VersionOpt         -> GeoMesaProperties.ProjectVersion
     )
   }
 

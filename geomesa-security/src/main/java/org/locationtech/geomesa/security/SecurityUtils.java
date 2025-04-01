@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,10 +8,10 @@
 
 package org.locationtech.geomesa.security;
 
-import org.opengis.feature.simple.SimpleFeature;
+import org.geotools.api.feature.simple.SimpleFeature;
 
 /**
- * Utilities for accessing and modifying visibility on <tt>SimpleFeature</tt>s.
+ * Utilities for accessing and modifying visibility on `SimpleFeature`s.
  */
 public class SecurityUtils {
 
@@ -20,7 +20,7 @@ public class SecurityUtils {
     /**
      * Sets the visibility to the given {@code visibility} expression.
      *
-     * @param feature the <tt>SimpleFeature</tt> to add or update visibility
+     * @param feature the `SimpleFeature` to add or update visibility
      * @param visibility the visibility expression
      *
      * @return {@code feature}
@@ -37,8 +37,8 @@ public class SecurityUtils {
     /**
      * Sets the visibility to an expression created by joining the given {@code visibilities} with "&amp;".
      *
-     * @param feature the <tt>SimpleFeature</tt> to add or update visibility
-     * @param visibilities a set of visbilities that will be and-ed together
+     * @param feature the `SimpleFeature` to add or update visibility
+     * @param visibilities a set of visibilities that will be and-ed together
      *
      * @return {@code feature}
      */
@@ -47,8 +47,8 @@ public class SecurityUtils {
     }
 
     /**
-     * @param feature the <tt>SimpleFeature</tt> to get the visibility from
-     * @return the visbility from {@code feature} or null if none
+     * @param feature the `SimpleFeature` to get the visibility from
+     * @return the visibility from {@code feature} or null if none
      */
     public static String getVisibility(SimpleFeature feature) {
         return (String) feature.getUserData().get(FEATURE_VISIBILITY);
@@ -58,8 +58,8 @@ public class SecurityUtils {
     /**
      * Copy the visibility from {@code source} to {@code dest}.
      *
-     * @param source the <tt>SimpleFeature</tt> to get the visiblity from
-     * @param dest the <tt>SimpleFeature</tt> to set the visibility on
+     * @param source the `SimpleFeature` to get the visibility from
+     * @param dest the `SimpleFeature` to set the visibility on
      * @throws NullPointerException if either argument is null
      */
     public static void copyVisibility(SimpleFeature source, SimpleFeature dest) {

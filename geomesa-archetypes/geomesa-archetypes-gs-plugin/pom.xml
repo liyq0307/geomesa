@@ -1,59 +1,117 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <parent>
-        <artifactId>geomesa-archetypes_2.11</artifactId>
-        <groupId>org.locationtech.geomesa</groupId>
-        <version>3.0.0-SNAPSHOT</version>
-    </parent>
-    <modelVersion>4.0.0</modelVersion>
 
-    <artifactId>geomesa-archetypes-gs-plugin_2.11</artifactId>
-    <name>GeoMesa Geoserver Plugin Archetype</name>
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <artifactId>geomesa-archetypes_2.12</artifactId>
+        <groupId>org.locationtech.geomesa</groupId>
+        <version>5.3.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>geomesa-archetypes-gs-plugin_2.12</artifactId>
+    <name>GeoMesa GeoServer Plugin Archetype</name>
     <packaging>pom</packaging>
+
+    <properties>
+        <gs.antlr.version>4.7.1</gs.antlr.version>
+        <gs.checker.qual.version>3.42.0</gs.checker.qual.version>
+        <gs.commons.codec.version>1.17.1</gs.commons.codec.version>
+        <gs.commons.io.version>2.16.1</gs.commons.io.version>
+        <gs.commons.lang.version>2.5</gs.commons.lang.version>
+        <gs.commons.lang3.version>3.15.0</gs.commons.lang3.version>
+        <gs.commons.logging.version>1.2</gs.commons.logging.version>
+        <gs.commons.pool.version>1.5.4</gs.commons.pool.version>
+        <gs.commons.text.version>1.12.0</gs.commons.text.version>
+        <gs.error.prone.version>2.26.1</gs.error.prone.version>
+        <gs.jackson.version>2.17.2</gs.jackson.version>
+        <gs.jackson.databind.version>2.17.2</gs.jackson.databind.version>
+    </properties>
 
     <dependencyManagement>
         <dependencies>
-            <!-- Dependencies already in geoserver -->
+            <!-- dependencies already in geoserver -->
             <dependency>
                 <groupId>commons-codec</groupId>
                 <artifactId>commons-codec</artifactId>
-                <version>1.9</version>
-                <scope>provided</scope>
-            </dependency>
-            <dependency>
-                <groupId>commons-httpclient</groupId>
-                <artifactId>commons-httpclient</artifactId>
-                <version>3.1</version>
+                <version>${gs.commons.codec.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
                 <groupId>commons-io</groupId>
                 <artifactId>commons-io</artifactId>
-                <version>2.6</version>
+                <version>${gs.commons.io.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
                 <groupId>commons-lang</groupId>
                 <artifactId>commons-lang</artifactId>
-                <version>2.4</version>
+                <version>${gs.commons.lang.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
-                <groupId>commons-lang</groupId>
+                <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
-                <version>3.7</version>
+                <version>${gs.commons.lang3.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
                 <groupId>commons-logging</groupId>
                 <artifactId>commons-logging</artifactId>
-                <version>1.1.1</version>
+                <version>${gs.commons.logging.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
                 <groupId>commons-pool</groupId>
                 <artifactId>commons-pool</artifactId>
-                <version>1.5.4</version>
+                <version>${gs.commons.pool.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-text</artifactId>
+                <version>${gs.commons.text.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${gs.jackson.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${gs.jackson.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${gs.jackson.databind.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.dataformat</groupId>
+                <artifactId>jackson-dataformat-xml</artifactId>
+                <version>${gs.jackson.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jsr310</artifactId>
+                <version>${gs.jackson.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.errorprone</groupId>
+                <artifactId>error_prone_annotations</artifactId>
+                <version>${gs.error.prone.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.checkerframework</groupId>
+                <artifactId>checker-qual</artifactId>
+                <version>${gs.checker.qual.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
@@ -88,7 +146,7 @@
             </dependency>
             <dependency>
                 <groupId>org.geotools</groupId>
-                <artifactId>gt-opengis</artifactId>
+                <artifactId>gt-api</artifactId>
                 <version>${gt.version}</version>
                 <scope>provided</scope>
             </dependency>
@@ -141,9 +199,15 @@
                 <scope>provided</scope>
             </dependency>
             <dependency>
+                <groupId>org.geotools.jdbc</groupId>
+                <artifactId>gt-jdbc-postgis</artifactId>
+                <version>${gt.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
                 <groupId>com.google.guava</groupId>
                 <artifactId>guava</artifactId>
-                <version>25.1-jre</version>
+                <version>${geotools.guava.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
@@ -159,9 +223,21 @@
                 <scope>provided</scope>
             </dependency>
             <dependency>
-                <groupId>org.springframework</groupId>
-                <artifactId>spring-web</artifactId>
-                <version>4.3.18.RELEASE</version>
+                <groupId>org.ejml</groupId>
+                <artifactId>ejml-core</artifactId>
+                <version>${ejml.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.ejml</groupId>
+                <artifactId>ejml-ddense</artifactId>
+                <version>${ejml.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-runtime</artifactId>
+                <version>${gs.antlr.version}</version>
                 <scope>provided</scope>
             </dependency>
             <dependency>
@@ -173,6 +249,23 @@
         </dependencies>
     </dependencyManagement>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.locationtech.geomesa</groupId>
+            <artifactId>geomesa-process-wps_${scala.binary.version}</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.geotools</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.locationtech.jts</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+    </dependencies>
+
     <build>
         <pluginManagement>
             <plugins>
@@ -183,6 +276,7 @@
                         <descriptors>
                             <descriptor>${project.basedir}/../../geomesa-archetypes/geomesa-archetypes-gs-plugin/assembly.xml</descriptor>
                         </descriptors>
+                        <attach>false</attach>
                     </configuration>
                     <executions>
                         <execution>
@@ -193,13 +287,6 @@
                             </goals>
                         </execution>
                     </executions>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-deploy-plugin</artifactId>
-                    <configuration>
-                        <skip>${skip.installers.deploy}</skip>
-                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

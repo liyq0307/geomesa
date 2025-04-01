@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,18 +10,18 @@ package org.locationtech.geomesa.tools.status
 
 import com.beust.jcommander.{Parameter, ParameterException, Parameters}
 import com.typesafe.config.{Config, ConfigRenderOptions}
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.convert.ConverterConfigLoader
 import org.locationtech.geomesa.tools.Command
 import org.locationtech.geomesa.utils.geotools.{SimpleFeatureTypeLoader, SimpleFeatureTypes}
-import org.opengis.feature.simple.SimpleFeatureType
 
 class EnvironmentCommand extends Command {
 
   override val name = "env"
   override val params = new EnvironmentParameters()
-  // TODO accumulo environment?
+
   override def execute(): Unit = {
-    import scala.collection.JavaConversions._
+    import scala.collection.JavaConverters._
 
     if (params.sfts == null && params.converters == null && !params.listSfts &&
       !params.listConverters && !params.describeSfts && !params.describeConverters) {
@@ -44,10 +44,10 @@ class EnvironmentCommand extends Command {
         listConverters()
       }
       if (params.sfts != null) {
-        listSfts(params.sfts.toList)
+        listSfts(params.sfts.asScala.toList)
       }
       if (params.converters != null) {
-        listConverters(params.converters.toList)
+        listConverters(params.converters.asScala.toList)
       }
     }
   }
@@ -67,7 +67,7 @@ class EnvironmentCommand extends Command {
           case "spec" =>
             (sft: SimpleFeatureType) => s"${SimpleFeatureTypes.encodeType(sft, !params.excludeUserData)}"
         }
-        filtered.sortBy(_.getTypeName).map(s => s"${s.getTypeName} = ${formatFn(s)}").foreach(Command.output.info)
+        filtered.sortBy(_.getTypeName).map(s => s"${s.getTypeName} = ${formatFn(s)}").foreach(m => Command.output.info(m))
       } else {
         throw new ParameterException(s"Unknown format '${params.format}'. Valid values are 'typesafe' or 'spec'")
       }
@@ -84,19 +84,19 @@ class EnvironmentCommand extends Command {
       val options = ConfigRenderOptions.defaults().setJson(false).setOriginComments(false)
       def render(c: Config) = c.root().render(options)
       val strings = filtered.map { case (cname, conf)=> s"converter-name=$cname\n${render(conf)}\n" }
-      strings.toArray.sorted.foreach(Command.output.info)
+      strings.toArray.sorted.foreach(m => Command.output.info(m))
     }
   }
 
   def listSftsNames(): Unit = {
     Command.output.info("Simple Feature Types:")
     val all = SimpleFeatureTypeLoader.sfts
-    all.sortBy(_.getTypeName).map(s => s"${s.getTypeName}").foreach(Command.output.info)
+    all.sortBy(_.getTypeName).map(s => s"${s.getTypeName}").foreach(m => Command.output.info(m))
   }
   def listConverterNames(): Unit = {
     Command.output.info("Simple Feature Type Converters:")
     val all = ConverterConfigLoader.confs
-    all.map { case (cname, conf) => s"$cname"}.toArray.sorted.foreach(Command.output.info)
+    all.map { case (cname, conf) => s"$cname"}.toArray.sorted.foreach(m => Command.output.info(m))
   }
 }
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,14 @@
 
 package org.locationtech.geomesa.arrow.data
 
-import java.awt.RenderingHints.Key
-import java.io.Serializable
-import java.net.URL
-
-import org.geotools.data.DataAccessFactory.Param
-import org.geotools.data.{DataStore, FileDataStore, FileDataStoreFactorySpi}
+import org.geotools.api.data.DataAccessFactory.Param
+import org.geotools.api.data.{DataStore, FileDataStore, FileDataStoreFactorySpi}
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStoreFactory.NamespaceParams
 import org.locationtech.geomesa.utils.geotools.GeoMesaParam
+import org.locationtech.geomesa.utils.geotools.GeoMesaParam.ReadWriteFlag
 
+import java.awt.RenderingHints.Key
+import java.net.URL
 import scala.util.Try
 
 class ArrowDataStoreFactory extends FileDataStoreFactorySpi {
@@ -38,7 +37,7 @@ class ArrowDataStoreFactory extends FileDataStoreFactorySpi {
 
   // DataStoreFactory methods
 
-  override def createDataStore(params: java.util.Map[String, Serializable]): DataStore = {
+  override def createDataStore(params: java.util.Map[String, _]): DataStore = {
     val caching = CachingParam.lookup(params) // default false
     val ds = UrlParam.lookupOpt(params).map(new ArrowDataStore(_, caching)).getOrElse {
       throw new IllegalArgumentException(s"Could not create data store using $params")
@@ -47,9 +46,9 @@ class ArrowDataStoreFactory extends FileDataStoreFactorySpi {
     ds
   }
 
-  override def createNewDataStore(params: java.util.Map[String, Serializable]): DataStore = createDataStore(params)
+  override def createNewDataStore(params: java.util.Map[String, _]): DataStore = createDataStore(params)
 
-  override def canProcess(params: java.util.Map[String, Serializable]): Boolean =
+  override def canProcess(params: java.util.Map[String, _]): Boolean =
     Try(UrlParam.lookupOpt(params).exists(canProcess)).getOrElse(false)
 
   override def getParametersInfo: Array[Param] = Array(UrlParam, CachingParam, NamespaceParam)
@@ -65,8 +64,23 @@ class ArrowDataStoreFactory extends FileDataStoreFactorySpi {
 
 object ArrowDataStoreFactory extends NamespaceParams {
 
-  val UrlParam     = new GeoMesaParam[URL]("arrow.url", "URL to an arrow file", optional = false, extension = "arrow", deprecatedKeys = Seq("url"))
-  val CachingParam = new GeoMesaParam[java.lang.Boolean]("arrow.caching", "Enable caching of the arrow file. This will improve query speeds, but may require substantial memory. Note: for performance reasons, writing is disabled if caching is on", default = false, deprecatedKeys = Seq("caching"))
+  val UrlParam =
+    new GeoMesaParam[URL](
+      "arrow.url",
+      "URL to an arrow file",
+      optional = false,
+      extension = "arrow",
+      deprecatedKeys = Seq("url")
+    )
+
+  val CachingParam =
+    new GeoMesaParam[java.lang.Boolean](
+      "arrow.caching",
+      "Enable caching of the arrow file. This will improve query speeds, but may require substantial memory. Note: for performance reasons, writing is disabled if caching is on",
+      default = false,
+      deprecatedKeys = Seq("caching"),
+      readWrite = ReadWriteFlag.ReadOnly
+    )
 
   private val DisplayName = "Apache Arrow (GeoMesa)"
 

@@ -19,13 +19,17 @@ Example: ``try("abcd"::int, 0) = 0``
 withDefault
 ^^^^^^^^^^^
 
-Description: Replace a value with a default, if the value is null
+Description: Replace a value with the first non-null alternative, if the value is null
 
-Usage: ``withDefault($1, $2)``
+Usage: ``withDefault($1, $2...)``
 
 Example: ``withDefault('foo', 'bar') = foo``
 
-Example: ``withDefault(null, 'bar') = bar``
+Example: ``withDefault('foo', 'bar', 'baz') = foo``
+
+Example: ``withDefault(null, 'bar', 'baz') = bar``
+
+Example: ``withDefault(null, null, 'baz') = baz``
 
 require
 ^^^^^^^
@@ -369,15 +373,25 @@ Usage: ``dateToString($pattern, $date)``
 
 Example: ``dateToString('yyyy-MM-dd\\'T\\'HH:mm:ss.SSSSSS', now())``
 
+dateToMillis
+^^^^^^^^^^^^
+
+Description: Converts a date to milliseconds since the Java epoch (January 1, 1970).
+
+Usage: ``dateToMillis($date)``
+
+Example: ``dateToMillis(now())``
+
 Geometry Functions
 ~~~~~~~~~~~~~~~~~~
 
 point
 ^^^^^
 
-Description: Parse a Point geometry from lon/lat, WKT or WKB.
+Description: Parse a Point geometry from lon/lat/z/m, WKT or WKB. To create a point with measure but no z,
+use ``pointM``.
 
-Usage: ``point($lon, $lat)`` or ``point($wkt)``
+Usage: ``point($lon, $lat)``, ``point($lon, $lat, $z)``, ``point($lon, $lat, $z, $m)`` or ``point($wkt)``
 
 Note: Ordering is important here...GeoMesa defaults to longitude first
 
@@ -420,23 +434,36 @@ Example: Parsing WKT as a point
     ID,wkt,date
     1,POINT(2 3),2015-01-02
 
+pointM
+^^^^^^
+
+Description: Parse a Point geometry from lon/lat and measure
+
+Usage: ``pointM($lon, $lat, $measure)``
+
+Example: ``pointM(10::double,20::double,30::double)``
+
 multipoint
 ^^^^^^^^^^
 
-Description: Parse a multi-point from a WKT string or WKB byte array.
+Description: Parse a multi-point from a WKT string, WKB byte array, or two lists of coordinates.
 
 Usage: ``multipoint($0)``
 
 Example: ``multipoint('MULTIPOINT ((10 40), (40 30), (20 20), (30 10))')``
 
+Example: ``multipoint(list(10,40,20,30),list(40,30,20,10))``
+
 linestring
 ^^^^^^^^^^
 
-Description: Parse a linestring from a WKT string or WKB byte array.
+Description: Parse a linestring from a WKT string, WKB byte array, or two lists of coordinates.
 
 Usage: ``linestring($0)``
 
 Example: ``linestring('LINESTRING(102 0, 103 1, 104 0, 105 1)')``
+
+Example: ``linestring(list(102,103,104,105),list(0,1,0,1))``
 
 multilinestring
 ^^^^^^^^^^^^^^^
@@ -518,7 +545,7 @@ ID Functions
 stringToBytes
 ^^^^^^^^^^^^^
 
-Description: Converts a string to a UTF-8 byte array (to pass to ``md5()`` or ``base64()``).
+Description: Converts a string to a UTF-8 byte array (to pass to other functions like ``md5()``).
 
 Usage: ``stringToBytes($0)``
 
@@ -542,15 +569,24 @@ Usage: ``murmur3_32($0)``
 
 Example: ``murmur3_32('row,of,data')``
 
-murmur3_128
+murmur3_64
+^^^^^^^^^^
+
+Description: Creates a 64-bit murmur3 hash from a string. Note that previously this function was incorrectly
+named ``murmur3_128``, and can still be invoked by that name.
+
+Usage: ``murmur3_64($0)``
+
+Example: ``murmur3_64('row,of,data')``
+
+murmurHash3
 ^^^^^^^^^^^
 
-Description: Creates a 128-bit murmur3 hash from a string. Note that previously this function was incorrectly
-named ``murmur3_64``, and can still be invoked by that name.
+Description: Creates a 128-bit murmur3 hash from a string or byte array, returned as a hex string.
 
-Usage: ``murmur3_128($0)``
+Usage: ``murmurHash3($0)``
 
-Example: ``murmur3_128('row,of,data')``
+Example: ``murmurHash3('row,of,data')``
 
 uuid
 ^^^^
@@ -580,15 +616,6 @@ Usage: ``uuidZ3Centroid($geom, $date, $interval)``
 Example: ``uuidZ3Centroid(linestring('LINESTRING(102 0, 103 1, 104 0, 105 1)', dateTime('2015-01-01T00:00:00.000Z'), 'week')``
 
 See :ref:`customizing_z_index` for details on Z3 intervals.
-
-base64
-^^^^^^
-
-Description: Encodes a byte array as a base-64 string.
-
-Usage; ``base64($0)``
-
-Example: ``base64(stringToBytes('foo'))``
 
 Type Conversions
 ~~~~~~~~~~~~~~~~
@@ -640,71 +667,77 @@ Description: Converts a string into a Regex object.
 
 Example: ``'f.*'::r = f.*: scala.util.matching.Regex``
 
-stringToInt or stringToInteger
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+toInt or toInteger
+^^^^^^^^^^^^^^^^^^
 
-Description: Converts a string into a integer, with a default value if
-conversion fails.
+Description: Converts a value into a integer. If the conversion fails, returns null unless a default value is defined.
 
-Usage: ``stringToInt($1, $2)``
+Usage: ``toInt($1, $2)``
 
-Example: ``stringToInt('1', 0) = 1``
+Example: ``toInt('1', 0) = 1``
 
-Example: ``stringToInt('', 0) = 0``
+Example: ``toInt('', 0) = 0``
 
-stringToLong
-^^^^^^^^^^^^
+Example: ``toInt('') = null``
 
-Description: Converts a string into a long, with a default value if
-conversion fails.
+toLong
+^^^^^^
 
-Usage: ``stringToLong($1, $2)``
+Description: Converts a value into a long. If the conversion fails, returns null unless a default value is defined.
 
-Example: ``stringToLong('1', 0L) = 1L``
+Usage: ``toLong($1, $2)``
 
-Example: ``stringToLong('', 0L) = 0L``
+Example: ``toLong('1', 0L) = 1L``
 
-stringToFloat
-^^^^^^^^^^^^^
+Example: ``toLong('', 0L) = 0L``
 
-Description: Converts a string into a float, with a default value if
-conversion fails.
+Example: ``toLong('') = null``
 
-Usage: ``stringToFloat($1, $2)``
+toFloat
+^^^^^^^
 
-Example: ``stringToFloat('1.0', 0.0f) = 1.0f``
+Description: Converts a value into a float. If the conversion fails, returns null unless a default value is defined.
 
-Example: ``stringToFloat('not a float', 0.0f) = 0.0f``
+Usage: ``toFloat($1, $2)``
 
-stringToDouble
-^^^^^^^^^^^^^^
+Example: ``toFloat('1.0', 0.0f) = 1.0f``
 
-Description: Converts a string into a double, with a default value if
-conversion fails.
+Example: ``toFloat('not a float', 0.0f) = 0.0f``
 
-Usage: ``stringToDouble($1, $2)``
+Example: ``toFloat('') = null``
 
-Example: ``stringToDouble('1.0', 0.0) = 1.0d``
+toDouble
+^^^^^^^^
 
-Example: ``stringToDouble(null, 0.0) = 0.0d``
+Description: Converts a value into a double. If the conversion fails, returns null unless a default value is defined.
 
-stringToBoolean
-^^^^^^^^^^^^^^^
+Usage: ``toDouble($1, $2)``
 
-Description: Converts a string into a boolean, with a default value if
-conversion fails.
+Example: ``toDouble('1.0', 0.0) = 1.0d``
 
-Usage: ``stringToBoolean($1, $2)``
+Example: ``toDouble(null, 0.0) = 0.0d``
 
-Example: ``stringToBoolean('true', false) = true``
+Example: ``toDouble('') = null``
 
-Example: ``stringToBoolean('55', false) = false``
+toBoolean
+^^^^^^^^^
+
+Description: Converts a value into a boolean. If the conversion fails, returns null unless a default value is
+defined. If the input is a number, it will evaluate to false if it is equal to zero, and true otherwise.
+
+Usage: ``toBoolean($1, $2)``
+
+Example: ``toBoolean('true', false) = true``
+
+Example: ``toBoolean('foo', false) = false``
+
+Example: ``toBoolean('') = null``
 
 intToBoolean
 ^^^^^^^^^^^^
 
-Description: Converts an int to boolean. Follows the normal rules of conversion, where 0 is false and all other ints
-are true.
+Description: Converts an integer to boolean. Follows the normal rules of conversion, where 0 is false and all
+other values are true.
 
 Usage: ``intToBoolean($1)``
 
@@ -717,8 +750,12 @@ Math Functions
 
 Usage:
 
-All math functions accept: Integers, Doubles, Floats, Longs and parsable Strings.
-All math functions return: Doubles. If another data type is needed, convert the value afterwards. e.g. ``add($1,$2)::long``
+The arguments to a math functions must be numbers - Integers, Doubles, Floats, Longs or numeric Strings.
+
+All math functions return Doubles. If another data type is needed, convert the value afterwards,
+e.g. ``add($1,$2)::long``
+
+Math functions accept multiple arguments, or will accept a single java.util.List containing the arguments.
 
 Example:
 
@@ -735,14 +772,18 @@ Example: ``add($1,$2)``
 
 Example: ``add($1,$2,"10")``
 
+Example: ``add(list(1,2,3))``
+
 subtract
 ^^^^^^^^
 
-Description: Subtracts two or more values.
+Description: Subtracts two or more values sequentially.
 
 Example: ``subtract($1,$2)``
 
-Example: ``subtract($1,$2,1.0f)``
+Example: ``subtract($1,$2,1.0f)`` is equivalent to ``($1 - $2) - 1.0f``
+
+Example: ``subtract(list(3,1))``
 
 multiply
 ^^^^^^^^
@@ -753,6 +794,8 @@ Example: ``multiply($1,$2)``
 
 Example: ``multiply($1,$2,0.01d)``
 
+Example: ``multiply(list(3,2))``
+
 divide
 ^^^^^^
 
@@ -762,12 +805,16 @@ Example: ``divide($1,$2)``
 
 Example: ``divide($1,$2,"15")`` is equivalent to ``($1/$2)/"15"``
 
+Example: ``divide(list(3,2))``
+
 mean
 ^^^^
 
 Description: Takes the mean (average) of two or more numbers.
 
 Example: ``mean($1,$2,$3)``
+
+Example: ``mean(list(1,2,3))``
 
 min
 ^^^
@@ -776,12 +823,16 @@ Description: Finds the minimum of two or more numbers.
 
 Example: ``min($1,$2,$3)``
 
+Example: ``min(list(1,2,3))``
+
 max
 ^^^
 
 Description: Finds the maximum of two or more numbers.
 
 Example: ``max($1,$2,$3)``
+
+Example: ``max(list(1,2,3))``
 
 List and Map Functions
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -792,6 +843,13 @@ list
 Description: Creates a list from the input arguments
 
 Example: ``list(1,2,3)``
+
+listItem
+^^^^^^^^
+
+Description: Selects an element out of a list
+
+Example: ``listItem(list('1','2','3'),0)``
 
 mapValue
 ^^^^^^^^
@@ -818,7 +876,7 @@ Here's some sample CSV data:
 
 ::
 
-    ID,Name,Age,LastSeen,Friends,Lat,Lon
+    ID,Name,Age,LastSeen,Friends,Lon,Lat
     23623,Harry,20,2015-05-06,"Will, Mark, Suzan",-100.236523,23
     26236,Hermione,25,2015-06-07,"Edward, Bill, Harry",40.232,-53.2356
     3233,Severus,30,2015-10-23,"Tom, Riddle, Voldemort",3,-62.23
@@ -869,6 +927,38 @@ delimiters for a map:
 ::
 
     { name = "numbers", transform = "parseMap('int -> string', $2, '->', ',')" }
+
+transformListItems
+^^^^^^^^^^^^^^^^^^
+
+Description: Applies a transform expression to every element of a list
+
+Example: ``transformListItems(list('1','2','3'),'stringToDouble($0)')``
+
+The expression to apply must be defined as a string. In the example shown, the list will be converted
+from ``List[String]`` to ``List[Double]``.
+
+Encoding Functions
+~~~~~~~~~~~~~~~~~~
+
+base64Encode
+^^^^^^^^^^^^
+
+Description: Encodes a byte array as a base-64 URL-safe string. This function can also be invoked as ``base64``,
+but that name has been deprecated and will be removed in future versions.
+
+Usage: ``base64Encode($0)``
+
+Example: ``base64Encode(stringToBytes('foo'))``
+
+base64Decode
+^^^^^^^^^^^^
+
+Description: Decodes a base-64 URL-safe encoded string into a byte array.
+
+Usage: ``base64Decode($0)``
+
+Example: ``base64Decode('Zm9v')``
 
 State Functions
 ~~~~~~~~~~~~~~~

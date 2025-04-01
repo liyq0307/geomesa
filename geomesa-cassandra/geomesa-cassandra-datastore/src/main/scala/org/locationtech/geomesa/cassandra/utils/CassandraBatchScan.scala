@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,13 @@
 
 package org.locationtech.geomesa.cassandra.utils
 
-import java.nio.ByteBuffer
-
 import com.datastax.driver.core._
 import org.locationtech.geomesa.cassandra.data.CassandraQueryPlan
 import org.locationtech.geomesa.index.utils.AbstractBatchScan
 import org.locationtech.geomesa.index.utils.ThreadManagement.{LowLevelScanner, ManagedScan, Timeout}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
-import org.opengis.filter.Filter
+
+import java.nio.ByteBuffer
 
 private class CassandraBatchScan(session: Session, ranges: Seq[Statement], threads: Int, buffer: Int)
     extends AbstractBatchScan[Statement, Row](ranges, threads, buffer, CassandraBatchScan.Sentinel) {
@@ -47,17 +46,8 @@ object CassandraBatchScan {
     val scanner = new CassandraBatchScan(session, ranges, threads, 100000)
     timeout match {
       case None => scanner.start()
-      case Some(t) => new ManagedScanIterator(t, new CassandraScanner(scanner), plan)
+      case Some(t) => new ManagedScan(new CassandraScanner(scanner), t, plan)
     }
-  }
-
-  private class ManagedScanIterator(
-      override val timeout: Timeout,
-      override protected val underlying: CassandraScanner,
-      plan: CassandraQueryPlan
-    ) extends ManagedScan[Row] {
-    override protected def typeName: String = plan.filter.index.sft.getTypeName
-    override protected def filter: Option[Filter] = plan.filter.filter
   }
 
   private class CassandraScanner(scanner: CassandraBatchScan) extends LowLevelScanner[Row] {

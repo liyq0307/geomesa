@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,48 @@
 
 package org.locationtech.geomesa
 
-import java.nio.charset.Charset
-
-import com.codahale.metrics.{Counter, Histogram}
+import com.codahale.metrics.Histogram
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.LazyLogging
-import org.locationtech.geomesa.convert.Modes.{ErrorMode, ParseMode}
 import org.locationtech.geomesa.convert.EvaluationContext
+import org.locationtech.geomesa.convert.EvaluationContext.EvaluationError
+import org.locationtech.geomesa.convert.Modes.{ErrorMode, ParseMode}
 import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 
+import java.io.IOException
+import java.nio.charset.Charset
 import scala.util.control.NonFatal
+import scala.util.{Failure, Try}
 
 package object convert2 {
+
+  /**
+   * Try a sequence of attempts. Return the first success. If there are no successes,
+   * Failures will be added as suppressed exceptions.
+   *
+   * @param attempts attempts
+   * @param failure umbrella exception in case of failure
+   * @tparam T attempt type
+   * @return
+   */
+  def multiTry[T](attempts: Iterator[Try[T]], failure: Throwable): Try[T] = {
+    var res: Try[T] = Failure(failure)
+    while (res.isFailure && attempts.hasNext) {
+      val attempt = attempts.next
+      if (attempt.isSuccess) {
+        res = attempt
+      } else {
+        val e = attempt.failed.get
+        // filter out NotImplementedErrors, so we don't clutter up the logs with failed conversion attempts from
+        // converter factories that haven't implemented schema inference
+        if (!e.isInstanceOf[NotImplementedError] && !Option(e.getCause).exists(_.isInstanceOf[NotImplementedError])) {
+          failure.addSuppressed(e)
+        }
+      }
+    }
+    res
+  }
 
   trait ConverterConfig {
     def `type`: String
@@ -30,9 +59,17 @@ package object convert2 {
   }
 
   trait Field {
+
     def name: String
     def transforms: Option[Expression]
-    def eval(args: Array[Any])(implicit ec: EvaluationContext): Any = transforms.map(_.eval(args)).getOrElse(args(0))
+
+    /**
+     * Provides a chance for the field to select and filter the raw input values,
+     * e.g. by applying an x-path expression or taking a sub-section of the input
+     *
+     * @return an optional function to use instead of the args
+     */
+    def fieldArg: Option[Array[AnyRef] => AnyRef]
   }
 
   trait ConverterOptions {
@@ -48,13 +85,13 @@ package object convert2 {
     *
     * @param underlying wrapped iterator
     * @param mode error mode
-    * @param counter counter for failures
+    * @param ec EvaluationContext for tracking errors
     * @param times histogram for tracking convert times
     */
   class ErrorHandlingIterator[T](
       underlying: CloseableIterator[T],
       mode: ErrorMode,
-      counter: Counter,
+      ec: EvaluationContext,
       times: Histogram
     ) extends CloseableIterator[T] with LazyLogging {
 
@@ -75,10 +112,11 @@ package object convert2 {
           }
         } catch {
           case NonFatal(e) =>
-            counter.inc()
+            ec.failure.inc()
             mode match {
-              case ErrorMode.SkipBadRecords => logger.warn("Failed parsing input: ", e)
-              case ErrorMode.RaiseErrors => throw e
+              case ErrorMode.LogErrors => logger.warn("Failed parsing input: ", e)
+              case ErrorMode.ReturnErrors => ec.errors.add(EvaluationError(null, ec.line, new IOException("Failed parsing input: ", e)))
+              case ErrorMode.RaiseErrors => throw new IOException("Failed parsing input: ", e)
             }
             error = true
             false // usually parsing can't continue if there is an exception in the underlying read

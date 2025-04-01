@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,14 @@
 
 package org.locationtech.geomesa.index.api
 
-import java.nio.charset.StandardCharsets
-import java.util.UUID
-
 import com.typesafe.scalalogging.LazyLogging
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.{ExcludeFilter, Filter}
 import org.geotools.util.factory.Hints
-import org.locationtech.geomesa.filter.filterToString
 import org.locationtech.geomesa.index.api.GeoMesaFeatureIndex.IdFromRow
 import org.locationtech.geomesa.index.api.WriteConverter.{TieredWriteConverter, WriteConverterImpl}
 import org.locationtech.geomesa.index.conf.QueryProperties
+import org.locationtech.geomesa.index.conf.QueryProperties.BlockFullTableScans
 import org.locationtech.geomesa.index.conf.partition.TablePartition
 import org.locationtech.geomesa.index.conf.splitter.TableSplitter
 import org.locationtech.geomesa.index.geotools.GeoMesaDataStore
@@ -25,14 +24,14 @@ import org.locationtech.geomesa.index.index.attribute.AttributeIndex
 import org.locationtech.geomesa.index.index.id.IdIndex
 import org.locationtech.geomesa.index.index.z2.{XZ2Index, Z2Index}
 import org.locationtech.geomesa.index.index.z3.{XZ3Index, Z3Index}
-import org.locationtech.geomesa.index.stats.GeoMesaStats
 import org.locationtech.geomesa.index.utils.{ExplainNull, Explainer}
 import org.locationtech.geomesa.utils.conf.IndexId
 import org.locationtech.geomesa.utils.index.ByteArrays
 import org.locationtech.geomesa.utils.index.IndexMode.IndexMode
 import org.locationtech.geomesa.utils.text.StringSerialization
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
+
+import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 /**
   * Represents a particular indexing strategy
@@ -156,7 +155,23 @@ abstract class GeoMesaFeatureIndex[T, U](val ds: GeoMesaDataStore[_],
   }
 
   /**
-    * Gets the table name for this index
+   * Gets the single table name for this index. If this is a partitioned index, then the partition argument
+   * must be defined. A runtime exception will be thrown if multiple or zero tables are found.
+   *
+   * @param partition get the name for a particular partition, if the index is partitioned
+   * @return
+   */
+  def getTableName(partition: Option[String] = None): String = {
+    val names = getTableNames(partition)
+    if (names.lengthCompare(1) == 0) { names.head } else {
+      val list = if (names.isEmpty) { "" } else { names.mkString(": ", ", ", "") }
+      throw new RuntimeException(
+        s"Expected 1 table but found ${names.length} for index $identifier${partition.fold("")(p => s" partition $p")}$list")
+    }
+  }
+
+  /**
+    * Gets table names for this index
     *
     * @param partition get the name for a particular partition, or all partitions
     * @return
@@ -178,7 +193,7 @@ abstract class GeoMesaFeatureIndex[T, U](val ds: GeoMesaDataStore[_],
     val partitioned = for { f <- filter; tp <- TablePartition(ds, sft); partitions <- tp.partitions(f) } yield {
       partitions.flatMap(p => getTableNames(Some(p)))
     }
-    partitioned.getOrElse(getTableNames(None))
+    partitioned.getOrElse(getTableNames())
   }
 
   /**
@@ -223,20 +238,17 @@ abstract class GeoMesaFeatureIndex[T, U](val ds: GeoMesaDataStore[_],
   /**
     * Gets options for a 'simple' filter, where each OR is on a single attribute, e.g.
     *   (bbox1 OR bbox2) AND dtg
-    *   bbox AND dtg AND (attr1 = foo OR attr = bar)
+    *   bbox AND dtg AND (attr = foo OR attr = bar)
     * not:
     *   bbox OR dtg
     *
-    * Because the inputs are simple, each one can be satisfied with a single query filter.
-    * The returned values will each satisfy the query.
+    * Because the input is simple, it can be satisfied with a single query filter.
     *
     * @param filter input filter
     * @param transform attribute transforms
     * @return a filter strategy which can satisfy the query, if available
     */
-  def getFilterStrategy(filter: Filter,
-                        transform: Option[SimpleFeatureType],
-                        stats: Option[GeoMesaStats]): Option[FilterStrategy]
+  def getFilterStrategy(filter: Filter, transform: Option[SimpleFeatureType]): Option[FilterStrategy]
 
   /**
     * Plans the query
@@ -258,82 +270,89 @@ abstract class GeoMesaFeatureIndex[T, U](val ds: GeoMesaDataStore[_],
 
     indexValues match {
       case None =>
-        // check that full table scans are allowed
-        if (hints.getMaxFeatures.forall(_ > QueryProperties.BlockMaxThreshold.toInt.get)) {
+        if (filter.filter.exists(_.isInstanceOf[ExcludeFilter])) {
+          QueryStrategy(filter, Seq.empty, Seq.empty, Seq.empty, ecql, hints, indexValues)
+        } else {
           // check that full table scans are allowed
-          QueryProperties.BlockFullTableScans.onFullTableScan(sft.getTypeName, filter.filter.getOrElse(Filter.INCLUDE))
-        }
-        filter.secondary.foreach { f =>
-          logger.warn(s"Running full table scan on $name index for schema ${sft.getTypeName} with filter ${filterToString(f)}")
-        }
-        val keyRanges = Seq(UnboundedRange(null))
-        val byteRanges = Seq(BoundedByteRange(sharing, ByteArrays.rowFollowingPrefix(sharing)))
+          if (hints.getMaxFeatures.forall(_ > QueryProperties.BlockMaxThreshold.toInt.get)) {
+            // check that full table scans are allowed
+            lazy val filterString =
+              org.locationtech.geomesa.filter.filterToString(filter.filter.getOrElse(Filter.INCLUDE))
+            val block =
+              QueryProperties.blockFullTableScansForFeatureType(sft.getTypeName)
+                  .orElse(BlockFullTableScans.toBoolean)
+                  .getOrElse(false)
+            if (block) {
+              throw new RuntimeException(
+                s"Full-table scans are disabled. Query being stopped for ${sft.getTypeName}: $filterString")
+            } else {
+              logger.warn(s"Running full table scan for schema '${sft.getTypeName}' with filter: $filterString")
+            }
+          }
+          val keyRanges = Seq(UnboundedRange(null))
+          val byteRanges = Seq(BoundedByteRange(sharing, ByteArrays.rowFollowingPrefix(sharing)))
 
-        QueryStrategy(filter, byteRanges, keyRanges, Seq.empty, ecql, hints, indexValues)
+          QueryStrategy(filter, byteRanges, keyRanges, Seq.empty, ecql, hints, indexValues)
+        }
 
       case Some(values) =>
         val keyRanges = keySpace.getRanges(values).toSeq
+        val bytes = keySpace.getRangeBytes(keyRanges.iterator, tieredKeySpace.isDefined).toSeq
         val tier = tieredKeySpace.orNull.asInstanceOf[IndexKeySpace[Any, Any]]
+        val secondary = filter.secondary.orNull
+        lazy val tiers = {
+          val multiplier = math.max(1, bytes.count(_.isInstanceOf[SingleRowByteRange]))
+          tier.getRangeBytes(tier.getRanges(tier.getIndexValues(secondary, explain), multiplier)).toSeq
+        }
 
         if (tier == null) {
-          val byteRanges = keySpace.getRangeBytes(keyRanges.iterator).toSeq
+          QueryStrategy(filter, bytes, keyRanges, Seq.empty, ecql, hints, indexValues)
+        } else if (secondary == null || tiers.exists(_.isInstanceOf[UnboundedByteRange])) {
+          val byteRanges = keySpace.getRangeBytes(keyRanges.iterator, tier = true).map {
+            case BoundedByteRange(lo, hi)      => BoundedByteRange(lo, ByteArrays.concat(hi, ByteRange.UnboundedUpperRange))
+            case SingleRowByteRange(row)       => BoundedByteRange(row, ByteArrays.concat(row, ByteRange.UnboundedUpperRange))
+            case UpperBoundedByteRange(lo, hi) => BoundedByteRange(lo, ByteArrays.concat(hi, ByteRange.UnboundedUpperRange))
+            case LowerBoundedByteRange(lo, hi) => BoundedByteRange(lo, hi)
+            case UnboundedByteRange(lo, hi)    => BoundedByteRange(lo, hi)
+            case r => throw new IllegalArgumentException(s"Unexpected range type $r")
+          }.toSeq
           QueryStrategy(filter, byteRanges, keyRanges, Seq.empty, ecql, hints, indexValues)
+        } else if (tiers.isEmpty) {
+          // disjoint secondary filter
+          QueryStrategy(filter, Seq.empty, Seq.empty, Seq.empty, ecql, hints, indexValues)
         } else {
-          val secondary = filter.secondary.orNull
-          if (secondary == null) {
-            val byteRanges = keySpace.getRangeBytes(keyRanges.iterator, tier = true).map {
-              case BoundedByteRange(lo, hi)      => BoundedByteRange(lo, ByteArrays.concat(hi, ByteRange.UnboundedUpperRange))
-              case SingleRowByteRange(row)       => BoundedByteRange(row, ByteArrays.concat(row, ByteRange.UnboundedUpperRange))
-              case UpperBoundedByteRange(lo, hi) => BoundedByteRange(lo, ByteArrays.concat(hi, ByteRange.UnboundedUpperRange))
-              case LowerBoundedByteRange(lo, hi) => BoundedByteRange(lo, hi)
-              case UnboundedByteRange(lo, hi)    => BoundedByteRange(lo, hi)
-              case r => throw new IllegalArgumentException(s"Unexpected range type $r")
-            }.toSeq
-            QueryStrategy(filter, byteRanges, keyRanges, Seq.empty, ecql, hints, indexValues)
-          } else {
-            val bytes = keySpace.getRangeBytes(keyRanges.iterator, tier = true).toSeq
+          lazy val minTier = ByteRange.min(tiers)
+          lazy val maxTier = ByteRange.max(tiers)
 
-            val tiers = {
-              val multiplier = math.max(1, bytes.count(_.isInstanceOf[SingleRowByteRange]))
-              tier.getRangeBytes(tier.getRanges(tier.getIndexValues(secondary, explain), multiplier)).toSeq
-            }
-            lazy val minTier = ByteRange.min(tiers)
-            lazy val maxTier = ByteRange.max(tiers)
+          val byteRanges = bytes.flatMap {
+            case SingleRowByteRange(row) =>
+              // single row - we can use all the tiered ranges appended to the end
+              tiers.map {
+                case BoundedByteRange(lo, hi) => BoundedByteRange(ByteArrays.concat(row, lo), ByteArrays.concat(row, hi))
+                case SingleRowByteRange(trow) => SingleRowByteRange(ByteArrays.concat(row, trow))
+              }
 
-            val byteRanges = bytes.flatMap {
-              case SingleRowByteRange(row) =>
-                // single row - we can use all the tiered ranges appended to the end
-                if (tiers.isEmpty) {
-                  Iterator.single(BoundedByteRange(row, ByteArrays.concat(row, ByteRange.UnboundedUpperRange)))
-                } else {
-                  tiers.map {
-                    case BoundedByteRange(lo, hi) => BoundedByteRange(ByteArrays.concat(row, lo), ByteArrays.concat(row, hi))
-                    case SingleRowByteRange(trow) => SingleRowByteRange(ByteArrays.concat(row, trow))
-                  }
-                }
+            case BoundedByteRange(lo, hi) =>
+              // bounded ranges - we can use the min/max tier on the endpoints
+              Iterator.single(BoundedByteRange(ByteArrays.concat(lo, minTier), ByteArrays.concat(hi, maxTier)))
 
-              case BoundedByteRange(lo, hi) =>
-                // bounded ranges - we can use the min/max tier on the endpoints
-                Iterator.single(BoundedByteRange(ByteArrays.concat(lo, minTier), ByteArrays.concat(hi, maxTier)))
+            case LowerBoundedByteRange(lo, hi) =>
+              // we can't use the upper tier
+              Iterator.single(BoundedByteRange(ByteArrays.concat(lo, minTier), hi))
 
-              case LowerBoundedByteRange(lo, hi) =>
-                // we can't use the upper tier
-                Iterator.single(BoundedByteRange(ByteArrays.concat(lo, minTier), hi))
+            case UpperBoundedByteRange(lo, hi) =>
+              // we can't use the lower tier
+              Iterator.single(BoundedByteRange(lo, ByteArrays.concat(hi, maxTier)))
 
-              case UpperBoundedByteRange(lo, hi) =>
-                // we can't use the lower tier
-                Iterator.single(BoundedByteRange(lo, ByteArrays.concat(hi, maxTier)))
+            case UnboundedByteRange(lo, hi) =>
+              // we can't use either side of the tiers
+              Iterator.single(BoundedByteRange(lo, hi))
 
-              case UnboundedByteRange(lo, hi) =>
-                // we can't use either side of the tiers
-                Iterator.single(BoundedByteRange(lo, hi))
-
-              case r =>
-                throw new IllegalArgumentException(s"Unexpected range type $r")
-            }
-
-            QueryStrategy(filter, byteRanges, keyRanges, tiers, ecql, hints, indexValues)
+            case r =>
+              throw new IllegalArgumentException(s"Unexpected range type $r")
           }
+
+          QueryStrategy(filter, byteRanges, keyRanges, tiers, ecql, hints, indexValues)
         }
     }
   }
@@ -347,8 +366,10 @@ abstract class GeoMesaFeatureIndex[T, U](val ds: GeoMesaDataStore[_],
     */
   protected def generateTableName(partition: Option[String] = None, limit: Option[Int] = None): String = {
     import StringSerialization.alphaNumericSafeString
+    import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
-    val prefix = (ds.config.catalog +: Seq(sft.getTypeName, name).map(alphaNumericSafeString)).mkString("_")
+    val namespace = sft.getTablePrefix(name).getOrElse(ds.config.catalog)
+    val prefix = (namespace +: Seq(sft.getTypeName, name).map(alphaNumericSafeString)).mkString("_")
     val suffix = s"v$version${partition.map(p => s"_$p").getOrElse("")}"
 
     def build(attrs: Seq[String]): String = (prefix +: attrs :+ suffix).mkString("_")
@@ -376,7 +397,8 @@ abstract class GeoMesaFeatureIndex[T, U](val ds: GeoMesaDataStore[_],
     case _ => false
   }
 
-  override def hashCode(): Int = Seq(identifier, ds, sft, mode).map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
+  override def hashCode(): Int =
+    Seq(identifier, ds, sft, mode).collect { case o if o != null => o.hashCode() }.foldLeft(0)((a, b) => 31 * a + b)
 }
 
 object GeoMesaFeatureIndex {

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -13,8 +13,8 @@ import com.googlecode.cqengine.attribute.SelfAttribute;
 import com.googlecode.cqengine.attribute.SimpleAttribute;
 import com.googlecode.cqengine.query.option.QueryOptions;
 import com.googlecode.cqengine.query.simple.SimpleQuery;
-import org.opengis.feature.simple.SimpleFeature;
-import org.opengis.filter.Filter;
+import org.geotools.api.feature.simple.SimpleFeature;
+import org.geotools.api.filter.Filter;
 
 /**
  * fallback Query type that passes evaluation off to GeoTools. This cannot

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,15 +8,14 @@
 
 package org.locationtech.geomesa.fs.storage.common.metadata
 
-import java.util.Properties
-
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.commons.dbcp2.{PoolingDataSource, _}
+import org.apache.commons.dbcp2._
 import org.apache.commons.pool2.impl.{GenericObjectPool, GenericObjectPoolConfig}
 import org.locationtech.geomesa.fs.storage.api._
 import org.locationtech.geomesa.utils.io.{CloseQuietly, WithClose}
 import org.locationtech.geomesa.utils.stats.MethodProfiling
 
+import java.util.Properties
 import scala.util.control.NonFatal
 
 class JdbcMetadataFactory extends StorageMetadataFactory {
@@ -44,8 +43,7 @@ class JdbcMetadataFactory extends StorageMetadataFactory {
             throw new IllegalArgumentException(s"Could not load metadata at root '$root'")
           }
           val sft = namespaced(metadata.sft, context.namespace)
-          val scheme = PartitionSchemeFactory.load(sft, metadata.scheme)
-          new JdbcMetadata(source, root, sft, metadata.encoding, scheme, metadata.leafStorage)
+          new JdbcMetadata(source, root, sft, metadata)
         } catch {
           case NonFatal(e) => CloseQuietly(source).foreach(e.addSuppressed); throw e
         }
@@ -54,14 +52,14 @@ class JdbcMetadataFactory extends StorageMetadataFactory {
 
   override def create(context: FileSystemContext, config: Map[String, String], meta: Metadata): JdbcMetadata = {
     // load the partition scheme first in case it fails
-    val scheme = PartitionSchemeFactory.load(meta.sft, meta.scheme)
+    PartitionSchemeFactory.load(meta.sft, meta.scheme)
     MetadataJson.writeMetadata(context, NamedOptions(name, config))
     val root = context.root.toUri.toString
     val sft = namespaced(meta.sft, context.namespace)
     val source = JdbcMetadataFactory.createDataSource(config)
     try {
       JdbcMetadata.create(source, root, meta)
-      new JdbcMetadata(source, root, sft, meta.encoding, scheme, meta.leafStorage)
+      new JdbcMetadata(source, root, sft, meta)
     } catch {
       case NonFatal(e) => CloseQuietly(source).foreach(e.addSuppressed); throw e
     }

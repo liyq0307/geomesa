@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -16,10 +16,10 @@ import org.apache.hadoop.mapreduce.{RecordWriter, TaskAttemptContext}
 import org.apache.orc.mapred.OrcStruct
 import org.apache.orc.mapreduce.{OrcMapreduceRecordWriter, OrcOutputFormat}
 import org.apache.orc.{OrcConf, OrcFile, TypeDescription}
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.locationtech.geomesa.fs.storage.common.jobs.StorageConfiguration
 import org.locationtech.geomesa.fs.storage.orc.jobs.OrcSimpleFeatureOutputFormat.OrcRecordWriter
 import org.locationtech.geomesa.fs.storage.orc.utils.OrcOutputFormatWriter
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 class OrcSimpleFeatureOutputFormat extends FileOutputFormat[Void, SimpleFeature] {
 

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,9 +8,7 @@
 
 package org.locationtech.geomesa.accumulo.index
 
-import java.util.Date
-
-import org.geotools.data.{Query, Transaction}
+import org.geotools.api.data.{Query, Transaction}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
@@ -24,12 +22,12 @@ import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import java.util.Date
+
 @RunWith(classOf[JUnitRunner])
 class BinLineStringTest extends Specification with TestWithFeatureType {
 
   import org.locationtech.geomesa.utils.geotools.GeoToolsDateFormat
-
-  sequential
 
   override val spec = "name:String,track:String,dtgList:List[Date],dtg:Date,*geom:LineString:srid=4326"
 
@@ -50,7 +48,9 @@ class BinLineStringTest extends Specification with TestWithFeatureType {
       sf
     }
 
-  addFeatures(features)
+  step {
+    addFeatures(features)
+  }
 
   def getQuery(filter: String, dtg: Option[String] = None, label: Option[String] = None): Query = {
     val query = new Query(sftName, ECQL.toFilter(filter))

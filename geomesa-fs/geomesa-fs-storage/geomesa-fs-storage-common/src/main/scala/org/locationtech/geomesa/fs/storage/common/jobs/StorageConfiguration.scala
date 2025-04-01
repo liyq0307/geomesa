@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,14 +8,14 @@
 
 package org.locationtech.geomesa.fs.storage.common.jobs
 
-import java.io.{DataInput, DataOutput}
-
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.io.Writable
 import org.apache.hadoop.mapreduce.Job
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
 import org.locationtech.geomesa.fs.storage.api.StorageMetadata.StorageFileAction.StorageFileAction
@@ -23,21 +23,28 @@ import org.locationtech.geomesa.fs.storage.api.StorageMetadata.{StorageFileActio
 import org.locationtech.geomesa.fs.storage.common.utils.StorageUtils.FileType
 import org.locationtech.geomesa.fs.storage.common.utils.StorageUtils.FileType.FileType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
+
+import java.io.{DataInput, DataOutput}
 
 object StorageConfiguration {
 
   object Counters {
+
     val Group    = "org.locationtech.geomesa.jobs.fs"
+
     val Features = "features"
     val Written  = "written"
     val Failed   = "failed"
+
+    val PartitionPrefix = "p-"
+
+    def partition(name: String): String = PartitionPrefix + name
   }
 
   val PathKey                = "geomesa.fs.path"
   val PartitionsKey          = "geomesa.fs.partitions"
   val FileTypeKey            = "geomesa.fs.output.file-type"
+  val FileSizeKey            = "geomesa.fs.output.file-size"
   val SftNameKey             = "geomesa.fs.sft.name"
   val SftSpecKey             = "geomesa.fs.sft.spec"
   val FilterKey              = "geomesa.fs.filter"
@@ -65,6 +72,9 @@ object StorageConfiguration {
 
   def setFileType(conf: Configuration, fileType: FileType): Unit = conf.set(FileTypeKey, fileType.toString)
   def getFileType(conf: Configuration): FileType = FileType.withName(conf.get(FileTypeKey))
+
+  def setTargetFileSize(conf: Configuration, fileSize: Long): Unit = conf.set(FileSizeKey, fileSize.toString)
+  def getTargetFileSize(conf: Configuration): Option[Long] = Option(conf.get(FileSizeKey)).map(_.toLong)
 
   def setFilter(conf: Configuration, filter: Filter): Unit = conf.set(FilterKey, ECQL.toCQL(filter))
   def getFilter(conf: Configuration, sft: SimpleFeatureType): Option[Filter] =

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,8 +8,8 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import org.geotools.data._
-import org.geotools.feature.simple.SimpleFeatureBuilder
+import org.geotools.api.data._
+import org.geotools.api.filter.Filter
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithMultipleSfts
@@ -21,17 +21,14 @@ import org.locationtech.geomesa.index.index.z3.Z3Index
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.text.WKTUtils
-import org.opengis.filter.Filter
 import org.specs2.matcher.MatchResult
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
-
 @RunWith(classOf[JUnitRunner])
 class AccumuloDataStoreDeleteTest extends Specification with TestWithMultipleSfts {
 
-  sequential
+  import scala.collection.JavaConverters._
 
   lazy val tableOps = ds.connector.tableOperations()
 
@@ -39,9 +36,8 @@ class AccumuloDataStoreDeleteTest extends Specification with TestWithMultipleSft
     val sft = createNewSchema(schema)
 
     // create a feature
-    val builder = new SimpleFeatureBuilder(sft)
-    builder.addAll(List("1", WKTUtils.read("POINT(45.0 45.0)"), "2012-01-02T05:06:07.000Z"))
-    val liveFeature = builder.buildFeature("fid-1")
+    val liveFeature =
+      ScalaSimpleFeature.create(sft, "fid-1", "1", WKTUtils.read("POINT(45.0 45.0)"), "2012-01-02T05:06:07.000Z")
 
     addFeature(liveFeature)
     sft
@@ -177,7 +173,7 @@ class AccumuloDataStoreDeleteTest extends Specification with TestWithMultipleSft
     "delete all associated tables" >> {
       val catalog = "AccumuloDataStoreTotalDeleteTest"
       val params = dsParams ++ Map(AccumuloDataStoreParams.CatalogParam.key -> catalog)
-      val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
+      val ds = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
       val sft = SimpleFeatureTypes.createType(catalog, "name:String:index=join,dtg:Date,*geom:Point:srid=4326")
       ds.createSchema(sft)
       val tables = ds.manager.indices(sft).flatMap(_.getTableNames()) ++ Seq(catalog, s"${catalog}_stats")

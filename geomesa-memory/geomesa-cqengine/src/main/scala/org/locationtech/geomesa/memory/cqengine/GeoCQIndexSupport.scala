@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,13 @@
 
 package org.locationtech.geomesa.memory.cqengine
 
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.filter.index.SpatialIndexSupport
 import org.locationtech.geomesa.memory.cqengine.GeoCQIndexSupport.GeoCQIndex
 import org.locationtech.geomesa.memory.cqengine.utils.CQIndexType.CQIndexType
 import org.locationtech.geomesa.utils.index.SpatialIndex
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
 /**
   * SpatialIndexSupport for GeoCQEngine

@@ -41,8 +41,10 @@ Argument                   Description
 ``--converter-error-mode`` Override the error mode defined by the converter
 ``-t, --threads``          Number of parallel threads used
 ``--input-format``         Format of input files (csv, tsv, avro, shp, json, etc)
+```--index``               Specify a particular GeoMesa index to write to, instead of all indices
 ``--no-tracking``          This application closes when ingest job is submitted. Useful for launching jobs with a script
-``--run-mode``             Must be one of ``local``, ``distributed``, or ``distributedcombine``
+``--run-mode``             Must be one of ``local`` or ``distributed`` (for map/reduce ingest)
+``--combine-inputs``       Combine multiple input files into a single input split (distributed jobs only)
 ``--split-max-size``       Maximum size of a split in bytes (distributed jobs)
 ``--src-list``             Input files are text files with lists of files, one per line, to ingest
 ``--force``                Suppress any confirmation prompts
@@ -56,7 +58,7 @@ The ``--converter`` argument may be any of the following:
 * The name of a file containing a converter configuration
 
 If a converter is not specified, GeoMesa will attempt to infer a converter definition based on the input files.
-Currently this supports GeoJSON, self-describing Avro, delimited text (TSV, CSV) or Shapefiles. If GeoMesa is able
+Currently this supports JSON, XML, self-describing Avro, delimited text (TSV, CSV), and Shapefiles. If GeoMesa is able
 to infer a schema and converter definition, the user can accept them as-is, or alternatively use them as the basis
 for a fully custom converter. If desired, the user can persist the inferred converter to file, which allows for
 easy modification and reuse. When ingesting a large data set, it can be useful to ingest a single file in local
@@ -66,7 +68,7 @@ satisfaction, then used for the entire data set with a distributed ingest.
 See :ref:`cli_converter_conf` for more details on specifying the converter.
 
 The ``converter-error-mode`` argument may be used to override the error mode defined in the converter. It must be
-one of ``skip-bad-records`` or ``raise-errors``.
+one of ``log-errors`` or ``raise-errors``.
 
 If the ``--feature-name`` is specified and the schema already exists, then ``--spec`` is not required. Likewise,
 if a converter is not defined, the schema will be inferred alongside the converter. Otherwise, ``--spec`` may be
@@ -93,8 +95,8 @@ still provide information about the status of the job submission.
 
 The ``--run-mode`` argument can be used to run ingestion locally or distributed (using map/reduce). Note that in
 order to run in distributed mode, the input files must be in HDFS. By default, input files on the local filesystem
-will be ingested in local mode, and input files in HDFS will be ingested in distributed mode. If using the
-``distributedcombine`` mode, multiple files will be processes by each mapper up to the limit specified by
+will be ingested in local mode, and input files in HDFS will be ingested in distributed mode. The
+``--combine-inputs`` flag can be used to process multiple files in each mapper up to the limit specified by
 ``--split-max-size``.
 
 The ``--threads`` argument can be used to increase local ingest speed. However, there can not be more threads
@@ -121,12 +123,15 @@ compression type. GeoMesa supports ingesting files from local disks or HDFS. In 
 and Microsoft's Azure file systems are supported with a few configuration changes. See
 :doc:`/user/cli/filesystems` for details. Note: The behavior of this argument is changed by the ``--src-list`` argument.
 
-Instead of specifying files, input data may be piped directly to the ingest command using `stdin` shell redirection.
-Note that this will only work in local mode, and will only use a single thread for ingestion. Schema inference is
-disabled in this case, and progress indicators may not be entirely accurate, as the total size isn't known up front.
+By using a single ``-`` for the input files, input data may be piped directly to the ingest command using standard
+shell redirection. Note that this will only work in local mode, and will only use a single thread for ingestion.
+Schema inference is disabled in this case, and progress indicators may not be entirely accurate, as the total size
+isn't known up front.
+
 For example::
 
-    cat foo.csv | geomesa-accumulo ingest ...
+    $ cat foo.csv | geomesa-accumulo ingest ... -
+    $ geomesa-accumulo ingest ... - <foo.csv
 
 For local ingests, feature writers will be pooled and only flushed periodically. The frequency of flushes can be
 controlled via the system property ``geomesa.ingest.local.batch.size``, and defaults to every 20,000 features.

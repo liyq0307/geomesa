@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,18 +8,19 @@
 
 package org.locationtech.geomesa.index.metadata
 
+import com.github.benmanes.caffeine.cache.{Cache, CacheLoader, Caffeine, LoadingCache}
+import com.typesafe.scalalogging.LazyLogging
+import org.locationtech.geomesa.utils.collection.CloseableIterator
+import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
+import org.locationtech.geomesa.utils.io.WithClose
+import org.locationtech.geomesa.utils.text.DateParsing
+
 import java.time.format.DateTimeFormatterBuilder
 import java.time.temporal.ChronoField
 import java.time.{Instant, ZoneOffset}
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-
-import com.github.benmanes.caffeine.cache.{Cache, CacheLoader, Caffeine}
-import com.typesafe.scalalogging.LazyLogging
-import org.locationtech.geomesa.utils.collection.{CloseableIterator, IsSynchronized, MaybeSynchronized, NotSynchronized}
-import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
-import org.locationtech.geomesa.utils.io.WithClose
-import org.locationtech.geomesa.utils.text.DateParsing
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
   * Metadata persisted in a database table. The underlying table will be lazily created when required.
@@ -99,13 +100,12 @@ trait TableBasedMetadata[T] extends GeoMesaMetadata[T] with LazyLogging {
   protected def scanKeys(): CloseableIterator[(String, String)]
 
   // only synchronize if table doesn't exist - otherwise it's ready only and we can avoid synchronization
-  private val tableExists: MaybeSynchronized[Boolean] =
-    if (checkIfTableExists) { new NotSynchronized(true) } else { new IsSynchronized(false) }
+  private val tableExists: AtomicBoolean = new AtomicBoolean(checkIfTableExists)
 
   private val expiry = TableBasedMetadata.Expiry.toDuration.get.toMillis
 
   // cache for our metadata - invalidate every 10 minutes so we keep things current
-  private val metaDataCache =
+  private val metaDataCache: LoadingCache[(String, String), Option[T]] =
     Caffeine.newBuilder().expireAfterWrite(expiry, TimeUnit.MILLISECONDS).build(
       new CacheLoader[(String, String), Option[T]] {
         override def load(typeNameAndKey: (String, String)): Option[T] = {
@@ -119,7 +119,7 @@ trait TableBasedMetadata[T] extends GeoMesaMetadata[T] with LazyLogging {
 
   // keep a separate cache for scan queries vs point lookups, so that the point lookups don't cache
   // partial values for a scan result
-  private val metaDataScanCache =
+  private val metaDataScanCache: LoadingCache[(String, String), Seq[(String, T)]] =
     Caffeine.newBuilder().expireAfterWrite(expiry, TimeUnit.MILLISECONDS).build(
       new CacheLoader[(String, String), Seq[(String, T)]] {
         override def load(typeNameAndPrefix: (String, String)): Seq[(String, T)] = {
@@ -229,7 +229,17 @@ trait TableBasedMetadata[T] extends GeoMesaMetadata[T] with LazyLogging {
   }
 
   // checks that the table is already created, and creates it if not
-  def ensureTableExists(): Unit = tableExists.set(true, false, createTable())
+  def ensureTableExists(): Unit = {
+    if (tableExists.compareAndSet(false, true)) {
+      createTable()
+    }
+  }
+
+  override def resetCache(): Unit={
+    tableExists.set(checkIfTableExists)
+    metaDataCache.invalidateAll()
+    metaDataScanCache.invalidateAll()
+  }
 
   /**
     * Invalidate all keys for the given feature type

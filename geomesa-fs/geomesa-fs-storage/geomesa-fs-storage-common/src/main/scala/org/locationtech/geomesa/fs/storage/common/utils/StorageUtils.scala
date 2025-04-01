@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,13 @@
 
 package org.locationtech.geomesa.fs.storage.common.utils
 
+import org.apache.hadoop.fs.Path
+
 import java.util.UUID
 
-import org.apache.hadoop.fs.Path
-import org.locationtech.geomesa.fs.storage.common.utils.StorageUtils.FileType.FileType
-
 object StorageUtils {
+
+  val LeafSeparator = '_'
 
   /**
     * Gets the base directory for a partition
@@ -41,11 +42,22 @@ object StorageUtils {
       partition: String,
       leaf: Boolean,
       extension: String,
-      fileType: FileType): Path = {
-    val file = s"$fileType${UUID.randomUUID().toString.replaceAllLiterally("-", "")}.$extension"
-    val name = if (leaf) { s"${partition.split('/').last}_$file" } else { file }
-    new Path(baseDirectory(root, partition, leaf), name)
+      fileType: FileType.FileType,
+      name: String = UUID.randomUUID().toString.replaceAllLiterally("-", "")): Path = {
+    val filename = s"$fileType$name.$extension"
+    val filenameWithLeaf = if (leaf) { s"${partition.split('/').last}$LeafSeparator$filename" } else { filename }
+    new Path(baseDirectory(root, partition, leaf), filenameWithLeaf)
   }
+
+  /**
+   * Extract the 'leaf' part of a partition name from a file name.
+   *
+   * If file is not from a leafed partition scheme, result is indeterminate and may error.
+   *
+   * @param name file name
+   * @return
+   */
+  def leaf(name: String): String = name.substring(0, name.indexOf(LeafSeparator))
 
   /**
     * Returns the file type of the data file, if known
@@ -55,7 +67,7 @@ object StorageUtils {
     * @param path file path
     * @return
     */
-  def fileType(partition: String, leaf: Boolean, path: Path): Option[FileType] = {
+  def fileType(partition: String, leaf: Boolean, path: Path): Option[FileType.FileType] = {
     val pos = if (leaf) { partition.split('/').last.length + 1 } else { 0 }
     path.getName.charAt(pos) match {
       case 'W' => Some(FileType.Written)

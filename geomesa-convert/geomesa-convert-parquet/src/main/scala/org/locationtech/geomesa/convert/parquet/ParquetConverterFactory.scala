@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -7,8 +7,6 @@
  ***********************************************************************/
 
 package org.locationtech.geomesa.convert.parquet
-
-import java.io.InputStream
 
 import com.typesafe.config.Config
 import org.apache.hadoop.conf.Configuration
@@ -18,28 +16,25 @@ import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
 import org.apache.parquet.schema.Type.Repetition
 import org.apache.parquet.schema.{MessageType, OriginalType, Type}
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicConfig, BasicField, BasicOptions}
-import org.locationtech.geomesa.convert2.AbstractConverterFactory.{BasicConfigConvert, BasicFieldConvert, BasicOptionsConvert, ConverterConfigConvert, ConverterOptionsConvert, FieldConvert}
-import org.locationtech.geomesa.convert2.TypeInference.{FunctionTransform, InferredType}
+import org.locationtech.geomesa.convert2.AbstractConverterFactory.{BasicConfigConvert, BasicFieldConvert, BasicOptionsConvert}
+import org.locationtech.geomesa.convert2.TypeInference.{FunctionTransform, InferredType, Namer}
 import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.convert2.{AbstractConverterFactory, TypeInference}
-import org.locationtech.geomesa.features.serialization.ObjectType
-import org.locationtech.geomesa.parquet.io.SimpleFeatureParquetSchema
+import org.locationtech.geomesa.fs.storage.parquet.io.SimpleFeatureParquetSchema
+import org.locationtech.geomesa.utils.geotools.ObjectType
 import org.locationtech.geomesa.utils.io.PathUtils
-import org.opengis.feature.simple.SimpleFeatureType
 
-import scala.util.control.NonFatal
+import java.io.InputStream
+import scala.util.{Failure, Success, Try}
 
 class ParquetConverterFactory
-    extends AbstractConverterFactory[ParquetConverter, BasicConfig, BasicField, BasicOptions] {
+    extends AbstractConverterFactory[ParquetConverter, BasicConfig, BasicField, BasicOptions](
+      ParquetConverterFactory.TypeToProcess, BasicConfigConvert, BasicFieldConvert, BasicOptionsConvert) {
 
   import scala.collection.JavaConverters._
-
-  override protected val typeToProcess: String = ParquetConverterFactory.TypeToProcess
-
-  override protected implicit def configConvert: ConverterConfigConvert[BasicConfig] = BasicConfigConvert
-  override protected implicit def fieldConvert: FieldConvert[BasicField] = BasicFieldConvert
-  override protected implicit def optsConvert: ConverterOptionsConvert[BasicOptions] = BasicOptionsConvert
 
   /**
     * Handles parquet files (including those produced by the FSDS and CLI export)
@@ -52,15 +47,22 @@ class ParquetConverterFactory
   override def infer(
       is: InputStream,
       sft: Option[SimpleFeatureType],
-      path: Option[String]): Option[(SimpleFeatureType, Config)] = {
+      path: Option[String]): Option[(SimpleFeatureType, Config)] =
+    infer(is, sft, path.fold(Map.empty[String, AnyRef])(EvaluationContext.inputFileParam)).toOption
 
-    try {
-      is.close() // we don't use the input stream, just close it
-
-      path.flatMap { p =>
-        val conf = new Configuration()
-        val footer = // note: get the path as a URI so that we handle local files appropriately
-          ParquetFileReader.readFooter(conf, new Path(PathUtils.getUrl(p).toURI), ParquetMetadataConverter.NO_FILTER)
+  override def infer(
+      is: InputStream,
+      sft: Option[SimpleFeatureType],
+      hints: Map[String, AnyRef]): Try[(SimpleFeatureType, Config)] = {
+    val path = hints.get(EvaluationContext.InputFilePathKey) match {
+      case None => Failure(new RuntimeException("No file path specified to the input data"))
+      case Some(p) => Success(p.toString)
+    }
+    path.flatMap { p =>
+      Try {
+        // note: get the path as a URI so that we handle local files appropriately
+        val filePath = new Path(PathUtils.getUrl(p).toURI)
+        val footer = ParquetFileReader.readFooter(new Configuration(), filePath, ParquetMetadataConverter.NO_FILTER)
         val (schema, fields, id) = SimpleFeatureParquetSchema.read(footer.getFileMetaData) match {
           case Some(parquet) =>
             // this is a geomesa encoded parquet file
@@ -105,14 +107,12 @@ class ParquetConverterFactory
         val converterConfig = BasicConfig(typeToProcess, id, Map.empty, Map.empty)
 
         val config = configConvert.to(converterConfig)
-            .withFallback(fieldConvert.to(fields))
+            .withFallback(fieldConvert.to(fields.toSeq))
             .withFallback(optsConvert.to(BasicOptions.default))
             .toConfig
 
-        Some((schema, config))
+        (schema, config)
       }
-    } catch {
-      case NonFatal(e) => logger.debug(s"Could not infer Parquet converter from input:", e); None
     }
   }
 }
@@ -130,19 +130,12 @@ object ParquetConverterFactory {
     * @return
     */
   def schemaTypes(schema: MessageType): Seq[InferredType] = {
-    val uniqueNames = scala.collection.mutable.HashSet.empty[String]
+    val namer = new Namer()
     val types = scala.collection.mutable.ArrayBuffer.empty[InferredType]
 
     def mapField(field: Type, path: String = ""): Unit = {
       // get a valid attribute name
-      val base = s"${field.getName.replaceAll("[^A-Za-z0-9]+", "_")}"
-      var name = base
-      var i = 0
-      while (!uniqueNames.add(name)) {
-        name = s"${base}_$i"
-        i += 1
-      }
-
+      val name = namer(field.getName)
       val transform = FunctionTransform("avroPath(", s",'$path/${field.getName}')")
 
       val original = field.getOriginalType
@@ -206,8 +199,8 @@ object ParquetConverterFactory {
     schema.getFields.asScala.foreach(mapField(_))
 
     // check if we can derive a geometry field
-    TypeInference.deriveGeometry(types).foreach(g => types += g)
+    TypeInference.deriveGeometry(types.toSeq, namer).foreach(g => types += g)
 
-    types
+    types.toSeq
   }
 }

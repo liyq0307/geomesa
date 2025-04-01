@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,8 +9,8 @@
 package org.locationtech.geomesa.accumulo.tools.stats
 
 import com.beust.jcommander.Parameters
+import org.locationtech.geomesa.accumulo.combiners.StatsCombiner
 import org.locationtech.geomesa.accumulo.data.AccumuloDataStore
-import org.locationtech.geomesa.accumulo.data.stats.StatsCombiner
 import org.locationtech.geomesa.accumulo.tools.stats.AccumuloStatsConfigureCommand.AccumuloStatsConfigureParams
 import org.locationtech.geomesa.accumulo.tools.{AccumuloDataStoreCommand, AccumuloDataStoreParams}
 import org.locationtech.geomesa.tools.Command
@@ -32,10 +32,11 @@ class AccumuloStatsConfigureCommand extends StatsConfigureCommand[AccumuloDataSt
     try {
       ds.getTypeNames.map(ds.getSchema).foreach { sft =>
         Command.user.info(s"Configuring stats iterator for '${sft.getTypeName}'...")
+        ds.adapter.ensureTableExists(ds.stats.metadata.table)
         ds.stats.configureStatCombiner(ds.connector, sft)
       }
     } finally {
-      lock.release()
+      lock.close()
     }
     Command.user.info("done")
   }
@@ -51,7 +52,7 @@ class AccumuloStatsConfigureCommand extends StatsConfigureCommand[AccumuloDataSt
           ds.stats.removeStatCombiner(ds.connector, sft)
         }
       } finally {
-        lock.release()
+        lock.close()
       }
       Command.user.info("done")
     }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,14 +9,13 @@
 package org.locationtech.geomesa.arrow.io
 package reader
 
-import java.io.{Closeable, InputStream}
-import java.nio.channels.{Channels, ReadableByteChannel}
-
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.complex.StructVector
 import org.apache.arrow.vector.ipc.message.{ArrowRecordBatch, MessageSerializer}
 import org.apache.arrow.vector.ipc.{ArrowStreamReader, ReadChannel}
 import org.apache.arrow.vector.{VectorLoader, VectorSchemaRoot}
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.arrow.ArrowAllocator
 import org.locationtech.geomesa.arrow.features.ArrowSimpleFeature
 import org.locationtech.geomesa.arrow.io.SimpleFeatureArrowFileReader.{SkipIndicator, VectorToIterator}
@@ -24,9 +23,9 @@ import org.locationtech.geomesa.arrow.io.reader.CachingSimpleFeatureArrowFileRea
 import org.locationtech.geomesa.arrow.vector.{ArrowDictionary, SimpleFeatureVector}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, WithClose}
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 
+import java.io.{Closeable, InputStream}
+import java.nio.channels.{Channels, ReadableByteChannel}
 import scala.collection.mutable.ArrayBuffer
 
 class CachingSimpleFeatureArrowFileReader(is: InputStream) extends SimpleFeatureArrowFileReader  {
@@ -91,7 +90,7 @@ object CachingSimpleFeatureArrowFileReader {
       val (_, encoding) = SimpleFeatureVector.getFeatureType(underlying)
 
       // load any dictionaries into memory
-      val dictionaries = loadDictionaries(underlying.getField.getChildren.asScala, reader, encoding)
+      val dictionaries = loadDictionaries(underlying.getField.getChildren.asScala.toSeq, reader, encoding)
 
       // lazily evaluate batches as we need them
       def createStream(current: SimpleFeatureVector): Stream[SimpleFeatureVector] = {
@@ -127,7 +126,7 @@ object CachingSimpleFeatureArrowFileReader {
           } else if (batches.hasNext) {
             if (skip.skip) {
               // make sure we read the rest of the record batches so that our input stream is at the end of a 'file'
-              batches.foreach(_ => Unit)
+              batches.foreach(_ => ())
               false
             } else {
               batch = nextBatch(batches.next)

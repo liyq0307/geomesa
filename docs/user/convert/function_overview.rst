@@ -12,11 +12,11 @@ Type Conversions
 -  ``::double``
 -  ``::boolean``
 -  ``::r``
--  ``stringToInt`` or ``stringToInteger``
--  ``stringToLong``
--  ``stringToFloat``
--  ``stringToDouble``
--  ``stringToBoolean``
+-  ``toInt`` or ``toInteger``
+-  ``toLong``
+-  ``toFloat``
+-  ``toDouble``
+-  ``toBoolean``
 -  ``intToBoolean``
 
 String Functions
@@ -57,11 +57,13 @@ Date Functions
 -  ``millisToDate``
 -  ``secsToDate``
 -  ``dateToString``
+-  ``dateToMillis``
 
 Geometry Functions
 ~~~~~~~~~~~~~~~~~~
 
 -  ``point``
+-  ``pointM``
 -  ``multipoint``
 -  ``linestring``
 -  ``multilinestring``
@@ -77,11 +79,11 @@ ID Functions
 -  ``stringToBytes``
 -  ``md5``
 -  ``murmur3_32``
--  ``murmur3_128``
+-  ``murmur3_64``
+-  ``murmurHash3``
 -  ``uuid``
 -  ``uuidZ3``
 -  ``uuidZ3Centroid``
--  ``base64``
 
 Math Functions
 ~~~~~~~~~~~~~~
@@ -98,9 +100,17 @@ List and Map Functions
 ~~~~~~~~~~~~~~~~~~~~~~
 
 -  ``list``
+-  ``listItem``
 -  ``mapValue``
 -  ``parseList``
 -  ``parseMap``
+-  ``transformListItems``
+
+Encoding Functions
+~~~~~~~~~~~~~~~~~~
+
+-  ``base64Encode``
+-  ``base64Decode``
 
 Control Functions
 ~~~~~~~~~~~~~~~~~
@@ -206,7 +216,7 @@ point into a polygon:
 
 For more information on the various CQL functions, see the GeoServer
 `filter function
-reference <http://docs.geoserver.org/stable/en/user/filter/function_reference.html#filter-function-reference>`__.
+reference <https://docs.geoserver.org/stable/en/user/filter/function_reference.html#filter-function-reference>`__.
 
 JSON/Avro Transformations
 ~~~~~~~~~~~~~~~~~~~~~~~~~

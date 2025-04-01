@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,9 +9,11 @@
 package org.locationtech.geomesa.spark.jts.rules
 
 import org.apache.spark.sql.SQLContext
-import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, Literal, ScalaUDF}
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{Literal, ScalaUDF}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.jts.GeometryUDT
 
 import scala.util.Try
@@ -22,13 +24,17 @@ object GeometryLiteralRules {
     override def apply(plan: LogicalPlan): LogicalPlan = {
       plan.transform {
         case q: LogicalPlan => q.transformExpressionsDown {
-          case s: ScalaUDF =>
+          case s: ScalaUDF if s.function.getClass.getName.startsWith("org.locationtech.geomesa.spark") =>
             // TODO: Break down by GeometryType
             Try {
                 s.eval(null) match {
-                  case row: GenericInternalRow =>
-                    val ret = GeometryUDT.deserialize(row)
-                    GeometryLiteral(row, ret)
+                  // Prior to Spark 3.1.1 GenericInteralRows have been returned
+                  // Spark 3.1.1 started returning UnsafeRows instead of GenericInteralRows
+                  // Spark 3.5 returns primitive byte arrays
+                  // When we're using serialization/deserialization functions provided by Apache Sedona in
+                  // AbstractGeometryUDT, datum should be a GenericArrayData object.
+                  case datum @ (_: InternalRow | _: ArrayData | _: Array[Byte]) =>
+                    GeometryLiteral(datum, GeometryUDT.deserialize(datum))
                   case other: Any =>
                     Literal(other)
                 }

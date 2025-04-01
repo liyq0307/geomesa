@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,15 +9,14 @@
 package org.locationtech.geomesa.features.kryo
 package impl
 
-import java.io.InputStream
-
 import com.esotericsoftware.kryo.io.Input
+import org.geotools.api.feature.simple.SimpleFeature
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.ScalaSimpleFeature.ImmutableSimpleFeature
 import org.locationtech.geomesa.features.kryo.impl.KryoFeatureDeserialization.getInput
 import org.locationtech.geomesa.features.kryo.serialization.KryoUserDataSerialization
-import org.opengis.feature.simple.SimpleFeature
 
+import java.io.InputStream
 import scala.util.control.NonFatal
 
 object ActiveDeserialization {

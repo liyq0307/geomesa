@@ -20,13 +20,13 @@ overview of the commands available for most back-ends.
     logging
     filesystems
     console
+    nailgun
     geotools
 
 Specific back-end implementations are described in the following chapters:
 
  * :doc:`/user/accumulo/commandline`
  * :doc:`/user/hbase/commandline`
- * :doc:`/user/bigtable/commandline`
  * :doc:`/user/cassandra/commandline`
  * :doc:`/user/kafka/commandline`
  * :doc:`/user/lambda/commandline`

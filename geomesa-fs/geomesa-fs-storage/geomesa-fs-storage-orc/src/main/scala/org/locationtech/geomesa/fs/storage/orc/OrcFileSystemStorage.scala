@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -11,18 +11,18 @@ package org.locationtech.geomesa.fs.storage.orc
 
 import org.apache.hadoop.fs.Path
 import org.apache.orc.TypeDescription
-import org.locationtech.geomesa.features.serialization.ObjectType
-import org.locationtech.geomesa.features.serialization.ObjectType.ObjectType
+import org.geotools.api.feature.`type`.AttributeDescriptor
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.filter.factory.FastFilterFactory
 import org.locationtech.geomesa.fs.storage.api.FileSystemStorage.FileSystemWriter
 import org.locationtech.geomesa.fs.storage.api._
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage
 import org.locationtech.geomesa.fs.storage.common.AbstractFileSystemStorage.FileSystemPathReader
 import org.locationtech.geomesa.fs.storage.common.observer.FileSystemObserver
+import org.locationtech.geomesa.utils.geotools.ObjectType
+import org.locationtech.geomesa.utils.geotools.ObjectType.ObjectType
 import org.locationtech.jts.geom.Geometry
-import org.opengis.feature.`type`.AttributeDescriptor
-import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.Filter
 
 /**
   * Orc implementation of FileSystemStorage
@@ -33,7 +33,7 @@ class OrcFileSystemStorage(context: FileSystemContext, metadata: StorageMetadata
     extends AbstractFileSystemStorage(context, metadata, OrcFileSystemStorage.FileExtension) {
 
   override protected def createWriter(file: Path, observer: FileSystemObserver): FileSystemWriter =
-    new OrcFileSystemWriter(metadata.sft, context.conf, file, observer)
+    new OrcFileSystemWriter(metadata.sft, context, file, observer)
 
   override protected def createReader(
       filter: Option[Filter],

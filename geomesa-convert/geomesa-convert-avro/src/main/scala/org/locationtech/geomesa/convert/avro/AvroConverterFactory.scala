@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,40 +8,37 @@
 
 package org.locationtech.geomesa.convert.avro
 
-import java.io.InputStream
-
 import com.typesafe.config.Config
 import org.apache.avro.Schema
 import org.apache.avro.file.DataFileStream
 import org.apache.avro.generic.{GenericDatumReader, GenericRecord}
+import org.geotools.api.feature.simple.SimpleFeatureType
+import org.locationtech.geomesa.convert.EvaluationContext
 import org.locationtech.geomesa.convert.avro.AvroConverter._
 import org.locationtech.geomesa.convert.avro.AvroConverterFactory.AvroConfigConvert
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicField, BasicOptions}
-import org.locationtech.geomesa.convert2.AbstractConverterFactory.{BasicFieldConvert, BasicOptionsConvert, ConverterConfigConvert, ConverterOptionsConvert, FieldConvert, OptionConvert}
-import org.locationtech.geomesa.convert2.TypeInference.{FunctionTransform, InferredType}
+import org.locationtech.geomesa.convert2.AbstractConverterFactory.{BasicFieldConvert, BasicOptionsConvert, ConverterConfigConvert, OptionConvert}
+import org.locationtech.geomesa.convert2.TypeInference.{FunctionTransform, InferredType, Namer}
 import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.convert2.{AbstractConverterFactory, TypeInference}
-import org.locationtech.geomesa.features.avro._
-import org.locationtech.geomesa.features.serialization.ObjectType
+import org.locationtech.geomesa.features.avro.io.AvroDataFile
+import org.locationtech.geomesa.features.avro.serialization.AvroField.{FidField, UserDataField, VersionField}
+import org.locationtech.geomesa.features.avro.serialization.AvroSerialization
+import org.locationtech.geomesa.features.avro.{FieldNameEncoder, SerializationVersions}
+import org.locationtech.geomesa.utils.geotools.ObjectType
 import org.locationtech.geomesa.utils.io.WithClose
-import org.opengis.feature.simple.SimpleFeatureType
 import pureconfig.ConfigObjectCursor
 import pureconfig.error.{ConfigReaderFailures, FailureReason}
 
-import scala.util.control.NonFatal
+import java.io.InputStream
+import scala.util.Try
 
-class AvroConverterFactory extends AbstractConverterFactory[AvroConverter, AvroConfig, BasicField, BasicOptions] {
+class AvroConverterFactory extends AbstractConverterFactory[AvroConverter, AvroConfig, BasicField, BasicOptions](
+  "avro", AvroConfigConvert, BasicFieldConvert, BasicOptionsConvert) {
 
-  import AvroSimpleFeatureUtils.{AVRO_SIMPLE_FEATURE_USERDATA, AVRO_SIMPLE_FEATURE_VERSION, FEATURE_ID_AVRO_FIELD_NAME}
   import org.locationtech.geomesa.utils.conversions.ScalaImplicits.RichIterator
 
   import scala.collection.JavaConverters._
-
-  override protected val typeToProcess: String = "avro"
-
-  override protected implicit def configConvert: ConverterConfigConvert[AvroConfig] = AvroConfigConvert
-  override protected implicit def fieldConvert: FieldConvert[BasicField] = BasicFieldConvert
-  override protected implicit def optsConvert: ConverterOptionsConvert[BasicOptions] = BasicOptionsConvert
 
   /**
     * Note: only works on Avro files with embedded schemas
@@ -54,8 +51,14 @@ class AvroConverterFactory extends AbstractConverterFactory[AvroConverter, AvroC
   override def infer(
       is: InputStream,
       sft: Option[SimpleFeatureType],
-      path: Option[String]): Option[(SimpleFeatureType, Config)] = {
-    try {
+      path: Option[String]): Option[(SimpleFeatureType, Config)] =
+    infer(is, sft, path.map(EvaluationContext.inputFileParam).getOrElse(Map.empty)).toOption
+
+  override def infer(
+      is: InputStream,
+      sft: Option[SimpleFeatureType],
+      hints: Map[String, AnyRef]): Try[(SimpleFeatureType, Config)] = {
+    Try {
       WithClose(new DataFileStream[GenericRecord](is, new GenericDatumReader[GenericRecord]())) { dfs =>
         val (schema, id, fields, userData) = if (AvroDataFile.canParse(dfs)) {
           // this is a file written in the geomesa avro format
@@ -63,19 +66,20 @@ class AvroConverterFactory extends AbstractConverterFactory[AvroConverter, AvroC
           // get the version from the first record
           val version =
             records.headOption
-                .flatMap(r => Option(r.get(AVRO_SIMPLE_FEATURE_VERSION)).map(_.asInstanceOf[Int]))
-                .getOrElse(AvroSimpleFeatureUtils.VERSION)
+                .flatMap(r => Option(r.get(VersionField.name)).map(_.asInstanceOf[Int]))
+                .getOrElse(SerializationVersions.DefaultVersion)
           val nameEncoder = new FieldNameEncoder(version)
           val dataSft = AvroDataFile.getSft(dfs)
+          val native = AvroSerialization.usesNativeCollections(dfs.getSchema)
 
           val fields = dataSft.getAttributeDescriptors.asScala.map { descriptor =>
             // some types need a function applied to the underlying avro value
             val fn = ObjectType.selectType(descriptor).head match {
-              case ObjectType.DATE     => Some("millisToDate")
-              case ObjectType.UUID     => Some("avroBinaryUuid")
-              case ObjectType.LIST     => Some("avroBinaryList")
-              case ObjectType.MAP      => Some("avroBinaryMap")
-              case ObjectType.GEOMETRY => Some("geometry") // note: handles both wkt (v1) and wkb (v2)
+              case ObjectType.DATE            => Some("millisToDate")
+              case ObjectType.UUID            => Some("avroBinaryUuid")
+              case ObjectType.GEOMETRY        => Some("geometry") // note: handles both wkt (v1) and wkb (v2)
+              case ObjectType.LIST if !native => Some("avroBinaryList")
+              case ObjectType.MAP if !native  => Some("avroBinaryMap")
               case _ => None
             }
 
@@ -84,24 +88,27 @@ class AvroConverterFactory extends AbstractConverterFactory[AvroConverter, AvroC
             BasicField(descriptor.getLocalName, Some(Expression(expression)))
           }
 
-          val id = Expression(s"avroPath($$1, '/$FEATURE_ID_AVRO_FIELD_NAME')")
+          val id = Expression(s"avroPath($$1, '/${FidField.name}')")
           val userData: Map[String, Expression] =
-            if (dfs.getSchema.getField(AVRO_SIMPLE_FEATURE_USERDATA) == null) { Map.empty } else {
+            if (dfs.getSchema.getField(UserDataField.name) == null) { Map.empty } else {
               // avro user data is stored as an array of 'key', 'keyClass', 'value', and 'valueClass'
               // our converters require global key->expression, so pull out the unique keys
               val kvs = scala.collection.mutable.Map.empty[String, Expression]
               records.foreach { record =>
-                val ud = record.get(AVRO_SIMPLE_FEATURE_USERDATA).asInstanceOf[java.util.Collection[GenericRecord]]
+                val ud = record.get(UserDataField.name).asInstanceOf[java.util.Collection[GenericRecord]]
                 ud.asScala.foreach { rec =>
-                  Option(rec.get("key")).map(_.toString).foreach { key =>
-                    kvs.getOrElseUpdate(key, {
-                      var expression = s"avroPath($$1, '/$AVRO_SIMPLE_FEATURE_USERDATA[$$key=$key]/value')"
-                      if (Option(rec.get("valueClass")).map(_.toString).contains("java.util.Date")) {
-                        // dates have to be converted from millis
-                        expression = s"millisToDate($expression)"
-                      }
-                      Expression(expression)
-                    })
+                  if (rec.getSchema.getField("key") != null) {
+                    Option(rec.get("key")).map(_.toString).foreach { key =>
+                      kvs.getOrElseUpdate(key, {
+                        var expression = s"avroPath($$1, '/${UserDataField.name}[$$key=$key]/value')"
+                        if (rec.getSchema.getField("valueClass") != null &&
+                            Option(rec.get("valueClass")).map(_.toString).contains("java.util.Date")) {
+                          // dates have to be converted from millis
+                          expression = s"millisToDate($expression)"
+                        }
+                        Expression(expression)
+                      })
+                    }
                   }
                 }
               }
@@ -121,23 +128,29 @@ class AvroConverterFactory extends AbstractConverterFactory[AvroConverter, AvroC
         }
 
         // validate the existing schema, if any
-        if (sft.exists(_.getAttributeDescriptors.asScala != schema.getAttributeDescriptors.asScala)) {
-          throw new IllegalArgumentException("Inferred schema does not match existing schema")
+        sft.foreach { existing =>
+          val inferred = schema.getAttributeDescriptors.asScala
+          val matched = existing.getAttributeDescriptors.asScala.count { d =>
+            inferred.exists { i =>
+              i.getLocalName == d.getLocalName && d.getType.getBinding.isAssignableFrom(i.getType.getBinding)
+            }
+          }
+          if (matched == 0) {
+            throw new IllegalArgumentException("Inferred schema does not match existing schema")
+          } else if (matched < existing.getAttributeCount) {
+            logger.warn(s"Inferred schema only matched $matched out of ${existing.getAttributeCount} attributes")
+          }
         }
 
         val converterConfig = AvroConfig(typeToProcess, SchemaEmbedded, Some(id), Map.empty, userData)
 
         val config = configConvert.to(converterConfig)
-            .withFallback(fieldConvert.to(fields))
+            .withFallback(fieldConvert.to(fields.toSeq))
             .withFallback(optsConvert.to(BasicOptions.default))
             .toConfig
 
-        Some((schema, config))
+        (schema, config)
       }
-    } catch {
-      case NonFatal(e) =>
-        logger.debug(s"Could not infer Avro converter from input:", e)
-        None
     }
   }
 }
@@ -153,29 +166,16 @@ object AvroConverterFactory {
     * @return
     */
   def schemaTypes(schema: Schema): Seq[InferredType] = {
-    val uniqueNames = scala.collection.mutable.HashSet.empty[String]
+    val namer = new Namer()
     val types = scala.collection.mutable.ArrayBuffer.empty[InferredType]
 
     def mapField(field: Schema.Field, path: String = ""): Unit = {
       // get a valid attribute name
-      val base = s"${field.name().replaceAll("[^A-Za-z0-9]+", "_")}"
-      var name = base
-      var i = 0
-      while (!uniqueNames.add(name)) {
-        name = s"${base}_$i"
-        i += 1
-      }
+      val name = namer(field.name())
 
       // checks for nested array/map types we can handle
-      def isSimple: Boolean = field.schema().getFields.asScala.map(_.schema().getType).forall {
-        case Schema.Type.STRING  => true
-        case Schema.Type.INT     => true
-        case Schema.Type.LONG    => true
-        case Schema.Type.FLOAT   => true
-        case Schema.Type.DOUBLE  => true
-        case Schema.Type.BOOLEAN => true
-        case _ => false
-      }
+      def isSimpleArray: Boolean = isSimple(field.schema().getElementType)
+      def isSimpleMap: Boolean = isSimple(field.schema().getValueType)
 
       val transform = FunctionTransform("avroPath(", s",'$path/${field.name}')")
       field.schema().getType match {
@@ -186,8 +186,8 @@ object AvroConverterFactory {
         case Schema.Type.FLOAT   => types += InferredType(name, ObjectType.FLOAT, transform)
         case Schema.Type.DOUBLE  => types += InferredType(name, ObjectType.DOUBLE, transform)
         case Schema.Type.BOOLEAN => types += InferredType(name, ObjectType.BOOLEAN, transform)
-        case Schema.Type.ARRAY   => if (isSimple) { types += InferredType(name, ObjectType.LIST, transform) }
-        case Schema.Type.MAP     => if (isSimple) { types += InferredType(name, ObjectType.MAP, transform) }
+        case Schema.Type.ARRAY   => if (isSimpleArray) { types += InferredType(name, ObjectType.LIST, transform) }
+        case Schema.Type.MAP     => if (isSimpleMap) { types += InferredType(name, ObjectType.MAP, transform) }
         case Schema.Type.FIXED   => types += InferredType(name, ObjectType.BYTES, transform)
         case Schema.Type.ENUM    => types += InferredType(name, ObjectType.STRING, transform.copy(suffix = transform.suffix + "::string"))
         case Schema.Type.UNION   => types += InferredType(name, ObjectType.STRING, transform.copy(suffix = transform.suffix + "::string"))
@@ -199,9 +199,19 @@ object AvroConverterFactory {
     schema.getFields.asScala.foreach(mapField(_))
 
     // check if we can derive a geometry field
-    TypeInference.deriveGeometry(types).foreach(g => types += g)
+    TypeInference.deriveGeometry(types.toSeq, namer).foreach(g => types += g)
 
-    types
+    types.toSeq
+  }
+
+  private def isSimple(s: Schema): Boolean = s.getType match {
+    case Schema.Type.STRING  => true
+    case Schema.Type.INT     => true
+    case Schema.Type.LONG    => true
+    case Schema.Type.FLOAT   => true
+    case Schema.Type.DOUBLE  => true
+    case Schema.Type.BOOLEAN => true
+    case _ => false
   }
 
   object AvroConfigConvert extends ConverterConfigConvert[AvroConfig] with OptionConvert {

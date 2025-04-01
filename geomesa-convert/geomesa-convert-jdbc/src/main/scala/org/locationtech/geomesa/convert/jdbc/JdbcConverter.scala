@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,12 +8,9 @@
 
 package org.locationtech.geomesa.convert.jdbc
 
-import java.io.InputStream
-import java.nio.charset.Charset
-import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
-
 import com.typesafe.config.Config
 import org.apache.commons.io.{IOUtils, LineIterator}
+import org.geotools.api.feature.simple.SimpleFeatureType
 import org.locationtech.geomesa.convert._
 import org.locationtech.geomesa.convert.jdbc.JdbcConverter.{JdbcConfig, ResultSetIterator, StatementIterator}
 import org.locationtech.geomesa.convert2.AbstractConverter.{BasicField, BasicOptions}
@@ -21,8 +18,10 @@ import org.locationtech.geomesa.convert2.transforms.Expression
 import org.locationtech.geomesa.convert2.{AbstractConverter, ConverterConfig}
 import org.locationtech.geomesa.utils.collection.CloseableIterator
 import org.locationtech.geomesa.utils.io.{CloseWithLogging, IsCloseable}
-import org.opengis.feature.simple.SimpleFeatureType
 
+import java.io.InputStream
+import java.nio.charset.Charset
+import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
 import scala.annotation.tailrec
 import scala.util.Try
 
@@ -84,7 +83,7 @@ object JdbcConverter {
         false
       } else {
         val sql = statements.next.trim()
-        statement = connection.prepareCall(if (sql.endsWith(";")) { sql } else { s"$sql;" })
+        statement = connection.prepareStatement(if (sql.endsWith(";")) { sql } else { s"$sql;" })
         results = statement.executeQuery()
         true
       }

@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,19 +8,25 @@
 
 package org.locationtech.geomesa.fs.storage.common.partitions
 
+import org.geotools.api.feature.simple.{SimpleFeature, SimpleFeatureType}
+import org.geotools.api.filter.Filter
 import org.locationtech.geomesa.fs.storage.api.PartitionScheme.SimplifiedFilter
 import org.locationtech.geomesa.fs.storage.api.{NamedOptions, PartitionScheme, PartitionSchemeFactory}
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
-import org.opengis.filter.Filter
 
 object FlatScheme extends PartitionScheme {
 
   override val depth: Int = 0
 
+  override def pattern: String = ""
+
   override def getPartitionName(feature: SimpleFeature): String = ""
 
   override def getSimplifiedFilters(filter: Filter, partition: Option[String]): Option[Seq[SimplifiedFilter]] =
     Some(Seq(SimplifiedFilter(filter, Seq(""), partial = false)))
+
+  override def getIntersectingPartitions(filter: Filter): Option[Seq[String]] = Some(Seq(""))
+
+  override def getCoveringFilter(partition: String): Filter = Filter.INCLUDE
 
   class FlatPartitionSchemeFactory extends PartitionSchemeFactory {
     override def load(sft: SimpleFeatureType, config: NamedOptions): Option[PartitionScheme] =

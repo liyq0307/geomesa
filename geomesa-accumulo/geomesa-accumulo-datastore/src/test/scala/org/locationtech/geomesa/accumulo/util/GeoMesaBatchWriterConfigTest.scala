@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,8 +8,6 @@
 
 package org.locationtech.geomesa.accumulo.util
 
-import java.util.concurrent.TimeUnit
-
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.AccumuloProperties
 import org.locationtech.geomesa.utils.conf.GeoMesaSystemProperties.SystemProperty
@@ -17,13 +15,13 @@ import org.locationtech.geomesa.utils.text.Suffixes
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import java.util.concurrent.TimeUnit
+
 @RunWith(classOf[JUnitRunner])
 class GeoMesaBatchWriterConfigTest extends Specification {
   val bwc = GeoMesaBatchWriterConfig()    // Builds new BWC which has not been mutated by some other test.
 
   import AccumuloProperties.BatchWriterProperties
-
-  sequential
 
   "GeoMesaBatchWriterConfig" should {
     "have defaults set" in {

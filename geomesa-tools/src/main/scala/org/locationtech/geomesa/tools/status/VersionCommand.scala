@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -10,12 +10,14 @@ package org.locationtech.geomesa.tools.status
 
 import com.beust.jcommander.Parameters
 import org.locationtech.geomesa.tools.Command
+import org.locationtech.geomesa.tools.status.VersionCommand.VersionParameters
 import org.locationtech.geomesa.utils.conf.GeoMesaProperties
 
 class VersionCommand extends Command {
 
   override val name = "version"
   override val params = new VersionParameters
+
   override def execute(): Unit = {
     import GeoMesaProperties._
     Command.output.info(s"GeoMesa tools version: $ProjectVersion")
@@ -25,6 +27,7 @@ class VersionCommand extends Command {
   }
 }
 
-@Parameters(commandDescription = "Display the GeoMesa version installed locally")
-class VersionParameters {}
-
+object VersionCommand {
+  @Parameters(commandDescription = "Display the GeoMesa version installed locally")
+  class VersionParameters {}
+}

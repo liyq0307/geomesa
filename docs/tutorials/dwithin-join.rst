@@ -3,7 +3,7 @@ GeoMesa Spark: Spatial Join and Aggregation
 
 This tutorial will show you how to:
 
-1. Use GeoMesa with `Apache Spark <http://spark.apache.org/>`__ in Scala.
+1. Use GeoMesa with `Apache Spark <https://spark.apache.org/>`__ in Scala.
 2. Create and use DataFrames with our geospatial User Defined Functions.
 3. Calculate aggregate statistics based on a threshold distance.
 4. Create a new simple feature type to represent this aggregation.
@@ -15,7 +15,7 @@ Background
 `NYCTaxi <https://databank.illinois.edu/datasets/IDB-9610843>`__ is  taxi activity data
 published by the University of Illinois from Freedom of Information Law requests to NYC Taxi and Limo Commission.
 
-`GeoNames <http://www.geonames.org>`__ is a geographical database containing over
+`GeoNames <https://www.geonames.org>`__ is a geographical database containing over
 10 million geographical names and over 9 million unique features.
 
 Suppose we wanted to answer the questions: "Do taxi pickups centralize near certain points of interest?",
@@ -45,11 +45,12 @@ To start working with Spark, we will need a Spark Session initialized, and to ap
 Types (UDTs) and User Defined Functions (UDFs) to our data in Spark, we will need to initialize our SparkSQL extensions.
 This functionality requires having the appropriate GeoMesa Spark runtime jar on the classpath when running your Spark job.
 GeoMesa provides spark runtime jars for Accumulo, HBase, and FileSystem data stores. For example, the following would start an
-interactive Spark REPL with all dependencies needed for running Spark with GeoMesa version 2.0.0 on an Accumulo data store.
+interactive Spark REPL with all dependencies needed for running Spark with GeoMesa on an Accumulo data store. Replace
+``${VERSION}`` with the appropriate Scala plus GeoMesa versions (e.g. |scala_release_version|):
 
 .. code-block:: bash
 
-    $ bin/spark-shell --jars geomesa-accumulo-spark-runtime-accumulo2_2.11-2.0.0.jar
+    $ bin/spark-shell --jars geomesa-accumulo-spark-runtime-accumulo21_${VERSION}.jar
 
 .. note::
 
@@ -87,18 +88,18 @@ catalogs, we would set up the following parameter maps:
 .. code-block:: scala
 
   val taxiParams = Map(
-    "accumulo.instance.id" -> "instance",
-    "accumulo.zookeepers"  -> "zoo1:2181,zoo2:2181,zoo3:2181",
-    "accumulo.user"        -> "user",
-    "accumulo.password"    -> "password",
-    "accumulo.catalog"     -> "nyctaxi")
+    "accumulo.instance.name" -> "instance",
+    "accumulo.zookeepers"    -> "zoo1:2181,zoo2:2181,zoo3:2181",
+    "accumulo.user"          -> "user",
+    "accumulo.password"      -> "password",
+    "accumulo.catalog"       -> "nyctaxi")
 
   val geonamesParams = Map(
-    "accumulo.instance.id" -> "instance",
-    "accumulo.zookeepers"  -> "zoo1:2181,zoo2:2181,zoo3:2181",
-    "accumulo.user"        -> "user",
-    "accumulo.password"    -> "password",
-    "accumulo.catalog"     -> "geonames")
+    "accumulo.instance.name" -> "instance",
+    "accumulo.zookeepers"    -> "zoo1:2181,zoo2:2181,zoo3:2181",
+    "accumulo.user"          -> "user",
+    "accumulo.password"      -> "password",
+    "accumulo.catalog"       -> "geonames")
 
 .. note::
 
@@ -195,7 +196,7 @@ Following this, we can create the schema in the data store, then safely write th
 
 .. code-block:: scala
 
-    import org.geotools.data.DataStoreFinder
+    import org.geotools.api.data.DataStoreFinder
     DataStoreFinder.getDataStore(taxiParams).createSchema(aggregateSft)
     aggregateDF.write.format("geomesa").options(taxiParams).option("geomesa.feature", "aggregate").save()
 

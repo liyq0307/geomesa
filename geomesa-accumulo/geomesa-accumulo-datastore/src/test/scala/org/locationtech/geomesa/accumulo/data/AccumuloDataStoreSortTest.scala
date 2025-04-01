@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -8,13 +8,13 @@
 
 package org.locationtech.geomesa.accumulo.data
 
-import org.geotools.data._
+import org.geotools.api.data._
+import org.geotools.api.filter.sort.{SortBy, SortOrder}
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithFeatureType
 import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.utils.collection.SelfClosingIterator
-import org.opengis.filter.sort.{SortBy, SortOrder}
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
@@ -22,8 +22,6 @@ import org.specs2.runner.JUnitRunner
 class AccumuloDataStoreSortTest extends Specification with TestWithFeatureType {
 
   import org.locationtech.geomesa.filter.ff
-
-  sequential
 
   override val spec = "name:String:index=join,age:Int:index=full,weight:Double,dtg:Date,*geom:Point:srid=4326"
 
@@ -74,14 +72,14 @@ class AccumuloDataStoreSortTest extends Specification with TestWithFeatureType {
         val filter = ECQL.toFilter(ecql)
         foreach(transforms) { transform =>
           foreach(sorts) { sort =>
-            val query = new Query(sft.getTypeName, filter, transform)
-            query.setSortBy(sort)
+            val query = new Query(sft.getTypeName, filter, transform: _*)
+            query.setSortBy(sort: _*)
             val result = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT)).toList
             result.map(_.getID) mustEqual features.map(_.getID)
           }
           foreach(reverses) { sort =>
-            val query = new Query(sft.getTypeName, filter, transform)
-            query.setSortBy(sort)
+            val query = new Query(sft.getTypeName, filter, transform: _*)
+            query.setSortBy(sort: _*)
             val result = SelfClosingIterator(ds.getFeatureReader(query, Transaction.AUTO_COMMIT)).toList
             result.map(_.getID) mustEqual features.map(_.getID).reverse
           }

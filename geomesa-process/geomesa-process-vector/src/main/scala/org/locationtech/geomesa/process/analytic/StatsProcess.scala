@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,9 +9,11 @@
 package org.locationtech.geomesa.process.analytic
 
 import com.typesafe.scalalogging.LazyLogging
-import org.geotools.data.Query
+import org.geotools.api.data.{Query, SimpleFeatureSource}
+import org.geotools.api.feature.Feature
+import org.geotools.api.feature.simple.SimpleFeature
 import org.geotools.data.collection.ListFeatureCollection
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureSource}
+import org.geotools.data.simple.SimpleFeatureCollection
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, TransformSimpleFeature}
 import org.locationtech.geomesa.index.conf.QueryHints
@@ -22,8 +24,6 @@ import org.locationtech.geomesa.process.{FeatureResult, GeoMesaProcess}
 import org.locationtech.geomesa.utils.geotools.GeometryUtils
 import org.locationtech.geomesa.utils.geotools.Transform.Transforms
 import org.locationtech.geomesa.utils.stats.Stat
-import org.opengis.feature.Feature
-import org.opengis.feature.simple.SimpleFeature
 
 @DescribeProcess(
   title = "Stats Process",
@@ -121,7 +121,7 @@ class StatsVisitor(features: SimpleFeatureCollection, statString: String, encode
         logger.warn(s"Overriding inner query's properties (${query.getProperties}) " +
             s"with properties/transforms ${properties.mkString(",")}.")
       }
-      query.setPropertyNames(properties)
+      query.setPropertyNames(properties: _*)
     }
     query.getHints.put(QueryHints.STATS_STRING, statString)
     query.getHints.put(QueryHints.ENCODE_STATS, new java.lang.Boolean(encode))

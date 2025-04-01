@@ -1,5 +1,5 @@
 /***********************************************************************
- * Copyright (c) 2013-2020 Commonwealth Computer Research, Inc.
+ * Copyright (c) 2013-2025 Commonwealth Computer Research, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Apache License, Version 2.0
  * which accompanies this distribution and is available at
@@ -9,9 +9,8 @@
 package org.locationtech.geomesa.features.kryo
 package impl
 
-import java.io.InputStream
-
 import com.esotericsoftware.kryo.io.Input
+import org.geotools.api.feature.simple.SimpleFeature
 import org.locationtech.geomesa.features.ScalaSimpleFeature.{LazyAttributeReader, LazyImmutableSimpleFeature, LazyMutableSimpleFeature, LazyUserDataReader}
 import org.locationtech.geomesa.features.kryo.impl.KryoFeatureDeserialization.KryoAttributeReader
 import org.locationtech.geomesa.features.kryo.impl.LazyDeserialization._
@@ -19,7 +18,8 @@ import org.locationtech.geomesa.features.kryo.serialization.KryoUserDataSerializ
 import org.locationtech.geomesa.utils.collection.IntBitSet
 import org.locationtech.geomesa.utils.io.Sizable
 import org.locationtech.geomesa.utils.kryo.NonMutatingInput
-import org.opengis.feature.simple.SimpleFeature
+
+import java.io.InputStream
 
 object LazyDeserialization {
 
@@ -306,7 +306,7 @@ trait LazyDeserialization extends KryoFeatureDeserialization {
     }
     if (i < offsets.length) {
       // attributes have been added to the sft since this feature was serialized
-      do { offsets(i) = -1; i += 1 } while (i < offsets.length)
+      while ({{ offsets(i) = -1; i += 1 }; i < offsets.length })()
     }
     val userDataOffset = input.position()
 
